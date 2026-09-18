@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pulseboard — 团队实时协作分析</title>
+<meta name="description" content="Pulseboard 把团队的运营指标汇总成一块实时看板。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Calistoga&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   Design tokens — 由 ui-ux-pro-max --design-system 生成
+   配色全部实测通过 WCAG AA (≥4.5:1)，见对话中的验算
+   ============================================================ */
+:root{
+  --color-primary:#6366F1;      --color-on-primary:#000000;
+  --color-secondary:#818CF8;    --color-on-secondary:#0F172A;
+  --color-accent:#059669;       --color-on-accent:#000000;
+  --color-background:#F5F3FF;   --color-foreground:#312E81;
+  --color-card:#FFFFFF;         --color-card-foreground:#312E81;
+  --color-muted:#EBEFF9;        --color-muted-foreground:#475569;
+  --color-border:#E0E7FF;
+  --color-destructive:#DC2626;  --color-on-destructive:#FFFFFF;
+  --color-ring:#6366F1;
+
+  --font-display:'Calistoga',Georgia,serif;
+  --font-body:'Inter',system-ui,-apple-system,sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,monospace;
+
+  /* Soft UI Evolution: 比 flat 柔、比 neumorphism 清晰 */
+  --shadow-sm:0 1px 2px rgba(49,46,129,.06),0 1px 3px rgba(49,46,129,.08);
+  --shadow-md:0 4px 12px rgba(49,46,129,.08),0 2px 4px rgba(49,46,129,.06);
+  --shadow-lg:0 12px 32px rgba(49,46,129,.10),0 4px 8px rgba(49,46,129,.06);
+
+  --radius:14px;
+  --space-1:8px; --space-2:16px; --space-3:24px; --space-4:32px;
+  --space-5:48px; --space-6:64px;
+  --header-h:68px;
+  --t:240ms cubic-bezier(.4,0,.2,1);   /* 200-300ms，风格规定 */
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html{
+  scroll-behavior:smooth;
+  /* WCAG 2.2 AA「Focus Not Obscured」：sticky 头部不得遮挡键盘焦点 */
+  scroll-padding-top:calc(var(--header-h) + var(--space-2));
+}
+body{
+  margin:0; background:var(--color-background); color:var(--color-foreground);
+  font-family:var(--font-body); font-size:16px; line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3{font-family:var(--font-display);font-weight:400;line-height:1.15;margin:0}
+p{margin:0}
+
+/* 只对键盘用户显示焦点环 —— 注意用 focus-visible 而非 focus */
+:focus-visible{outline:3px solid var(--color-ring);outline-offset:3px;border-radius:6px}
+:focus:not(:focus-visible){outline:none}
+
+.wrap{width:100%;max-width:1120px;margin-inline:auto;padding-inline:var(--space-3)}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+/* ---------- 跳转链接 ---------- */
+.skip{position:absolute;left:var(--space-2);top:-60px;z-index:100;
+  background:var(--color-card);color:var(--color-foreground);
+  padding:12px 20px;border-radius:8px;box-shadow:var(--shadow-md);
+  text-decoration:none;font-weight:600;transition:top var(--t)}
+.skip:focus{top:var(--space-2)}
+
+/* ---------- 导航 ---------- */
+header{position:sticky;top:0;z-index:50;height:var(--header-h);
+  background:rgba(245,243,255,.88);backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--color-border)}
+.nav{display:flex;align-items:center;gap:var(--space-3);height:100%}
+.logo{display:inline-flex;align-items:center;gap:10px;font-family:var(--font-display);
+  font-size:19px;color:var(--color-foreground);text-decoration:none;
+  min-height:44px;padding-inline:4px;margin-inline:-4px}
+.logo svg{flex:0 0 auto}
+.nav-links{display:none;gap:var(--space-1);margin-left:auto;list-style:none;padding:0;margin-block:0}
+.nav-links a{display:inline-flex;align-items:center;justify-content:center;
+  min-height:44px;min-width:44px;padding-inline:10px;
+  color:var(--color-muted-foreground);text-decoration:none;
+  font-size:15px;font-weight:500;transition:color var(--t)}
+.nav-links a:hover{color:var(--color-primary)}
+.nav-cta{margin-left:auto}
+@media(min-width:768px){
+  .nav-links{display:flex}
+  .nav-cta{margin-left:0}
+}
+
+/* ---------- 按钮 ---------- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  font-family:inherit;font-size:15px;font-weight:600;line-height:1;
+  padding:13px 22px;border-radius:10px;border:1px solid transparent;
+  cursor:pointer;text-decoration:none;white-space:nowrap;
+  transition:transform var(--t),box-shadow var(--t),background-color var(--t);
+  min-height:44px}                      /* 触控目标 ≥44px */
+.btn-primary{background:var(--color-accent);color:var(--color-on-accent);
+  box-shadow:var(--shadow-sm)}
+.btn-primary:hover{box-shadow:var(--shadow-md);transform:translateY(-1px)}
+.btn-primary:active{transform:translateY(0)}
+.btn-ghost{background:var(--color-card);color:var(--color-foreground);
+  border-color:var(--color-border);box-shadow:var(--shadow-sm)}
+.btn-ghost:hover{box-shadow:var(--shadow-md);transform:translateY(-1px)}
+.btn-sm{padding:10px 18px;font-size:14px}
+
+/* ---------- Hero ---------- */
+.hero{padding-block:var(--space-6) var(--space-5)}
+.hero-grid{display:grid;gap:var(--space-5)}
+@media(min-width:1024px){
+  .hero-grid{grid-template-columns:1fr 1fr;align-items:center;gap:var(--space-6)}
+}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;
+  background:var(--color-muted);color:var(--color-muted-foreground);
+  padding:7px 14px;border-radius:999px;font-size:13px;font-weight:600;
+  letter-spacing:.01em;margin-bottom:var(--space-3)}
+.hero h1{font-size:clamp(2.1rem,5.4vw,3.6rem);margin-bottom:var(--space-3);
+  text-wrap:balance}
+.hero .lede{font-size:clamp(1.02rem,1.9vw,1.18rem);color:var(--color-muted-foreground);
+  max-width:46ch;margin-bottom:var(--space-4)}
+.hero-actions{display:flex;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-3)}
+.hero-note{font-size:13.5px;color:var(--color-muted-foreground)}
+
+/* ---------- 实时预览卡 ---------- */
+.preview{background:var(--color-card);border:1px solid var(--color-border);
+  border-radius:var(--radius);box-shadow:var(--shadow-lg);overflow:hidden}
+.preview-bar{display:flex;align-items:center;gap:var(--space-2);
+  padding:14px var(--space-3);border-bottom:1px solid var(--color-border);
+  background:linear-gradient(180deg,#fff,#FAF9FF)}
+.preview-title{font-size:14px;font-weight:600}
+.live{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:600;
+  font-family:var(--font-mono);color:var(--color-accent);
+  background:#ECFDF5;padding:5px 11px;border-radius:999px;
+  border:1px solid #A7F3D0}
+.live .dot{width:7px;height:7px;border-radius:50%;background:var(--color-accent);
+  animation:pulse 2s ease-in-out infinite}
+.live[data-state="paused"]{color:var(--color-muted-foreground);background:var(--color-muted);
+  border-color:var(--color-border)}
+.live[data-state="paused"] .dot{background:var(--color-muted-foreground);animation:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+.pause-btn{margin-left:auto;display:inline-flex;align-items:center;gap:6px;
+  background:transparent;border:1px solid var(--color-border);border-radius:8px;
+  color:var(--color-muted-foreground);font-family:inherit;font-size:13px;font-weight:500;
+  padding:8px 14px;min-height:44px;cursor:pointer;transition:all var(--t)}
+.pause-btn:hover{color:var(--color-foreground);border-color:var(--color-primary)}
+
+.preview-body{padding:var(--space-3)}
+.spark{display:flex;align-items:flex-end;gap:5px;height:104px;margin-bottom:var(--space-3)}
+.spark span{flex:1;background:linear-gradient(180deg,var(--color-secondary),var(--color-primary));
+  border-radius:4px 4px 2px 2px;transition:height var(--t)}
+.preview-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-2);
+  padding-top:var(--space-3);border-top:1px solid var(--color-border)}
+.pstat dt{font-size:12px;color:var(--color-muted-foreground);margin-bottom:5px}
+.pstat dd{margin:0;font-family:var(--font-mono);font-size:18px;font-weight:500}
+.updated{margin-top:var(--space-2);font-size:12px;color:var(--color-muted-foreground);
+  font-family:var(--font-mono)}
+
+/* ---------- 指标区 ---------- */
+.metrics{padding-block:var(--space-5)}
+.metric-grid{display:grid;gap:var(--space-3);grid-template-columns:1fr}
+@media(min-width:640px){.metric-grid{grid-template-columns:repeat(2,1fr)}}
+@media(min-width:1024px){.metric-grid{grid-template-columns:repeat(4,1fr)}}
+.metric{background:var(--color-card);border:1px solid var(--color-border);
+  border-radius:var(--radius);padding:var(--space-3);box-shadow:var(--shadow-sm);
+  transition:box-shadow var(--t),transform var(--t)}
+.metric:hover{box-shadow:var(--shadow-md);transform:translateY(-2px)}
+.metric .val{font-family:var(--font-mono);font-size:clamp(1.75rem,3.4vw,2.15rem);
+  font-weight:500;color:var(--color-primary);line-height:1.1;margin-bottom:6px}
+.metric .lbl{font-size:14px;font-weight:600;margin-bottom:4px}
+.metric .sub{font-size:13px;color:var(--color-muted-foreground)}
+
+/* ---------- 工作原理 ---------- */
+.how{padding-block:var(--space-5)}
+.section-head{max-width:54ch;margin-bottom:var(--space-5)}
+.section-head h2{font-size:clamp(1.65rem,3.6vw,2.3rem);margin-bottom:var(--space-2);
+  text-wrap:balance}
+.section-head p{color:var(--color-muted-foreground)}
+.steps{display:grid;gap:var(--space-3);grid-template-columns:1fr;
+  list-style:none;padding:0;margin:0;counter-reset:s}
+@media(min-width:768px){.steps{grid-template-columns:repeat(3,1fr)}}
+.step{background:var(--color-card);border:1px solid var(--color-border);
+  border-radius:var(--radius);padding:var(--space-3);box-shadow:var(--shadow-sm);
+  counter-increment:s}
+.step-icon{width:42px;height:42px;border-radius:11px;background:var(--color-muted);
+  display:grid;place-items:center;margin-bottom:var(--space-2);color:var(--color-primary)}
+.step h3{font-size:18px;margin-bottom:8px}
+.step h3::before{content:counter(s) ". ";font-family:var(--font-mono);
+  color:var(--color-muted-foreground);font-size:15px}
+.step p{font-size:14.5px;color:var(--color-muted-foreground)}
+
+/* ---------- 结尾 CTA ---------- */
+.cta{padding-block:var(--space-5) var(--space-6)}
+.cta-card{background:var(--color-card);border:1px solid var(--color-border);
+  border-radius:20px;box-shadow:var(--shadow-lg);
+  padding:var(--space-5) var(--space-3);text-align:center}
+@media(min-width:768px){.cta-card{padding:var(--space-6) var(--space-5)}}
+.cta-card h2{font-size:clamp(1.7rem,3.8vw,2.4rem);margin-bottom:var(--space-2);
+  text-wrap:balance}
+.cta-card p{color:var(--color-muted-foreground);max-width:50ch;
+  margin-inline:auto;margin-bottom:var(--space-4)}
+.cta-actions{display:flex;flex-wrap:wrap;gap:var(--space-2);justify-content:center}
+
+footer{border-top:1px solid var(--color-border);padding-block:var(--space-4)}
+.foot{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center;
+  justify-content:space-between;font-size:13.5px;color:var(--color-muted-foreground)}
+
+/* ---------- 尊重减弱动效偏好 ---------- */
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;
+    transition-duration:.01ms!important;scroll-behavior:auto!important}
+  .btn:hover,.metric:hover{transform:none}
+}
+</style>
+</head>
+<body>
+
+<a class="skip" href="#main">跳到主要内容</a>
+
+<header>
+  <div class="wrap nav">
+    <a class="logo" href="#main" aria-label="Pulseboard 首页">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="2.5" y="2.5" width="19" height="19" rx="5.5" stroke="currentColor" stroke-width="1.7"/>
+        <path d="M6.5 14.5l3-4 3 2.5 5-6.5" stroke="currentColor" stroke-width="1.9"
+              stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Pulseboard
+    </a>
+    <ul class="nav-links">
+      <li><a href="#metrics">数据</a></li>
+      <li><a href="#how">工作原理</a></li>
+      <li><a href="#start">定价</a></li>
+    </ul>
+    <a class="btn btn-primary btn-sm nav-cta" href="#start">免费试用</a>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- 1. Hero：产品 + 实时预览 -->
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <span class="eyebrow">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M13 2L4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z" stroke="currentColor"
+                  stroke-width="2" stroke-linejoin="round"/>
+          </svg>
+          14 天免费试用 · 无需信用卡
+        </span>
+        <h1>团队的运营数据，<br>一块看板讲完</h1>
+        <p class="lede">
+          Pulseboard 把散落在各处的指标汇成一处实时视图。不用再翻六个后台，
+          也不用等周会才知道出了问题。
+        </p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="#start">
+            开始免费试用
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M5 12h13M12.5 5.5L19 12l-6.5 6.5" stroke="currentColor"
+                    stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </a>
+          <a class="btn btn-ghost" href="#how">看看怎么用</a>
+        </div>
+        <p class="hero-note">已有 2,400+ 团队在用 · SOC 2 Type II 认证</p>
+      </div>
+
+      <!-- 实时预览：带暂停控制 + 更新时间 + 陈旧状态 -->
+      <div class="preview">
+        <div class="preview-bar">
+          <span class="preview-title">生产环境概览</span>
+          <span class="live" id="liveBadge" data-state="live">
+            <span class="dot" aria-hidden="true"></span>
+            <span id="liveText">LIVE</span>
+          </span>
+          <button class="pause-btn" id="pauseBtn" type="button" aria-pressed="false">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" id="pauseIcon">
+              <rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/>
+            </svg>
+            <span id="pauseLabel">暂停</span>
+          </button>
+        </div>
+        <div class="preview-body">
+          <div class="spark" id="spark" role="img"
+               aria-label="过去 12 小时的请求量走势图，当前处于正常区间">
+          </div>
+          <dl class="preview-stats">
+            <div class="pstat"><dt>请求 / 分钟</dt><dd id="s1">8,412</dd></div>
+            <div class="pstat"><dt>P95 延迟</dt><dd id="s2">142<span style="font-size:13px">ms</span></dd></div>
+            <div class="pstat"><dt>错误率</dt><dd id="s3">0.03<span style="font-size:13px">%</span></dd></div>
+          </dl>
+          <p class="updated">更新于 <time id="ts">刚刚</time> · 数据源：生产集群</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. 关键指标 -->
+  <section class="metrics" id="metrics" aria-labelledby="metrics-h">
+    <div class="wrap">
+      <h2 id="metrics-h" class="sr-only">关键指标</h2>
+      <div class="metric-grid">
+        <div class="metric">
+          <p class="val">3.2 分钟</p>
+          <p class="lbl">平均故障发现时间</p>
+          <p class="sub">接入前为 47 分钟</p>
+        </div>
+        <div class="metric">
+          <p class="val">2,400+</p>
+          <p class="lbl">活跃团队</p>
+          <p class="sub">覆盖 38 个国家</p>
+        </div>
+        <div class="metric">
+          <p class="val">99.98%</p>
+          <p class="lbl">服务可用性</p>
+          <p class="sub">过去 12 个月实测</p>
+        </div>
+        <div class="metric">
+          <p class="val">6 → 1</p>
+          <p class="lbl">后台数量</p>
+          <p class="sub">中位数客户的整合结果</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. 工作原理 -->
+  <section class="how" id="how" aria-labelledby="how-h">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="how-h">三步接上，当天就能看</h2>
+        <p>不用改代码，不用装 agent。连上数据源，选好指标，设定阈值。</p>
+      </div>
+      <ol class="steps">
+        <li class="step">
+          <div class="step-icon" aria-hidden="true">
+            <svg width="21" height="21" viewBox="0 0 24 24" fill="none">
+              <path d="M9 17H7A5 5 0 017 7h2M15 7h2a5 5 0 010 10h-2M8 12h8"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <h3>连接数据源</h3>
+          <p>内置 40+ 连接器：Postgres、Datadog、Stripe、Segment。OAuth 授权，只读权限。</p>
+        </li>
+        <li class="step">
+          <div class="step-icon" aria-hidden="true">
+            <svg width="21" height="21" viewBox="0 0 24 24" fill="none">
+              <path d="M4 19V10M10 19V5M16 19v-6M22 19H2" stroke="currentColor"
+                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <h3>挑选指标</h3>
+          <p>从模板起步或自己写查询。拖拽排布，每位成员都能有自己的视图。</p>
+        </li>
+        <li class="step">
+          <div class="step-icon" aria-hidden="true">
+            <svg width="21" height="21" viewBox="0 0 24 24" fill="none">
+              <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <h3>设定告警</h3>
+          <p>异常推送到 Slack、PagerDuty 或邮箱。带上下文，不是一条干巴巴的通知。</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- 4. 结尾 CTA -->
+  <section class="cta" id="start" aria-labelledby="cta-h">
+    <div class="wrap">
+      <div class="cta-card">
+        <h2 id="cta-h">今天下午就能跑起来</h2>
+        <p>14 天完整功能试用。不用信用卡，不用跟销售通话，随时一键导出你的数据。</p>
+        <div class="cta-actions">
+          <a class="btn btn-primary" href="#start">免费开始</a>
+          <a class="btn btn-ghost" href="#how">预约演示</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <span>© 2026 Pulseboard</span>
+    <span>演示页面 · 由 ui-ux-pro-max 生成的设计系统驱动</span>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var spark = document.getElementById('spark');
+  var bars = [42,55,48,61,73,58,66,80,71,63,77,69];
+
+  bars.forEach(function(h){
+    var s = document.createElement('span');
+    s.style.height = h + '%';
+    spark.appendChild(s);
+  });
+
+  var running = !reduced;          // 减弱动效时：直接呈现静态终态，不启动轮询
+  var timer = null;
+  var btn = document.getElementById('pauseBtn');
+  var badge = document.getElementById('liveBadge');
+  var liveText = document.getElementById('liveText');
+  var label = document.getElementById('pauseLabel');
+  var icon = document.getElementById('pauseIcon');
+  var ts = document.getElementById('ts');
+
+  var PLAY = '<path d="M7 4.5l12 7.5-12 7.5z"/>';
+  var PAUSE = '<rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/>';
+
+  function jitter(base, pct){
+    return base * (1 + (Math.random() - 0.5) * pct);
+  }
+
+  function tick(){
+    var next = bars.slice(1);
+    next.push(Math.max(35, Math.min(92, jitter(bars[bars.length-1], 0.28))));
+    bars = next;
+    Array.prototype.forEach.call(spark.children, function(el, i){
+      el.style.height = bars[i] + '%';
+    });
+    document.getElementById('s1').textContent =
+      Math.round(jitter(8412, 0.06)).toLocaleString('en-US');
+    document.getElementById('s2').innerHTML =
+      Math.round(jitter(142, 0.12)) + '<span style="font-size:13px">ms</span>';
+    document.getElementById('s3').innerHTML =
+      jitter(0.03, 0.5).toFixed(2) + '<span style="font-size:13px">%</span>';
+    ts.textContent = '刚刚';
+  }
+
+  function render(){
+    badge.dataset.state = running ? 'live' : 'paused';
+    liveText.textContent = running ? 'LIVE' : '已暂停';
+    label.textContent = running ? '暂停' : '继续';
+    icon.innerHTML = running ? PAUSE : PLAY;
+    btn.setAttribute('aria-pressed', running ? 'false' : 'true');
+    if (running){
+      timer = setInterval(tick, 3000);
+    } else {
+      clearInterval(timer);
+      ts.textContent = '已暂停 — 数据可能已过期';
+    }
+  }
+
+  btn.addEventListener('click', function(){ running = !running; render(); });
+
+  // 页面不可见时停止后台刷新
+  document.addEventListener('visibilitychange', function(){
+    if (document.hidden){ clearInterval(timer); }
+    else if (running){ timer = setInterval(tick, 3000); }
+  });
+
+  if (reduced){
+    // 静态终态：保留完整信息，去掉动效
+    running = false;
+    render();
+    liveText.textContent = '快照';
+    label.textContent = '开启实时';
+    ts.textContent = '静态快照（已启用减弱动效）';
+  } else {
+    render();
+  }
+})();
+</script>
+</body>
+</html>
