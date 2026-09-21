@@ -1,0 +1,19 @@
+{
+  "name": "ui-craft-fixtures",
+  "private": true,
+  "description": "Shared dependencies for the eval fixtures (each fixture resolves ../node_modules).",
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-router-dom": "^7.0.0"
+  },
+  "devDependencies": {
+    "vite": "^8.3.0",
+    "@vitejs/plugin-react": "latest",
+    "@tailwindcss/vite": "^4.3.0",
+    "tailwindcss": "^4.3.0",
+    "typescript": "^5.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0"
+  }
+}

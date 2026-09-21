@@ -1,0 +1,8 @@
+node_modules/
+.ui-craft/
+ui-craft-workspace/
+ui-craft/evals/fixtures/*/node_modules/
+ui-craft/evals/fixtures/*/dist/
+*.log
+.DS_Store
+.vite-cache/

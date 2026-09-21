@@ -1,0 +1,64 @@
+{
+  "skill_name": "ui-craft",
+  "evals": [
+    {
+      "id": 1,
+      "name": "greenfield-landing",
+      "prompt": "我在做一个给独立开发者用的开票工具，叫 Ledgerly。项目在这个目录里（Vite + React + Tailwind 4，刚初始化，App.tsx 基本是空的）。帮我做一个落地页：核心卖点是能自动从 Stripe 拉账单、一键生成合规发票、支持多币种。要有定价区（Free 和 Pro $12/月）。目标用户是一个人干的开发者，不喜欢企业味那套。做完让我能在浏览器里看到。",
+      "expected_output": "A working landing page in src/App.tsx (plus any components) with a stated design brief; a real display face or other deliberate distinctive choice rather than indigo+Inter defaults; exactly one primary CTA; the dev server started and the page rendered via render.mjs at 375/768/1440 with zero FAILs in report.json; a final report listing what was measured (contrast count, targets, overflow, focus) and screenshot paths.",
+      "files": ["evals/fixtures/greenfield"],
+      "expectations": [
+        "renders: GET / loads without error and the page has exactly one h1",
+        "contrast: zero text-contrast failures (WCAG AA 4.5:1 / 3:1 large) at 375, 768 and 1440, measured on the live DOM",
+        "overflow: no horizontal scroll at 375",
+        "targets: no non-inline interactive element smaller than 24×24 CSS px at any viewport",
+        "focus: every element reached by Tab shows a visible focus change and is not obscured by sticky UI (1440)",
+        "labels: no interactive control without an accessible name, and no <img> without alt",
+        "content: a pricing section names Free and Pro and shows $12",
+        "not-indigo: source contains no indigo / violet / purple Tailwind color classes (the default-template tell)",
+        "type-move: a non-system typeface is set up (Google Fonts link, @font-face, next/font, or a --font-display / --font-heading token)",
+        "motion: either no CSS animations run, or a prefers-reduced-motion rule exists",
+        "report-numbers: SUMMARY.md reports measured numbers for contrast and tap targets, not just adjectives"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "established-match",
+      "prompt": "在这个项目里加一个「通知设置」页面（路由 /settings/notifications）：邮件通知开关、每周摘要开关、推送时段选择（早/午/晚）、还有保存按钮。要跟现有页面风格完全一致，别自己发挥。",
+      "expected_output": "inspect.py was run first and its verdict acknowledged; the new page reuses the project's existing primitives (Button, Switch, Card) and its warm palette / radius / display font instead of introducing indigo or new tokens; every control has a visible label; save has a visible saved/confirmation state; rendered and measured with render.mjs, zero FAILs; the report says 'matched existing conventions' with specifics.",
+      "files": ["evals/fixtures/established"],
+      "expectations": [
+        "renders: GET /settings/notifications loads with exactly one h1 whose text contains 通知",
+        "reuse: the new page imports the existing Switch and Button primitives from components/ui instead of hand-rolling toggles and buttons",
+        "no-raw-palette: source still contains zero raw Tailwind palette classes (bg-indigo-600, text-gray-500 …) — only the project's semantic tokens",
+        "tokens-unchanged: the @theme block in src/index.css is identical to the fixture's (no new tokens invented)",
+        "nav: the AppShell navigation now links to /settings/notifications",
+        "labels: every control on the page has an accessible name (report.unnamedControls is empty)",
+        "contrast: zero text-contrast failures at 375, 768 and 1440",
+        "targets: no non-inline interactive element smaller than 24×24 CSS px",
+        "focus: every Tab-reachable element shows a visible focus change and is not obscured",
+        "save-feedback: saving gives visible confirmation — the page source has a live region (role=status / aria-live) or shows 已保存",
+        "summary-matches: SUMMARY.md names at least one existing primitive or token it reused (Switch, Button, Card, Field, brand, Fraunces, rounded-md)"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "generic-to-distinctive",
+      "prompt": "src/App.tsx 是我们的官网首页，看起来特别像 AI 生成的模板，老板说没有辨识度。产品是给餐厅用的排队叫号系统「等位通」。帮我改得有个性一点，但功能和文案结构别动。",
+      "expected_output": "The page is rendered and critiqued first (rubric + anti-generic tells named explicitly, e.g. indigo primary, Inter-only, three icon-in-circle cards, gradient blob); one deliberate distinctive move is chosen and stated; the copy structure and sections are preserved; re-rendered with zero FAILs and a before/after screenshot pair; the report names what changed and why.",
+      "files": ["evals/fixtures/generic"],
+      "expectations": [
+        "renders: GET / loads without error and the page has exactly one h1",
+        "copy-preserved: every section anchor survives in source: 智能排队, 实时通知, 数据分析, 王经理, 李女士, 张总, 基础版, 专业版, 准备好开始了吗",
+        "contrast: zero text-contrast failures at 375, 768 and 1440 (the fixture started with 8)",
+        "targets: no non-inline interactive element smaller than 24×24 CSS px (the fixture started with 3)",
+        "not-indigo: source contains no indigo / violet / purple color classes (the fixture had 18 indigo uses)",
+        "no-gradient-text: source contains no bg-clip-text (the gradient-headline tell)",
+        "no-icon-badges: the rounded-full icon-in-tinted-circle card pattern is gone from source",
+        "focus: every Tab-reachable element shows a visible focus change and is not obscured",
+        "before-after: outputs contain both a before render and an after render of the page (screenshots)",
+        "summary-critique: SUMMARY.md names at least two specific template tells it removed (indigo/靛蓝/紫, 渐变/gradient, 图标/圆, Inter/字体, 模板/template)"
+      ]
+    }
+  ]
+}

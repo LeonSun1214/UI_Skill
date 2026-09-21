@@ -1,0 +1,9 @@
+{
+  "name": "ui-craft-scripts",
+  "private": true,
+  "type": "module",
+  "description": "Runtime for ui-craft's render.mjs (multi-viewport screenshots + DOM audits). inspect.py needs nothing.",
+  "dependencies": {
+    "playwright": "^1.63.0"
+  }
+}
