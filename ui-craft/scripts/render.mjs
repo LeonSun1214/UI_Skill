@@ -214,11 +214,22 @@ function domAudit(INTERACTIVE) {
   const interactive = [...document.querySelectorAll(INTERACTIVE)].filter(visible);
   const targets = { checked: interactive.length, below24: [], between24and44: [] };
   for (const el of interactive) {
-    const r = el.getBoundingClientRect();
+    let r = el.getBoundingClientRect();
+    // A control's target includes its <label>s (clicking the label activates it), so a
+    // 16px radio inside a 44px label row is a 44px target — WCAG 2.5.8 measures the region.
+    if (el.labels && el.labels.length) {
+      for (const lb of el.labels) {
+        const lr = lb.getBoundingClientRect();
+        if (!lr.width || !lr.height) continue;
+        const left = Math.min(r.left, lr.left), top = Math.min(r.top, lr.top);
+        const right = Math.max(r.right, lr.right), bottom = Math.max(r.bottom, lr.bottom);
+        r = { left, top, right, bottom, width: right - left, height: bottom - top };
+      }
+    }
     const cs = getComputedStyle(el);
     const inlineText = cs.display === 'inline' && !!el.closest('p,li,dd,td,th,blockquote,figcaption,small');
     const w = Math.round(r.width), h = Math.round(r.height);
-    const item = { selector: short(el), size: `${w}×${h}`, inlineText };
+    const item = { selector: short(el), size: `${w}×${h}`, inlineText, viaLabel: !!(el.labels && el.labels.length) };
     if (w < 24 || h < 24) targets.below24.push(item);
     else if (w < 44 || h < 44) targets.between24and44.push(item);
   }
@@ -227,6 +238,7 @@ function domAudit(INTERACTIVE) {
 
   const unnamedControls = interactive.filter((el) => {
     if (el.getAttribute('aria-label') || el.getAttribute('aria-labelledby') || el.getAttribute('title')) return false;
+    if (el.labels && el.labels.length) return false; // <label for> names buttons, inputs, selects, textareas alike
     const tag = el.tagName.toUpperCase();
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') {
       const type = (el.getAttribute('type') || '').toLowerCase();
@@ -346,7 +358,10 @@ async function focusAudit(page, max = 30) {
     const changed = cur.outline !== b.outline || ['boxShadow', 'borderColor', 'background', 'color'].some((k) => cur[k] !== b[k]);
     results.push({ selector: b.selector, visible: outlineVisible || changed, obscured: cur.obscured, obscuredBy: cur.obscuredBy });
   }
-  await page.evaluate(() => { document.querySelectorAll('[data-uic-idx]').forEach((el) => el.removeAttribute('data-uic-idx')); });
+  await page.evaluate(() => {
+    document.querySelectorAll('[data-uic-idx]').forEach((el) => el.removeAttribute('data-uic-idx'));
+    if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur(); // no focus ring in screenshots
+  });
   return {
     tabbed: results.length,
     invisible: results.filter((r) => !r.visible).map((r) => r.selector).slice(0, 20),
