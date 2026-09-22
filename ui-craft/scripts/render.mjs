@@ -22,7 +22,7 @@
  * one (npx playwright install chromium), the machine's Chrome/Edge, or the binary
  * named by UI_CRAFT_CHROME.
  */
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
@@ -371,11 +371,35 @@ async function focusAudit(page, max = 30) {
   };
 }
 
+// --------------------------------------------- contact sheet: one image to read first
+// All viewports' above-the-fold captures side by side at 1× — the first impression at
+// every width in a single image, so the model can judge hierarchy and stacking without
+// paying for three or six full-page screenshots.
+async function contactSheet(browser, outDir, folds) {
+  const gap = 24, pad = 24, labelH = 28;
+  const totalW = pad * 2 + folds.reduce((s, f) => s + f.width, 0) + gap * (folds.length - 1);
+  const maxH = Math.max(...folds.map((f) => f.height));
+  const page = await browser.newPage({ viewport: { width: totalW, height: pad * 2 + labelH + maxH }, deviceScaleFactor: 1 });
+  const cells = folds.map((f) => {
+    const src = `data:image/png;base64,${readFileSync(f.path).toString('base64')}`;
+    return `<figure style="margin:0;width:${f.width}px;flex:none">` +
+      `<figcaption style="font:600 14px system-ui,sans-serif;line-height:${labelH}px;height:${labelH}px;color:#333">${f.width} × ${f.height}</figcaption>` +
+      `<img src="${src}" style="width:${f.width}px;height:${f.height}px;display:block;border:1px solid #bbb;box-sizing:border-box;background:#fff"></figure>`;
+  }).join('');
+  await page.setContent(
+    `<!doctype html><body style="margin:0;padding:${pad}px;background:#e6e6e6;display:flex;gap:${gap}px;align-items:flex-start">${cells}</body>`,
+    { waitUntil: 'load' },
+  );
+  await page.screenshot({ path: join(outDir, 'contact.png') });
+  await page.close();
+}
+
 // -------------------------------------------------------------------- main
 const browser = await launch();
 await mkdir(opt.out, { recursive: true });
 const report = { target: url, generatedAt: new Date().toISOString(), viewports: {}, summary: {} };
 let anyFail = false;
+const folds = [];
 
 for (const width of opt.viewports) {
   const height = width < 600 ? 812 : width < 1000 ? 1024 : 900;
@@ -415,7 +439,11 @@ for (const width of opt.viewports) {
   const focus = loadError ? null : await focusAudit(page);
   if (!loadError) await page.evaluate(() => window.scrollTo(0, 0));
   await page.waitForTimeout(100);
-  if (opt.fold) await page.screenshot({ path: join(opt.out, `${key}-fold.png`) });
+  if (opt.fold) {
+    const foldPath = join(opt.out, `${key}-fold.png`);
+    await page.screenshot({ path: foldPath });
+    folds.push({ width, height, path: foldPath });
+  }
   await page.screenshot({ path: join(opt.out, `${key}-full.png`), fullPage: true });
 
   const fails = [], warns = [];
@@ -454,17 +482,20 @@ for (const width of opt.viewports) {
   };
   await page.close();
 }
+if (folds.length) await contactSheet(browser, opt.out, folds);
 await browser.close();
 
 report.summary = {
   status: anyFail ? 'FAIL' : 'PASS',
   viewports: Object.fromEntries(Object.entries(report.viewports).map(([k, v]) => [k, v.status])),
+  contact: folds.length ? 'contact.png' : null,
 };
 await writeFile(join(opt.out, 'report.json'), JSON.stringify(report, null, 2));
 
 // ------------------------------------------------------------------ output
 console.log(`ui-craft render → ${opt.out}`);
 console.log(`  target: ${url}`);
+if (folds.length) console.log(`  look first: ${join(opt.out, 'contact.png')} (all viewports, above the fold, one image)`);
 for (const [k, v] of Object.entries(report.viewports)) {
   const detail = [...v.fails, ...v.warns.map((w) => `warn:${w}`)].join(' · ') || 'clean';
   console.log(`  ${k.padEnd(5)} ${v.status}  ${detail}`);

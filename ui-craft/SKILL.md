@@ -67,6 +67,10 @@ Then decide explicitly, in one line, **match** or **establish**:
 If `inspect.py` finds a design doc (`docs/design/DIRECTION.md`, `DESIGN.md`,
 `design-system/*/MASTER.md`), read it; it outranks the usage statistics.
 
+Match by reading the sibling pages' *source* — their JSX and classes — not by
+rendering them. A screenshot of an existing page costs as much as one of yours
+and tells you less than the code does.
+
 ### 2. Set a direction before writing code (greenfield, or "establish")
 
 Read `references/anti-generic.md` first. It names the defaults you'll reach for
@@ -120,8 +124,9 @@ and leave it running.
 node <skill-dir>/scripts/render.mjs http://localhost:5173/pricing --out .ui-craft/pricing-1
 ```
 
-This writes `375-fold.png`, `375-full.png`, `768-*.png`, `1440-*.png`, and
-`report.json`, and prints a one-line verdict per viewport.
+This writes `contact.png` (all three viewports above the fold, in one image),
+`375-fold.png`, `375-full.png`, `768-*.png`, `1440-*.png`, and `report.json`, and
+prints a one-line verdict per viewport.
 
 **c. Fix every FAIL in `report.json`** — contrast, horizontal overflow, targets
 under 24px, invisible or obscured focus, controls without a name, images without
@@ -130,17 +135,20 @@ catches, and they're cheap now. WARNs (targets under 44px, animations without a
 reduced-motion rule, skipped heading levels, font load errors, console errors) —
 fix unless there's a reason not to, and say the reason.
 
-**d. Look.** Read `1440-fold.png` (first impression) and `375-full.png` (does it
-survive the narrow column) at minimum; `1440-full.png` when the page is long. Go
-through `references/critique-rubric.md` — a list of questions to ask of a
-screenshot, in the order a designer's eye moves. Write down the three to five
-concrete changes it produces. "Looks fine" is not an answer; the rubric exists
-because the first draft never is.
+**d. Look — cheaply.** Read `contact.png` first: one image, three viewports, the
+first impression at every width. Go through sections 1, 2 and 9 of
+`references/critique-rubric.md` on it. Open a full-page screenshot only for a
+question the contact sheet raised — `1440-full.png` when the page is long and
+sections 3–8 matter, `375-full.png` when the narrow column looked wrong. Every
+full-page image you read costs about as much as the whole contact sheet, and most
+of what it shows you have already seen. Write down the concrete changes the rubric
+produces; "looks fine" is not an answer on the first round.
 
-**e. Apply, re-render, repeat.** Stop when a run has zero FAILs *and* the rubric
-pass produces nothing you'd be embarrassed to ship. Three rounds is the ceiling —
-if you're still finding things, the direction is wrong, not the details; go back
-to step 2.
+**e. Apply, re-render, stop.** A clean round 1 — zero FAILs, zero WARNs, and a
+contact-sheet rubric pass that found nothing you'd be embarrassed to ship — is
+done: deliver. Otherwise fix and render once more. A third round only if round 2
+still has a FAIL. If you're still finding things after that, the direction is
+wrong, not the details; go back to step 2.
 
 Keep each run's folder (`.ui-craft/<page>-<n>`) so before and after are both
 there. `.ui-craft/` belongs in `.gitignore`.
@@ -177,4 +185,5 @@ Include the fold screenshot path so the user can look too.
 - It doesn't pick a style from a table. Decide, and say why, in the brief.
 - It doesn't install packages or change the build. Tell the user what's missing.
 - It doesn't rewrite a project's existing tokens or primitives unless asked.
-- It doesn't run more than three verify rounds; if quality isn't there by then, the direction needs rethinking, not another pass.
+- It doesn't run more than two verify rounds (a third only when round two still fails a measurement); if quality isn't there by then, the direction needs rethinking, not another pass.
+- It doesn't render pages it isn't changing. Existing pages are read as code.
