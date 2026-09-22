@@ -6,3 +6,5 @@ ui-craft/evals/fixtures/*/dist/
 *.log
 .DS_Store
 .vite-cache/
+__pycache__/
+*.pyc
