@@ -184,13 +184,15 @@ function domAudit(INTERACTIVE) {
   const all = [...document.body.querySelectorAll('*')];
 
   // --- contrast on every element that directly contains text
-  const contrast = { checked: 0, unverifiable: 0, failures: [] };
+  const contrast = { checked: 0, unverifiable: 0, decorativeSkipped: 0, failures: [] };
   for (const el of all) {
     const tag = el.tagName.toUpperCase();
     if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'TEMPLATE' || el.closest('svg')) continue;
     let hasText = false;
     for (const n of el.childNodes) { if (n.nodeType === 3 && n.textContent.trim()) { hasText = true; break; } }
     if (!hasText || !visible(el)) continue;
+    // WCAG 1.4.3 exempts pure decoration; an aria-hidden subtree is the author declaring exactly that.
+    if (el.closest('[aria-hidden="true"]')) { contrast.decorativeSkipped++; continue; }
     const cs = getComputedStyle(el);
     const fg0 = toRGBA(cs.color);
     if (!fg0) continue;
