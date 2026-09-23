@@ -147,8 +147,10 @@ produces; "looks fine" is not an answer on the first round.
 **e. Apply, re-render, stop.** A clean round 1 — zero FAILs, zero WARNs, and a
 contact-sheet rubric pass that found nothing you'd be embarrassed to ship — is
 done: deliver. Otherwise fix and render once more. A third round only if round 2
-still has a FAIL. If you're still finding things after that, the direction is
-wrong, not the details; go back to step 2.
+still has a FAIL. Never render "to confirm": if the last round measured clean and
+your fixes since then were only the ones it asked for, that report *is* the final
+report — say so and deliver. If you're still finding things after round 3, the
+direction is wrong, not the details; go back to step 2.
 
 Keep each run's folder (`.ui-craft/<page>-<n>`) so before and after are both
 there. `.ui-craft/` belongs in `.gitignore`.
