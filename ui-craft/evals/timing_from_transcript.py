@@ -25,6 +25,7 @@ def summarize(path: Path) -> dict:
     first = last = None
     stamps: list[datetime] = []
     usage_by_id: dict[str, dict] = {}
+    first_ts_by_id: dict[str, str] = {}
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             try:
@@ -44,11 +45,28 @@ def summarize(path: Path) -> dict:
             msg = rec.get("message") if isinstance(rec.get("message"), dict) else None
             usage = msg.get("usage") if msg and isinstance(msg.get("usage"), dict) else None
             if usage:
-                usage_by_id[(msg.get("id") or rec.get("uuid") or str(len(usage_by_id)))] = usage
+                mid = msg.get("id") or rec.get("uuid") or str(len(usage_by_id))
+                if mid not in usage_by_id:
+                    first_ts_by_id[mid] = ts
+                usage_by_id[mid] = usage
     tot = {"input_tokens": 0, "output_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
     for u in usage_by_id.values():
         for k in tot:
             tot[k] += int(u.get(k, 0) or 0)
+    # The first assistant turn after an outage re-writes the whole context to the cache; that
+    # cost is the environment's, not the run's. Report it so runs can be compared without it.
+    resume_cache = 0
+    prev = None
+    for mid, u in usage_by_id.items():
+        t = first_ts_by_id.get(mid)
+        try:
+            cur = parse_ts(t) if t else None
+        except ValueError:
+            cur = None
+        if prev is not None and cur is not None and (cur - prev).total_seconds() > OUTAGE_GAP_S:
+            resume_cache += int(u.get("cache_creation_input_tokens", 0) or 0)
+        if cur is not None:
+            prev = cur
     wall = (parse_ts(last) - parse_ts(first)).total_seconds() if first and last else None
     stamps.sort()
     gaps = [(b - a).total_seconds() for a, b in zip(stamps, stamps[1:])]
@@ -65,6 +83,8 @@ def summarize(path: Path) -> dict:
         "assistant_messages": len(usage_by_id),
         **tot,
         "total_tokens": tot["input_tokens"] + tot["output_tokens"] + tot["cache_creation_input_tokens"],
+        "resume_cache_write_tokens": resume_cache,
+        "total_tokens_excl_resume": tot["input_tokens"] + tot["output_tokens"] + tot["cache_creation_input_tokens"] - resume_cache,
         "tokens_incl_cache_read": sum(tot.values()),
         "source": "transcript-derived (sum of input+output+cache_creation per unique message)",
     }

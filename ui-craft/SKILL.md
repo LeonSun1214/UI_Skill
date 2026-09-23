@@ -18,6 +18,32 @@ instruments, and this project's conventions. The scripts here provide those.
 
 Reply in the user's language. Keep script names, paths, and code as they are.
 
+## Cost rules — read these first
+
+The loop is cheap only when it's used the way it's built. Every one of these was a
+real leak in past runs:
+
+1. **Don't read the scripts.** `render.mjs`, `inspect.py` and `contrast.py` are black
+   boxes. This file says how to call them; what they print is the interface. Never
+   grep their source to learn "what they measure" — it's listed below.
+2. **Don't dump `report.json`.** The per-viewport verdict lines and the `Verified`
+   block at the end of `render.mjs` output *are* the report. Open `report.json` only
+   to get the selector of a FAIL you're about to fix, and print that entry alone.
+3. **Don't write your own probes.** Contrast math → `contrast.py`. Screenshots and
+   measurements → `render.mjs`. If the loop can't measure something, say so in the
+   report instead of building a script for it.
+4. **Images have a budget.** One contact sheet per round. At most one full-page
+   screenshot per round, and only for a question you can name before opening it.
+5. **Don't audit the environment.** No checks of installed fonts, proxies, git-ignore
+   state or Chromium versions. Start the server, render, read the verdict. If a web
+   font failed to load, the `Verified` block says so — report that and move on.
+6. **Match tasks read nothing extra.** Adding to an established project means
+   `inspect.py`, the sibling pages' source, build, one render. The references are
+   for greenfield work and for questions the contact sheet raises.
+7. **The report is short.** Twenty lines unless the user asked for detail: what
+   changed, the pasted `Verified` block, the decisions you made, what couldn't be
+   verified.
+
 ## Setup (first time on a machine)
 
 The scripts live in this skill's own `scripts/` folder — the base directory shown
@@ -30,8 +56,9 @@ npx playwright install chromium                # bundled browser (once), OR
 export UI_CRAFT_CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 ```
 
-`render.mjs` tries bundled Chromium, then the machine's Chrome or Edge, then
-`UI_CRAFT_CHROME`. `inspect.py` is standard-library Python 3; nothing to install.
+`render.mjs` finds a browser on its own: bundled Chromium, then any Playwright
+cache, then the machine's Chrome or Edge, then `UI_CRAFT_CHROME`. `inspect.py` and
+`contrast.py` are standard-library Python 3; nothing to install.
 
 ## Workflow
 
@@ -39,9 +66,9 @@ export UI_CRAFT_CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Ch
 
 Decide which of these you're doing, because they start differently:
 
-- **Add to an existing project** (a new page or component in a codebase that already has UI) → start at step 1.
-- **Greenfield** (empty project, prototype, single page) → start at step 2.
-- **Review or fix** ("polish", "looks off", "is it accessible") → start at step 4 on the existing page, then fix.
+- **Add to an existing project** (a new page or component in a codebase that already has UI) → step 1, then 3.
+- **Greenfield** (empty project, prototype, single page) → step 2, then 3.
+- **Review or fix** ("polish", "looks off", "is it accessible") → step 4 on the existing page, then fix.
 
 Never assume the stack. Check `package.json` for `next` / `vite` / `react-router`
 and the Tailwind major (v4 is CSS-first with `@theme`; v3 uses `tailwind.config.*`).
@@ -61,15 +88,13 @@ Then decide explicitly, in one line, **match** or **establish**:
 
 - The project has conventions → **match them.** Reuse its `Button`, its radius, its
   hue. Ninety percent of real UI work is additive, and a second design language in
-  one PR is the fastest way to get it rejected — even if yours is prettier.
+  one PR is the fastest way to get it rejected — even if yours is prettier. Read the
+  sibling pages' *source* (JSX and classes), not screenshots of them, and go
+  straight to step 3. No brief, no references.
 - The project is nearly empty, or the user asked to redesign → **establish**, step 2.
 
 If `inspect.py` finds a design doc (`docs/design/DIRECTION.md`, `DESIGN.md`,
 `design-system/*/MASTER.md`), read it; it outranks the usage statistics.
-
-Match by reading the sibling pages' *source* — their JSX and classes — not by
-rendering them. A screenshot of an existing page costs as much as one of yours
-and tells you less than the code does.
 
 ### 2. Set a direction before writing code (greenfield, or "establish")
 
@@ -92,17 +117,31 @@ Put the brief in your reply. If the user asked for a design system or a whole ne
 project (not just one page), also save it as `docs/design/DIRECTION.md` so the next
 session inherits the decisions instead of re-rolling them.
 
-Consult `references/patterns.md` for the page type's structure and the behaviours
-it owes the user (a live dashboard needs pause and stale states; a form needs inline
-errors; a landing page needs exactly one primary action).
+Check the palette roles before you build, so the first render doesn't fail on
+numbers you could have known:
+
+```bash
+python3 <skill-dir>/scripts/contrast.py '#6b615b' '#fbf8f3' '#ffffff' '#b5451b'      # fg bg pairs
+python3 <skill-dir>/scripts/contrast.py --css src/index.css --text ink,muted,brand --on surface,panel
+```
+
+The `--css` form reads `@theme` / `:root` tokens and, when a dark block redefines
+them, prints light and dark side by side. A text role needs 4.5:1 on every surface
+it sits on; a control boundary or focus ring needs 3:1.
+
+Read the one section of `references/patterns.md` that matches the page type
+(landing, dashboard, form, auth, empty state …) for its structure and the
+behaviours it owes the user. Not the whole file.
 
 ### 3. Build
 
-Write the code with `references/constraints.md` at hand — the measurable rules with
-their sources. The ones that get UIs rejected in review: 4.5:1 text contrast, 24px
-minimum / 44px preferred targets, visible keyboard focus, no horizontal scroll at
-320–375px, `prefers-reduced-motion` respected, a label on every control, `alt` on
-every image.
+The rules that get UIs rejected in review, all measured by the loop: 4.5:1 text
+contrast (3:1 for large text), 3:1 on control boundaries and focus rings, 24px
+minimum / 44px preferred targets, visible keyboard focus, hover feedback on buttons,
+no horizontal scroll at 320–375px, `prefers-reduced-motion` respected, a label on
+every control, `alt` on every image. `references/constraints.md` has the sources and
+the rules the loop *can't* measure (forms, zoom, dragging, flashing) — open only the
+section your page needs.
 
 Reuse existing primitives. Don't add a UI library the project doesn't have. Don't
 invent a new token when a matching one exists. Load a display face through
@@ -124,41 +163,44 @@ and leave it running.
 node <skill-dir>/scripts/render.mjs http://localhost:5173/pricing --out .ui-craft/pricing-1
 ```
 
-This writes `contact.png` (all three viewports above the fold, in one image),
-`375-fold.png`, `375-full.png`, `768-*.png`, `1440-*.png`, and `report.json`, and
-prints a one-line verdict per viewport.
+Options: `--viewports 375,768,1440` (default) · `--dark` / `--no-dark` (dark mode is
+rendered automatically when the page has a `prefers-color-scheme: dark` rule or
+`.dark` class styles) · `--no-hover` · `--wait <ms>`.
 
-**c. Fix every FAIL in `report.json`** — text contrast, non-text contrast (a
-control's border or fill, and every focus ring, must reach 3:1 against what
-surrounds it), horizontal overflow, targets under 24px, invisible or obscured
-focus, controls without a name, images without `alt`, zoom blocked, and — when the
-page has a dark rule, which render.mjs detects and renders on its own — the same
-contrast checks in dark mode. These are non-negotiable: they're what a reviewer or
-an audit catches, and they're cheap now. WARNs (targets under 44px, buttons that
-change nothing on hover, `cursor` not `pointer` on a custom control, a text button
-whose surface is under 3:1 against its surroundings, animations without a
-reduced-motion rule, skipped heading levels, font load errors, console errors) —
-fix unless there's a reason not to, and say the reason. A button with no hover
-feedback is almost always a miss, not a choice.
+It writes `contact.png` (all viewports above the fold, one image), `contact-dark.png`
+when dark mode was rendered, `<w>-fold.png`, `<w>-full.png`, `<w>-dark-fold.png`, and
+`report.json`. It prints one verdict line per viewport, the details of every FAIL,
+and ends with a `Verified` block — the measured numbers in the exact form your
+report needs.
 
-If you add or touch dark mode, `contact-dark.png` is the dark-mode contact sheet;
-look at it the same way. Dark mode is where muted text and hairline borders fail
-most often, because they were tuned on the light background.
+**c. Fix every FAIL** — text contrast, non-text contrast (a field's border or fill,
+every focus ring, at 3:1 against its surroundings), horizontal overflow, targets
+under 24px, invisible or obscured focus, controls without a name, images without
+`alt`, zoom blocked, and the same contrast checks in the dark rendering. These are
+non-negotiable: they're what a reviewer or an audit catches, and they're cheap now.
+WARNs (targets under 44px, buttons that change nothing on hover, `cursor` not
+`pointer` on a custom control, a text button whose surface is under 3:1 against its
+surroundings, animations without a reduced-motion rule, skipped heading levels, font
+load errors, console errors) — fix unless there's a reason not to, and say the
+reason. A button with no hover feedback is almost always a miss, not a choice.
 
-**d. Look — cheaply.** Read `contact.png` first: one image, three viewports, the
-first impression at every width. Go through sections 1, 2 and 9 of
-`references/critique-rubric.md` on it. Open a full-page screenshot only for a
-question the contact sheet raised — `1440-full.png` when the page is long and
-sections 3–8 matter, `375-full.png` when the narrow column looked wrong. Every
-full-page image you read costs about as much as the whole contact sheet, and most
-of what it shows you have already seen. Write down the concrete changes the rubric
-produces; "looks fine" is not an answer on the first round.
+A FAIL that comes from a shared primitive or token the user told you not to touch
+(a 1.3:1 hairline on the project's own `Input`) is *inherited*: leave it, and name it
+in the report with the one-line fix the owner could make.
+
+**d. Look — cheaply.** Read `contact.png` (and `contact-dark.png` if it exists): one
+image, three viewports, the first impression at every width. Go through sections
+1, 2 and 9 of `references/critique-rubric.md` on it — for a match task, just those
+three sections, and only if the sheet raised a doubt. Open one full-page
+screenshot only for a question the contact sheet raised, and name the question
+first. Write down the concrete changes the rubric produces; "looks fine" is not an
+answer on the first round of a greenfield page.
 
 **e. Apply, re-render, stop.** A clean round 1 — zero FAILs, zero WARNs, and a
-contact-sheet rubric pass that found nothing you'd be embarrassed to ship — is
-done: deliver. Otherwise fix and render once more. A third round only if round 2
-still has a FAIL. Never render "to confirm": if the last round measured clean and
-your fixes since then were only the ones it asked for, that report *is* the final
+contact-sheet pass that found nothing you'd be embarrassed to ship — is done:
+deliver. Otherwise fix and render once more. A third round only if round 2 still
+has a FAIL. Never render "to confirm": if the last round measured clean and your
+fixes since then were only the ones it asked for, that report *is* the final
 report — say so and deliver. If you're still finding things after round 3, the
 direction is wrong, not the details; go back to step 2.
 
@@ -167,36 +209,41 @@ there. `.ui-craft/` belongs in `.gitignore`.
 
 ### 5. Report
 
-End with what was verified, in numbers, not adjectives:
+Paste the `Verified` block from the last render — don't recompute or reword its
+numbers — then three short lines:
 
 ```
-Verified (run 2 · .ui-craft/pricing-2):
-- Contrast: 41 text elements checked, 0 below 4.5:1 · 9 control boundaries, 0 below 3:1
-- Dark mode: rendered (media) · 41 text elements, 0 failures · background #fbf8f3 → #17140f
-- Targets: 0 below 24px · 2 between 24–44px (inline footer links, exempt)
+Verified (render.mjs · .ui-craft/pricing-2):
+- Contrast: 41 text elements, 0 below threshold · 9 control boundaries, 0 below 3:1
+- Dark mode: rendered (media) · 41 text elements, 0 below threshold · 9 boundaries, 0 below 3:1 · 0 focus rings below 3:1 · background rgb(251, 248, 243) → rgb(23, 20, 15)
+- Targets: 0 below 24px · 2 between 24–44px
 - Overflow: none at 375 / 768 / 1440
-- Focus: 18/18 focusables show a visible ring ≥ 3:1, none obscured · Hover: 7/7 buttons respond
+- Focus: 18/18 tabbed show a visible ring, 0 rings below 3:1, 0 obscured · Hover: 7/7 buttons and links respond
 - Motion: reduced-motion rule present · 3 animated elements
+- Names & alt: 0 unnamed controls · 0 images without alt · 1 h1 · 0 skipped heading levels
+- Fonts: 2 declared, all loaded
 Not verifiable here: Fraunces didn't load (offline) — rendered with the fallback
-Judgment calls left: testimonials are 3-up at 1440; 2-up would breathe more
+Inherited, not changed: the project's Input border is 1.34:1 on white; set --color-line to #948980 to fix
+Judgment calls: testimonials are 3-up at 1440; 2-up would breathe more
 ```
 
-Include the fold screenshot path so the user can look too.
+Include the contact-sheet path so the user can look too.
 
 ## When to read what
 
 | Situation | Read |
 |---|---|
-| Starting on any existing codebase | run `scripts/inspect.py` |
+| Starting on any existing codebase | run `scripts/inspect.py` — nothing else for a match task |
 | Choosing a look, or the output feels generic | `references/anti-generic.md` |
-| Building a landing / dashboard / form / auth / empty state | that section of `references/patterns.md` |
-| Writing markup and styles | `references/constraints.md` |
-| Every time you open a screenshot | `references/critique-rubric.md` |
+| Picking token values, light or dark | run `scripts/contrast.py` |
+| Building a landing / dashboard / form / auth / empty state from scratch | that one section of `references/patterns.md` |
+| A rule the loop can't measure (forms, zoom, dragging, flashing) | that section of `references/constraints.md` |
+| The contact sheet raised a doubt | sections 1, 2, 9 of `references/critique-rubric.md`; the rest only for a long greenfield page |
 
 ## What this skill doesn't do
 
 - It doesn't pick a style from a table. Decide, and say why, in the brief.
 - It doesn't install packages or change the build. Tell the user what's missing.
-- It doesn't rewrite a project's existing tokens or primitives unless asked.
+- It doesn't rewrite a project's existing tokens or primitives unless asked — it reports what they fail.
 - It doesn't run more than two verify rounds (a third only when round two still fails a measurement); if quality isn't there by then, the direction needs rethinking, not another pass.
 - It doesn't render pages it isn't changing. Existing pages are read as code.

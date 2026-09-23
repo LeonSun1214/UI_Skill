@@ -746,5 +746,41 @@ for (const [k, v] of Object.entries(report.viewports)) {
   if (v.audit.imagesMissingAlt.length) lines.push(`    img without alt:\n${top(v.audit.imagesMissingAlt, 4, (s) => s)}`);
   if (lines.length) console.log(`  ${k}:\n${lines.join('\n')}`);
 }
+// ---- the Verified block: the numbers the report to the user is made of. Paste it; don't recompute.
+{
+  const vps = Object.values(report.viewports).filter((v) => v.audit);
+  if (vps.length) {
+    const widest = vps.reduce((a, b) => (a.width > b.width ? a : b));
+    const worst = (fn) => vps.reduce((m, v) => { const n = fn(v) || 0; return n > m.n ? { n, w: v.width } : m; }, { n: 0, w: null });
+    const at = (m) => (m.n && vps.length > 1 ? ` (worst at ${m.w})` : '');
+    const L = [];
+    const cf = worst((v) => v.audit.contrast.failures.length), bf = worst((v) => v.audit.nonText.failures.length);
+    const unv = widest.audit.contrast.unverifiable || 0;
+    L.push(`- Contrast: ${widest.audit.contrast.checked} text elements, ${cf.n} below threshold${at(cf)} · ${widest.audit.nonText.checked} control boundaries, ${bf.n} below 3:1${at(bf)}${unv ? ` · ${unv} unverifiable (image or gradient backgrounds)` : ''}`);
+    const darks = vps.filter((v) => v.dark);
+    if (darks.length) {
+      const dw = darks.reduce((a, b) => (a.width > b.width ? a : b));
+      const df = worst((v) => v.dark ? v.dark.contrast.failures.length : 0), dbf = worst((v) => v.dark ? v.dark.nonText.failures.length : 0);
+      const dr = worst((v) => v.dark ? v.dark.focus.lowContrastRing.length : 0);
+      L.push(`- Dark mode: rendered (${dw.dark.mode}) · ${dw.dark.contrast.checked} text elements, ${df.n} below threshold${at(df)} · ${dw.dark.nonText.checked} boundaries, ${dbf.n} below 3:1 · ${dr.n} focus rings below 3:1 · background ${widest.audit.pageColors.background} → ${dw.dark.pageColors.background}${dw.dark.themeChanged ? '' : ' (unchanged!)'}`);
+    } else {
+      L.push(`- Dark mode: ${widest.audit.darkSupport.any ? 'rule present but not rendered' : 'no dark rule — not rendered'}`);
+    }
+    const t24 = worst((v) => v.audit.targets.below24.filter((t) => !t.inlineText).length), t44 = worst((v) => v.audit.targets.between24and44.length);
+    L.push(`- Targets: ${t24.n} below 24px${at(t24)} · ${t44.n} between 24–44px${at(t44)}`);
+    const ov = vps.filter((v) => v.audit.overflow.horizontal).map((v) => `${v.width} (${v.audit.overflow.scrollWidth}>${v.audit.overflow.viewportWidth})`);
+    L.push(`- Overflow: ${ov.length ? 'horizontal at ' + ov.join(', ') : 'none at ' + vps.map((v) => v.width).join(' / ')}`);
+    const f = widest.focus, h = widest.hover;
+    const focusLine = f ? `${f.tabbed - f.invisible.length}/${f.tabbed} tabbed show a visible ring, ${f.lowContrastRing.length} rings below 3:1, ${f.obscured.length} obscured` : 'not probed';
+    const hoverLine = h ? `${h.checked - h.noHoverFeedback.length}/${h.checked} buttons and links respond${h.cursorNotPointer.length ? `, ${h.cursorNotPointer.length} without pointer cursor` : ''}` : 'not probed';
+    L.push(`- Focus: ${focusLine} · Hover: ${hoverLine}`);
+    L.push(`- Motion: reduced-motion rule ${widest.audit.motion.reducedMotionRule ? 'present' : 'missing'} · ${widest.audit.motion.animatedElements} animated elements`);
+    const un = worst((v) => v.audit.unnamedControls.length), ia = worst((v) => v.audit.imagesMissingAlt.length);
+    L.push(`- Names & alt: ${un.n} unnamed controls · ${ia.n} images without alt · ${widest.audit.structure.h1Count} h1 · ${widest.audit.structure.skippedLevels.length} skipped heading levels`);
+    const decl = widest.audit.fonts.declared, errs = decl.filter((x) => x.status === 'error').map((x) => x.family);
+    L.push(`- Fonts: ${decl.length ? `${decl.length} declared, ${errs.length ? `${errs.length} failed to load (${[...new Set(errs)].join(', ')}) — rendered with fallbacks` : 'all loaded'}` : 'none declared (system stack)'}`);
+    console.log(`\nVerified (render.mjs · ${opt.out}):\n${L.join('\n')}`);
+  }
+}
 console.log(`  full report: ${join(opt.out, 'report.json')}`);
 process.exit(opt.strict && anyFail ? 1 : 0);
