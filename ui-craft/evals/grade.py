@@ -345,11 +345,25 @@ def c_no_raw_palette(ctx):
     return (not hits), (f"{len(hits)} raw palette classes, e.g. {sorted(set(hits))[:5]}" if hits else "0 raw palette classes; only semantic tokens")
 
 
+def theme_tokens(block: str) -> dict[str, str]:
+    """`--name: value` pairs of a whitespace-stripped @theme block (comments removed)."""
+    block = re.sub(r"/\*.*?\*/", "", block)
+    return dict(re.findall(r"(--[\w-]+):([^;]+);", block))
+
+
 def c_tokens_unchanged(ctx):
     mine = theme_block(ctx["files"].get("src/index.css", ""))
     ref = theme_block(read(FIXTURES / FIXTURE_FOR[ctx["eval_id"]] / "src" / "index.css"))
     if mine == ref:
         return True, "@theme block identical to fixture"
+    if ctx["eval_id"] == 4:
+        # Dark mode may add tokens; the light values of the existing ones must survive.
+        m, r = theme_tokens(mine), theme_tokens(ref)
+        changed = [k for k in r if m.get(k) != r[k]]
+        added = [k for k in m if k not in r]
+        if changed:
+            return False, f"existing token values changed: {changed[:6]}"
+        return True, f"all {len(r)} fixture tokens keep their light values; added {added or 'none'}"
     return False, f"@theme differs from fixture (len {len(mine)} vs {len(ref)})"
 
 
@@ -486,7 +500,8 @@ def grade_run(eval_dir: Path, meta: dict, run: Path, port: int, skip_render: boo
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("iteration")
-    ap.add_argument("--only", default=None)
+    ap.add_argument("--only", default=None, help="grade one eval dir (name)")
+    ap.add_argument("--config", default=None, help="grade one configuration (e.g. with_skill)")
     ap.add_argument("--skip-render", action="store_true")
     args = ap.parse_args()
     it = Path(args.iteration).resolve()
@@ -497,6 +512,8 @@ def main() -> int:
             continue
         meta = json.loads(read(eval_dir / "eval_metadata.json"))
         for cfg in sorted(p for p in eval_dir.iterdir() if p.is_dir()):
+            if args.config and cfg.name != args.config:
+                continue
             for run in sorted(cfg.glob("run-*")):
                 if not (run / "outputs").is_dir() or not any((run / "outputs").iterdir()):
                     print(f"{eval_dir.name:32} {cfg.name:14} {run.name}  (no outputs yet — skipped)")
