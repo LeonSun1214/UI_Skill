@@ -11,7 +11,9 @@ source. When memory and the source disagree, the source wins.
 | Rule | Threshold | Check | Source |
 |---|---|---|---|
 | Text contrast (AA) | ≥ 4.5:1 body · ≥ 3:1 large text (≥ 24px, or ≥ 18.66px bold) | ✓ | [WCAG 2.2 · 1.4.3](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html) |
-| Non-text contrast: control boundaries, icons, focus rings, chart marks | ≥ 3:1 against adjacent colors | manual | [WCAG 2.2 · 1.4.11](https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html) |
+| Non-text contrast: control boundaries (border, or fill when borderless) and focus rings | ≥ 3:1 against adjacent colors | ✓ | [WCAG 2.2 · 1.4.11](https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html) |
+| Icons and chart marks that carry meaning | ≥ 3:1 against adjacent colors | manual | 1.4.11 as above |
+| Dark mode: the same text and non-text thresholds hold in the dark rendering | — | ✓ (auto when a dark rule exists) | 1.4.3 / 1.4.11 as above |
 | Meaning never by color alone (status, required, error) | add icon, text, or pattern | manual | [WCAG 2.2 · 1.4.1](https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html) |
 | Text over images or gradients | verify the worst pixel, or add a scrim | ~ (reported as unverifiable) | 1.4.3 above |
 | Zoom to 200% without loss | no clipping, no overlap | manual | [WCAG 2.2 · 1.4.4](https://www.w3.org/WAI/WCAG22/Understanding/resize-text.html) |
@@ -26,6 +28,7 @@ source. When memory and the source disagree, the source wins.
 | Platform minimums | iOS 44×44 pt · Android 48×48 dp | ✓ warn at 44 | [Apple HIG · Accessibility](https://developer.apple.com/design/human-interface-guidelines/accessibility) · [Material 3 · Accessibility](https://m3.material.io/foundations/accessible-design/accessibility-basics) |
 | Dragging has a single-pointer alternative (reorder, sliders, maps) | buttons or inputs exist | manual | [WCAG 2.2 · 2.5.7](https://www.w3.org/WAI/WCAG22/Understanding/dragging-movements.html) |
 | Nothing depends on hover — touch has none | tooltips and menus also open on tap or focus | manual | [WCAG 2.2 · 1.4.13](https://www.w3.org/WAI/WCAG22/Understanding/content-on-hover-or-focus.html) |
+| Buttons and standalone links give hover feedback (pointer devices) | at least one visible property changes | ✓ warn | convention — see critique rubric §8 |
 
 ## Keyboard and focus
 

@@ -128,12 +128,22 @@ This writes `contact.png` (all three viewports above the fold, in one image),
 `375-fold.png`, `375-full.png`, `768-*.png`, `1440-*.png`, and `report.json`, and
 prints a one-line verdict per viewport.
 
-**c. Fix every FAIL in `report.json`** — contrast, horizontal overflow, targets
-under 24px, invisible or obscured focus, controls without a name, images without
-`alt`, zoom blocked. These are non-negotiable: they're what a reviewer or an audit
-catches, and they're cheap now. WARNs (targets under 44px, animations without a
+**c. Fix every FAIL in `report.json`** — text contrast, non-text contrast (a
+control's border or fill, and every focus ring, must reach 3:1 against what
+surrounds it), horizontal overflow, targets under 24px, invisible or obscured
+focus, controls without a name, images without `alt`, zoom blocked, and — when the
+page has a dark rule, which render.mjs detects and renders on its own — the same
+contrast checks in dark mode. These are non-negotiable: they're what a reviewer or
+an audit catches, and they're cheap now. WARNs (targets under 44px, buttons that
+change nothing on hover, `cursor` not `pointer` on a custom control, a text button
+whose surface is under 3:1 against its surroundings, animations without a
 reduced-motion rule, skipped heading levels, font load errors, console errors) —
-fix unless there's a reason not to, and say the reason.
+fix unless there's a reason not to, and say the reason. A button with no hover
+feedback is almost always a miss, not a choice.
+
+If you add or touch dark mode, `contact-dark.png` is the dark-mode contact sheet;
+look at it the same way. Dark mode is where muted text and hairline borders fail
+most often, because they were tuned on the light background.
 
 **d. Look — cheaply.** Read `contact.png` first: one image, three viewports, the
 first impression at every width. Go through sections 1, 2 and 9 of
@@ -160,11 +170,12 @@ there. `.ui-craft/` belongs in `.gitignore`.
 End with what was verified, in numbers, not adjectives:
 
 ```
-Verified (run 3 · .ui-craft/pricing-3):
-- Contrast: 41 text elements checked, 0 below 4.5:1
+Verified (run 2 · .ui-craft/pricing-2):
+- Contrast: 41 text elements checked, 0 below 4.5:1 · 9 control boundaries, 0 below 3:1
+- Dark mode: rendered (media) · 41 text elements, 0 failures · background #fbf8f3 → #17140f
 - Targets: 0 below 24px · 2 between 24–44px (inline footer links, exempt)
 - Overflow: none at 375 / 768 / 1440
-- Focus: 18/18 focusables show a visible ring, none obscured
+- Focus: 18/18 focusables show a visible ring ≥ 3:1, none obscured · Hover: 7/7 buttons respond
 - Motion: reduced-motion rule present · 3 animated elements
 Not verifiable here: Fraunces didn't load (offline) — rendered with the fallback
 Judgment calls left: testimonials are 3-up at 1440; 2-up would breathe more

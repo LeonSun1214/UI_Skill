@@ -33,8 +33,14 @@ HERE = Path(__file__).resolve().parent          # <skill>/evals
 SKILL = HERE.parent                                 # <skill>
 RENDER = SKILL / "scripts" / "render.mjs"
 FIXTURES = SKILL / "evals" / "fixtures"
-ROUTES = {1: "/", 2: "/settings/notifications", 3: "/"}
-FIXTURE_FOR = {1: "greenfield", 2: "established", 3: "generic"}
+ROUTES = {1: "/", 2: "/settings/notifications", 3: "/", 4: "/"}
+FIXTURE_FOR = {1: "greenfield", 2: "established", 3: "generic", 4: "established"}
+FIXTURE_LIGHT_BG = {4: "rgb(251, 248, 243)"}  # Maple Books paper — must survive a dark-mode addition
+# Maple Books ships `--color-line: #e5ddd3` (1.35:1 on white) on its Field border and Switch track. The
+# established-project evals forbid touching shared tokens/primitives, so boundaries drawn in that token
+# are the fixture's defect, not the run's: exempt them from the light-mode non-text check. Dark mode is
+# entirely the run's own palette and is checked in full.
+FIXTURE_LINE = {2: "rgb(229, 221, 211)", 4: "rgb(229, 221, 211)"}
 VIEWPORTS = ("375", "768", "1440")
 SKIP = {"node_modules", ".vite-cache", ".ui-craft", "dist"}
 
@@ -48,7 +54,8 @@ TELL_GROUPS = [
     r"indigo|靛|紫|violet|purple", r"渐变|gradient", r"图标|圆形|圆圈|circle|icon",
     r"\bInter\b|字体|font|typeface|serif", r"模板|template|generic|AI ?味|同质|千篇一律",
 ]
-NEEDS_RENDER = {"renders", "contrast", "overflow", "targets", "focus", "labels", "motion"}
+NEEDS_RENDER = {"renders", "contrast", "overflow", "targets", "focus", "labels", "motion",
+                "hover-feedback", "non-text-contrast", "dark-support", "dark-contrast", "light-unchanged"}
 
 
 # ------------------------------------------------------------------ helpers
@@ -193,7 +200,74 @@ def c_focus(ctx):
         return False, "nothing reachable by Tab"
     if f["invisible"] or f["obscured"]:
         return False, f"invisible: {f['invisible'][:4]}; obscured: {f['obscured'][:3]}"
-    return True, f"{f['tabbed']} elements tabbed, all show a focus change, none obscured"
+    low = f.get("lowContrastRing", [])
+    if low:
+        return False, f"focus ring below 3:1 on {len(low)}: {low[:3]}"
+    return True, f"{f['tabbed']} elements tabbed, all show a focus change, none obscured, rings ≥ 3:1"
+
+
+def c_hover_feedback(ctx):
+    h = ctx["rep"]["viewports"]["1440"].get("hover")
+    if not h:
+        return False, "hover probe did not run"
+    if h["checked"] == 0:
+        return True, "no buttons or standalone links to probe"
+    if h["noHoverFeedback"]:
+        return False, f"{len(h['noHoverFeedback'])}/{h['checked']} change nothing on hover: {h['noHoverFeedback'][:4]}"
+    return True, f"{h['checked']} buttons/links probed, all change on hover"
+
+
+def c_non_text_contrast(ctx):
+    inherited = FIXTURE_LINE.get(ctx["eval_id"])
+    per, exempt = {}, 0
+    for w in VIEWPORTS:
+        fails = A(ctx, w)["nonText"]["failures"]
+        keep = [f for f in fails if f["color"] != inherited]
+        exempt += len(fails) - len(keep)
+        per[w] = keep
+    total = sum(len(v) for v in per.values())
+    note = f" ({exempt} inherited from the fixture's line token, exempt)" if exempt else ""
+    if total:
+        w = max(per, key=lambda k: len(per[k]))
+        f = per[w][0]
+        return False, f"boundaries below 3:1 per viewport {{ {', '.join(f'{k}: {len(v)}' for k, v in per.items())} }}{note}; worst {f['ratio']}:1 {f['selector']} ({f['via']} {f['color']} against {f['against']})"
+    weak = len(A(ctx, "1440")["nonText"].get("weak", []))
+    return True, f"0 failures{note}; {A(ctx, '1440')['nonText']['checked']} control boundaries checked at 1440" + (f"; {weak} text-labelled buttons with a surface <3:1 (WCAG-exempt, warned)" if weak else "")
+
+
+def c_dark_support(ctx):
+    a = A(ctx, "1440")
+    d = ctx["rep"]["viewports"]["1440"].get("dark")
+    if not a["darkSupport"]["any"]:
+        return False, "no prefers-color-scheme: dark rule and no .dark class styles"
+    if not d or not d.get("themeChanged"):
+        return False, f"dark rule present but page background did not change (light {a['pageColors']['background']} → dark {d and d['pageColors']['background']})"
+    return True, f"dark mode via {d['mode']}; background {a['pageColors']['background']} → {d['pageColors']['background']}"
+
+
+def c_dark_contrast(ctx):
+    darks = {w: ctx["rep"]["viewports"][w].get("dark") for w in VIEWPORTS}
+    if not all(darks.values()):
+        return False, "dark mode was not rendered (no dark rule detected)"
+    per = {w: d["contrast"]["failures"] for w, d in darks.items()}
+    total = sum(len(v) for v in per.values())
+    nt = sum(len(d["nonText"]["failures"]) for d in darks.values())
+    if total or nt:
+        w = max(per, key=lambda k: len(per[k]))
+        f = per[w][0] if per[w] else None
+        worst = f" worst {f['ratio']}:1 {f['selector']} — {f['color']} on {f['background']}" if f else ""
+        return False, f"dark text failures {{ {', '.join(f'{k}: {len(v)}' for k, v in per.items())} }}, dark non-text failures {nt};{worst}"
+    return True, f"dark rendering clean: {darks['1440']['contrast']['checked']} text elements, {darks['1440']['nonText']['checked']} boundaries at 1440"
+
+
+def c_light_unchanged(ctx):
+    want = FIXTURE_LIGHT_BG.get(ctx["eval_id"])
+    got = A(ctx, "1440")["pageColors"]["background"]
+    if want is None:
+        return True, f"no fixture reference; light background is {got}"
+    if got == want:
+        return True, f"light background still {got}"
+    return False, f"light background changed: {got} (fixture {want})"
 
 
 def c_labels(ctx):
@@ -329,6 +403,14 @@ def c_summary_critique(ctx):
     return (len(groups) >= 2), (f"{len(groups)} tell groups named: {[g.split('|')[0] for g in groups]}" if s else "no SUMMARY.md")
 
 
+def c_summary_dark_numbers(ctx):
+    s = ctx["summary"]
+    if not s:
+        return False, "no SUMMARY.md"
+    m = re.search(r"(深色|暗色|dark)[^\n]{0,120}\d", s, re.I)
+    return (m is not None), (f"dark-mode measurement stated: {m.group(0)[:80]!r}" if m else "no dark-mode numbers in SUMMARY.md")
+
+
 CHECKERS = {
     "renders": c_renders, "contrast": c_contrast, "overflow": c_overflow, "targets": c_targets,
     "focus": c_focus, "labels": c_labels, "motion": c_motion, "content": c_content,
@@ -337,6 +419,9 @@ CHECKERS = {
     "nav": c_nav, "save-feedback": c_save_feedback, "summary-matches": c_summary_matches,
     "copy-preserved": c_copy_preserved, "no-gradient-text": c_no_gradient_text,
     "no-icon-badges": c_no_icon_badges, "before-after": c_before_after, "summary-critique": c_summary_critique,
+    "hover-feedback": c_hover_feedback, "non-text-contrast": c_non_text_contrast,
+    "dark-support": c_dark_support, "dark-contrast": c_dark_contrast, "light-unchanged": c_light_unchanged,
+    "summary-dark-numbers": c_summary_dark_numbers,
 }
 
 
@@ -413,6 +498,9 @@ def main() -> int:
         meta = json.loads(read(eval_dir / "eval_metadata.json"))
         for cfg in sorted(p for p in eval_dir.iterdir() if p.is_dir()):
             for run in sorted(cfg.glob("run-*")):
+                if not (run / "outputs").is_dir() or not any((run / "outputs").iterdir()):
+                    print(f"{eval_dir.name:32} {cfg.name:14} {run.name}  (no outputs yet — skipped)")
+                    continue
                 port = free_port(port + 1)
                 g = grade_run(eval_dir, meta, run, port, args.skip_render)
                 rows.append((eval_dir.name, cfg.name, run.name, g["summary"]))

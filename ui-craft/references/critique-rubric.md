@@ -94,7 +94,12 @@ Squint, or imagine the screenshot at thumbnail size.
 ## 8. Components and states
 
 - Do buttons look pressable — enough padding, a clear label, one height across the page?
-- Are hover, focus, and active states visible, or does the page exist in one state only?
+- Are hover, focus, and active states visible, or does the page exist in one state
+  only? (`report.json` lists buttons that change nothing on hover; here, judge whether
+  the changes that exist are *legible* — a 2% darkening is not feedback.)
+- If the page has a dark mode, open `contact-dark.png` and re-ask sections 2, 5 and 7:
+  hierarchy often collapses in dark (everything mid-gray), shadows disappear so
+  borders must do the grouping, and the accent that was rare on white can glow.
 - Do cards earn their border or shadow, or would the content read better as plain
   sections? Card inside card inside card is the most common tell of not deciding.
 - Icons: one family, one stroke width, one size scale? Decorative icons that add
