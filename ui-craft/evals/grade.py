@@ -421,8 +421,14 @@ def c_summary_dark_numbers(ctx):
     s = ctx["summary"]
     if not s:
         return False, "no SUMMARY.md"
-    m = re.search(r"(深色|暗色|dark)[^\n]{0,120}\d", s, re.I)
-    return (m is not None), (f"dark-mode measurement stated: {m.group(0)[:80]!r}" if m else "no dark-mode numbers in SUMMARY.md")
+    # A line that talks about dark mode AND carries a contrast measurement (an N:1 ratio, or
+    # "对比度"/"contrast" followed by a number) — not just any digit near the word.
+    for line in s.splitlines():
+        if not re.search(r"深色|暗色|dark", line, re.I):
+            continue
+        if re.search(r"\d+(?:\.\d+)?\s*:\s*1\b", line) or re.search(r"(对比度|contrast)[^\n]{0,60}\d", line, re.I):
+            return True, f"dark-mode measurement stated: {line.strip()[:100]!r}"
+    return False, "no dark-mode contrast numbers in SUMMARY.md"
 
 
 CHECKERS = {
