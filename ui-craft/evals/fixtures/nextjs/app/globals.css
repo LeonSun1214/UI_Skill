@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+/* Maple Books tokens, Next.js edition — same palette as the Vite fixture. */
+@theme {
+  --color-brand: #b5451b;
+  --color-brand-strong: #8f3413;
+  --color-brand-soft: #f6e7df;
+  --color-brand-fg: #ffffff;
+  --color-surface: #fbf8f3;
+  --color-panel: #ffffff;
+  --color-ink: #2a2320;
+  --color-muted: #6b615b;
+  --color-line: #e5ddd3;
+  --radius-md: 6px;
+}
+
+@layer base {
+  html { color: var(--color-ink); background: var(--color-surface); }
+  :focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+}

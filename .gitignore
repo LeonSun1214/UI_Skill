@@ -8,3 +8,5 @@ ui-craft/evals/fixtures/*/dist/
 .vite-cache/
 __pycache__/
 *.pyc
+.next/
+next-env.d.ts

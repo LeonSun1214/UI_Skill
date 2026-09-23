@@ -21,3 +21,4 @@ cd /path/to/work/project && npm run dev -- --port 5173
 ```
 
 Install the shared dependencies once: `cd evals/fixtures && npm install`.
+| `nextjs/` | Next.js App Router smoke test for `render.mjs` + `inspect.py` (`npm install` inside it; not part of the graded evals) | same Maple Books tokens in `app/globals.css`, `next/font` faces |

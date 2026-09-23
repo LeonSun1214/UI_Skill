@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gated page</title>
+<style>
+  body { margin: 0; padding: 32px; font: 16px/1.5 system-ui, sans-serif; color: #1a1a1a; background: #fff; }
+  button { min-height: 44px; padding: 0 20px; background: #1d4ed8; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
+  button:hover { background: #1e40af; }
+  button:focus-visible { outline: 3px solid #1a1a1a; outline-offset: 2px; }
+  #items li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">Sign in</h1>
+  <p id="state">You need a session cookie, a bearer header, or a localStorage token to see this page.</p>
+  <ul id="items" hidden></ul>
+  <button type="button" id="load">Load items</button>
+</main>
+<script>
+  // The page is "logged in" when any of three things is present. The server also honours them
+  // for /api/items (401 otherwise), so --cookie, --header, --storage-state and --init-script
+  // each have a way to make this page render its real content.
+  const hasCookie = /(^|;\s*)session=ok(;|$)/.test(document.cookie);
+  const hasToken = !!localStorage.getItem('token');
+  const authed = hasCookie || hasToken || window.__HEADER_AUTH__ === true;
+  async function load() {
+    const res = await fetch('/api/items');
+    if (res.status === 401) return { items: null };
+    return res.json();
+  }
+  (async () => {
+    const data = await load();
+    const ok = authed || data.items !== null;
+    if (!ok) return;
+    document.getElementById('title').textContent = `Dashboard · ${(data.items || []).length} items`;
+    document.getElementById('state').textContent = `Signed in via ${hasCookie ? 'cookie' : hasToken ? 'localStorage' : 'header'}.`;
+    const ul = document.getElementById('items');
+    for (const it of (data.items || [])) { const li = document.createElement('li'); li.textContent = it; ul.appendChild(li); }
+    ul.hidden = false;
+    ul.dataset.ready = '1';
+  })();
+</script>
+</body>
+</html>

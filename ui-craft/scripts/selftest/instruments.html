@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Instrument test</title>
+<style>
+  :root { --bg: #ffffff; --ink: #1a1a1a; --muted: #767676; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #14161a; --ink: #f2f2f2; --muted: #6b6b6b; } /* muted on dark bg: ~2.6:1 → dark contrast FAIL expected */
+  }
+  body { margin: 0; padding: 32px; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, sans-serif; }
+  main { max-width: 640px; }
+  .row { display: flex; gap: 16px; margin: 16px 0; align-items: center; }
+  /* 1. button with hover feedback + pointer cursor + visible focus ring: should be clean */
+  .ok { min-height: 44px; padding: 0 20px; background: #1d4ed8; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
+  .ok:hover { background: #1e40af; }
+  .ok:focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; }
+  /* 2. button with NO hover feedback and default cursor: hover warn expected */
+  .nohover { min-height: 44px; padding: 0 20px; background: #0f766e; color: #fff; border: 0; border-radius: 6px; }
+  .nohover:focus-visible { outline: 3px solid #0f766e; outline-offset: 2px; }
+  /* 3. input whose border is too faint against white: non-text contrast FAIL expected (#d9d9d9 on #fff ≈ 1.4:1) */
+  .faint { min-height: 44px; padding: 0 12px; border: 1px solid #d9d9d9; border-radius: 6px; background: #fff; color: var(--ink); }
+  .faint:focus-visible { outline: 3px solid #1d4ed8; }
+  /* 4. button whose focus ring is too faint: focus ring FAIL expected (#e5e7eb ring on white ≈ 1.2:1) */
+  .faintring { min-height: 44px; padding: 0 20px; background: #7c3aed; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
+  .faintring:hover { filter: brightness(1.1); }
+  .faintring:focus-visible { outline: 3px solid #e5e7eb; outline-offset: 2px; }
+  .muted { color: var(--muted); }  /* 4.54:1 on white (pass light); ~2.6:1 on dark bg (fail dark) */
+  label { display: block; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Instrument test page</h1>
+  <p class="muted">Muted text that passes in light mode and fails in dark mode.</p>
+  <div class="row">
+    <button class="ok" type="button">OK button</button>
+    <button class="nohover" type="button">No hover button</button>
+    <button class="faintring" type="button">Faint ring</button>
+  </div>
+  <div>
+    <label for="email">Email</label>
+    <input class="faint" id="email" type="email" placeholder="you@example.com">
+  </div>
+</main>
+</body>
+</html>

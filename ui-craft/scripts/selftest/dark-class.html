@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Instrument test (class dark)</title>
+<style>
+  :root { --bg: #ffffff; --ink: #1a1a1a; --muted: #6b6b6b; --line: #cfcfcf; }
+  .dark { --bg: #101214; --ink: #f1f1f1; --muted: #8a8a8a; --line: #3a3d42; }
+  body { margin: 0; padding: 32px; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, sans-serif; }
+  .btn { min-height: 44px; padding: 0 20px; background: #2563eb; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
+  .btn:hover { background: #1d4ed8; }
+  .btn:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+  input { min-height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
+  input:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+  .muted { color: var(--muted); }
+  label { display: block; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Class-based dark test</h1>
+  <p class="muted">Muted text: 5.3:1 light · 4.9:1 dark — both pass.</p>
+  <button class="btn" type="button">Primary</button>
+  <div style="margin-top:16px"><label for="name">Name</label><input id="name" type="text"></div>
+</main>
+</body>
+</html>

@@ -5,5 +5,12 @@
   "description": "Runtime for ui-craft's render.mjs (multi-viewport screenshots + DOM audits). inspect.py needs nothing.",
   "dependencies": {
     "playwright": "^1.63.0"
+  },
+  "scripts": {
+    "test": "node selftest.mjs",
+    "doctor": "node doctor.mjs"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

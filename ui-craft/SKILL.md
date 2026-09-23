@@ -1,5 +1,7 @@
 ---
 name: ui-craft
+metadata:
+  version: 0.5.0
 description: >-
   Build, change, and review UI in React + Tailwind projects with a render → look → measure → fix loop, so what ships is checked against a real screenshot and real DOM measurements (contrast, tap targets, overflow, keyboard focus, motion) instead of guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "is this accessible", "check the mobile view" — even when they never say "design" or "UI". Also use it to inspect an existing project's design conventions before adding to it.
 ---
@@ -58,7 +60,9 @@ export UI_CRAFT_CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Ch
 
 `render.mjs` finds a browser on its own: bundled Chromium, then any Playwright
 cache, then the machine's Chrome or Edge, then `UI_CRAFT_CHROME`. `inspect.py` and
-`contrast.py` are standard-library Python 3; nothing to install.
+`contrast.py` are standard-library Python 3; nothing to install. If a render fails
+to start, run `node <skill-dir>/scripts/doctor.mjs` once and tell the user what it
+says — don't debug the environment by hand.
 
 ## Workflow
 
@@ -206,6 +210,20 @@ direction is wrong, not the details; go back to step 2.
 
 Keep each run's folder (`.ui-craft/<page>-<n>`) so before and after are both
 there. `.ui-craft/` belongs in `.gitignore`.
+
+### 4½. When the page won't just render (real projects)
+
+Don't work around these by hand; each has a flag, and the loop stays the same:
+
+| Situation | Do this |
+|---|---|
+| The page is behind a login | ask the user to run `node <skill-dir>/scripts/login-state.mjs <login-url> --out .ui-craft/state.json` (a window opens, they log in, it saves the session), then render with `--storage-state .ui-craft/state.json`. A token you were given: `--header "Authorization: Bearer …"` or `--cookie session=…`. |
+| The page needs data a backend would provide | `--mock '**/api/items=.ui-craft/items.json'` answers those requests from a file you write; `--init-script .ui-craft/seed.js` runs before the app (localStorage, feature flags). |
+| Content appears after hydration or a fetch | `--wait-for '[data-loaded]'` (any selector that exists only when the real content does). |
+| The task is one component, not a page | `node <skill-dir>/scripts/harness.mjs <project> --component src/components/ui/Button.tsx --states '[{"children":"Save"},{"variant":"secondary","children":"Cancel"},{"disabled":true,"children":"Off"}]'` writes `.ui-craft/harness/index.html`; render that URL on the project's own dev server. Vite + React only. |
+| You must prove an existing page did not change | render it before touching anything, then render after with `--compare .ui-craft/<page>-0`: the Verified block reports changed pixels per screenshot and writes `diff-*.png`. |
+| Monorepo | `inspect.py` on the workspace root lists the UI app packages; run it, and the dev server, in the one you are changing. |
+| Next.js | `next dev` is slower to answer; wait for the port, then render the route. Fonts loaded through `next/font` show as loaded in the report. |
 
 ### 5. Report
 

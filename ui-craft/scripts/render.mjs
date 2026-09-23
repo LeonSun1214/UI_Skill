@@ -13,7 +13,9 @@
  *
  * Usage:
  *   node render.mjs <url | path/to/page.html> [--out DIR] [--viewports 375,768,1440]
- *                   [--wait MS] [--no-fold] [--dark | --no-dark] [--no-hover] [--strict]
+ *                   [--wait MS] [--wait-for SELECTOR] [--no-fold] [--dark | --no-dark] [--no-hover]
+ *                   [--storage-state FILE] [--cookie k=v] [--header k:v] [--auth user:pass]
+ *                   [--init-script FILE] [--mock PATTERN=FILE] [--compare DIR] [--strict]
  *
  * Writes  DIR/contact.png             all viewports above the fold, one image (look first)
  *         DIR/<width>-fold.png        above the fold      DIR/<width>-full.png   full page
@@ -39,6 +41,14 @@ const USAGE = `usage: node render.mjs <url | path/to/page.html> [options]
   --no-fold            skip the above-the-fold screenshots and contact sheets
   --dark / --no-dark   force or skip the dark-mode pass (default: auto — when the page has a dark rule)
   --no-hover           skip the hover-feedback probe (done at the widest viewport only)
+  --wait-for SEL       wait for a CSS selector before measuring (SPA hydration, data loading)
+  --storage-state F    Playwright storage state JSON (cookies + localStorage) — a logged-in session; see login-state.mjs
+  --cookie k=v         add a cookie for the target's host (repeatable)
+  --header k:v         extra HTTP header on every request, e.g. Authorization (repeatable)
+  --auth user:pass     HTTP basic auth
+  --init-script F      JS file run in every page before its scripts (seed localStorage, flags, fetch mocks)
+  --mock PATTERN=F     answer requests whose URL matches PATTERN (glob or /regex/) with the file's contents (repeatable)
+  --compare DIR        pixel-diff every screenshot against the same-named one in DIR (a previous run)
   --strict             exit 1 when any viewport FAILs
 env  UI_CRAFT_CHROME   path to a Chrome/Chromium binary to use`;
 
@@ -48,7 +58,8 @@ if (!argv.length || argv.includes('--help') || argv.includes('-h')) {
   console.log(USAGE);
   process.exit(argv.length ? 0 : 1);
 }
-const opt = { out: '.ui-craft/latest', viewports: [375, 768, 1440], wait: 500, fold: true, dark: 'auto', hover: true, strict: false };
+const opt = { out: '.ui-craft/latest', viewports: [375, 768, 1440], wait: 500, waitFor: null, fold: true, dark: 'auto', hover: true, strict: false,
+  storageState: null, cookies: [], headers: {}, auth: null, initScript: null, mocks: [], compare: null };
 let target = null;
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
@@ -60,6 +71,14 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--no-dark') opt.dark = 'skip';
   else if (a === '--no-hover') opt.hover = false;
   else if (a === '--strict') opt.strict = true;
+  else if (a === '--wait-for') opt.waitFor = argv[++i];
+  else if (a === '--storage-state') opt.storageState = argv[++i];
+  else if (a === '--cookie') { const v = argv[++i]; const k = v.indexOf('='); if (k > 0) opt.cookies.push({ name: v.slice(0, k), value: v.slice(k + 1) }); }
+  else if (a === '--header') { const v = argv[++i]; const k = v.indexOf(':'); if (k > 0) opt.headers[v.slice(0, k).trim()] = v.slice(k + 1).trim(); }
+  else if (a === '--auth') { const v = argv[++i]; const k = v.indexOf(':'); if (k > 0) opt.auth = { username: v.slice(0, k), password: v.slice(k + 1) }; }
+  else if (a === '--init-script') opt.initScript = argv[++i];
+  else if (a === '--mock') { const v = argv[++i]; const k = v.lastIndexOf('='); if (k > 0) opt.mocks.push({ pattern: v.slice(0, k), file: v.slice(k + 1) }); }
+  else if (a === '--compare') opt.compare = argv[++i];
   else if (a.startsWith('--')) { console.error(`unknown option ${a}\n${USAGE}`); process.exit(1); }
   else target = a;
 }
@@ -68,53 +87,12 @@ const url = /^(https?|file):\/\//i.test(target)
   ? target
   : pathToFileURL(isAbsolute(target) ? target : resolve(target)).href;
 
+import { discoverChromium, launchChromium, loadPlaywright } from './lib/browser.mjs';
 let pw;
-try { pw = await import('playwright'); }
-catch {
-  console.error("playwright is not installed. In the skill's scripts folder run: npm install");
-  process.exit(2);
-}
-
-/** Chromium builds left by other Playwright versions, or a system Chromium. */
-function discoverChromium() {
-  const roots = [
-    process.env.PLAYWRIGHT_BROWSERS_PATH,
-    join(homedir(), '.cache', 'ms-playwright'),
-    join(homedir(), 'Library', 'Caches', 'ms-playwright'),
-    process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'ms-playwright') : null,
-  ].filter(Boolean);
-  const found = [];
-  for (const root of roots) {
-    let entries = [];
-    try { entries = readdirSync(root); } catch { continue; }
-    for (const dir of entries.filter((n) => /^chromium-\d+$/.test(n)).sort().reverse()) {
-      for (const tail of ['chrome-linux/chrome', 'chrome-mac/Chromium.app/Contents/MacOS/Chromium',
-        'chrome-mac-arm64/Chromium.app/Contents/MacOS/Chromium', 'chrome-win/chrome.exe']) {
-        const p = join(root, dir, tail);
-        if (existsSync(p)) found.push(p);
-      }
-    }
-  }
-  for (const p of ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome', '/snap/bin/chromium']) {
-    if (existsSync(p)) found.push(p);
-  }
-  return found;
-}
-
-async function launch() {
-  const attempts = [];
-  if (process.env.UI_CRAFT_CHROME) attempts.push(['UI_CRAFT_CHROME', { executablePath: process.env.UI_CRAFT_CHROME }]);
-  attempts.push(['bundled chromium', {}]);
-  for (const p of discoverChromium()) attempts.push([`found ${p}`, { executablePath: p }]);
-  attempts.push(['Google Chrome', { channel: 'chrome' }], ['Microsoft Edge', { channel: 'msedge' }]);
-  const errors = [];
-  for (const [name, o] of attempts) {
-    try { return await pw.chromium.launch(o); }
-    catch (e) { errors.push(`  ${name}: ${String(e.message).split('\n')[0]}`); }
-  }
-  throw new Error(`no Chromium could be launched:\n${errors.join('\n')}\n` +
-    'fix: run "npx playwright install chromium" in the scripts folder, or set UI_CRAFT_CHROME=/path/to/chrome');
-}
+try { pw = await loadPlaywright(); }
+catch (e) { console.error(e.message); process.exit(2); }
+async function launch() { return (await launchChromium(pw)).browser; }
+void discoverChromium;
 
 const INTERACTIVE_SELECTOR = [
   'a[href]', 'button', 'input:not([type=hidden])', 'select', 'textarea', 'summary',
@@ -373,11 +351,17 @@ function domAudit(INTERACTIVE) {
   const darkSupport = { media: darkMedia, class: darkClass, any: darkMedia || darkClass };
 
   // --- fonts
+  // One entry per family, best status wins (a family has one face per weight/style; "loaded"
+  // beats "unloaded" — the face simply wasn't needed). next/font's metric-matched local
+  // fallbacks ("X Fallback", src: local(...)) and its internal __nextjs-* faces are not
+  // web fonts to load, so they never count as errors.
   const fontMap = new Map();
+  const rank = { loaded: 3, loading: 2, unloaded: 1, error: 0 };
   document.fonts.forEach((f) => {
     const family = f.family.replace(/["']/g, '');
-    const key = `${family}|${f.status}`;
-    if (!fontMap.has(key)) fontMap.set(key, { family, status: f.status });
+    if (/ Fallback$/i.test(family) || /^__nextjs-/.test(family)) return;
+    const prev = fontMap.get(family);
+    if (!prev || rank[f.status] > rank[prev.status]) fontMap.set(family, { family, status: f.status });
   });
   const usedFamilies = [...new Set(['body', 'h1', 'h2', 'p', 'button']
     .map((s) => document.querySelector(s)).filter(Boolean)
@@ -505,6 +489,7 @@ async function hoverAudit(page, max = 20) {
       const r = el.getBoundingClientRect();
       if (cs.display === 'none' || cs.visibility === 'hidden' || r.width <= 1 || r.height <= 1) return null;
       if (el.closest('[aria-hidden="true"]')) return null;
+      if (el.disabled || el.getAttribute('aria-disabled') === 'true') return null; // no state change owed
       const tag = el.tagName.toUpperCase();
       const isButton = tag === 'BUTTON' || el.getAttribute('role') === 'button' || (tag === 'INPUT' && /submit|button|reset/.test(el.type));
       const inlineText = cs.display === 'inline' && !!el.closest('p,li,dd,td,th,blockquote,figcaption,small');
@@ -542,6 +527,51 @@ async function hoverAudit(page, max = 20) {
 // All viewports' above-the-fold captures side by side at 1× — the first impression at
 // every width in a single image, so the model can judge hierarchy and stacking without
 // paying for three or six full-page screenshots.
+/** Pixel-diff every PNG in `outDir` against the same-named PNG in `baseDir`; writes diff-<name>.png. */
+async function compareRuns(browser, outDir, baseDir) {
+  const result = { baseline: baseDir, files: {} };
+  let names = [];
+  try { names = readdirSync(outDir).filter((n) => /\.png$/.test(n) && !/^(diff-|contact)/.test(n)); } catch { return result; }
+  const page = await browser.newPage({ viewport: { width: 200, height: 200 }, deviceScaleFactor: 1 });
+  for (const name of names) {
+    const basePath = join(baseDir, name);
+    if (!existsSync(basePath)) { result.files[name] = { status: 'no baseline' }; continue; }
+    const a = `data:image/png;base64,${readFileSync(basePath).toString('base64')}`;
+    const b = `data:image/png;base64,${readFileSync(join(outDir, name)).toString('base64')}`;
+    const r = await page.evaluate(async ([ua, ub]) => {
+      const load = (src) => new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src; });
+      const [ia, ib] = await Promise.all([load(ua), load(ub)]);
+      const w = Math.min(ia.width, ib.width), h = Math.min(ia.height, ib.height);
+      const draw = (im) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(im, 0, 0); return x.getImageData(0, 0, w, h).data; };
+      const da = draw(ia), db = draw(ib);
+      const out = document.createElement('canvas'); out.width = w; out.height = h;
+      const ox = out.getContext('2d'); ox.drawImage(ib, 0, 0); const od = ox.getImageData(0, 0, w, h);
+      let changed = 0;
+      for (let i = 0; i < da.length; i += 4) {
+        const d = Math.abs(da[i] - db[i]) + Math.abs(da[i + 1] - db[i + 1]) + Math.abs(da[i + 2] - db[i + 2]);
+        if (d > 48) { changed++; od.data[i] = 255; od.data[i + 1] = 0; od.data[i + 2] = 200; od.data[i + 3] = 255; }
+        else { od.data[i] = 128 + od.data[i] / 2; od.data[i + 1] = 128 + od.data[i + 1] / 2; od.data[i + 2] = 128 + od.data[i + 2] / 2; }
+      }
+      ox.putImageData(od, 0, 0);
+      return { w, h, aw: ia.width, ah: ia.height, bw: ib.width, bh: ib.height, changed, total: w * h, png: changed ? out.toDataURL('image/png') : null };
+    }, [a, b]);
+    const entry = {
+      changedPixels: r.changed, comparedPixels: r.total, changedPct: +((100 * r.changed) / r.total).toFixed(2),
+      sizeChanged: (r.aw !== r.bw || r.ah !== r.bh) ? `${r.aw}×${r.ah} → ${r.bw}×${r.bh}` : null,
+      diff: null,
+    };
+    if (r.png) {
+      const diffPath = join(outDir, `diff-${name}`);
+      await writeFile(diffPath, Buffer.from(r.png.split(',')[1], 'base64'));
+      entry.diff = `diff-${name}`;
+    }
+    entry.status = entry.changedPixels === 0 && !entry.sizeChanged ? 'identical' : 'changed';
+    result.files[name] = entry;
+  }
+  await page.close();
+  return result;
+}
+
 async function contactSheet(browser, outDir, folds, name = 'contact.png') {
   const gap = 24, pad = 24, labelH = 28;
   const totalW = pad * 2 + folds.reduce((s, f) => s + f.width, 0) + gap * (folds.length - 1);
@@ -572,7 +602,23 @@ const widest = Math.max(...opt.viewports);
 
 for (const width of opt.viewports) {
   const height = width < 600 ? 812 : width < 1000 ? 1024 : 900;
-  const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 2 });
+  const context = await browser.newContext({
+    viewport: { width, height }, deviceScaleFactor: 2,
+    storageState: opt.storageState || undefined,
+    extraHTTPHeaders: Object.keys(opt.headers).length ? opt.headers : undefined,
+    httpCredentials: opt.auth || undefined,
+  });
+  if (opt.cookies.length && /^https?:/.test(url)) {
+    await context.addCookies(opt.cookies.map((c) => ({ ...c, url })));
+  }
+  if (opt.initScript) await context.addInitScript({ path: opt.initScript });
+  for (const m of opt.mocks) {
+    const body = readFileSync(m.file);
+    const type = /\.json$/i.test(m.file) ? 'application/json' : /\.html?$/i.test(m.file) ? 'text/html' : /\.js$/i.test(m.file) ? 'application/javascript' : /\.png$/i.test(m.file) ? 'image/png' : /\.svg$/i.test(m.file) ? 'image/svg+xml' : 'text/plain';
+    const matcher = /^\/.*\/$/.test(m.pattern) ? new RegExp(m.pattern.slice(1, -1)) : m.pattern;
+    await context.route(matcher, (route) => route.fulfill({ status: 200, contentType: type, body }));
+  }
+  const page = await context.newPage();
   const consoleErrors = [];
   const failedRequests = [];
   const httpErrors = [];
@@ -590,6 +636,7 @@ for (const width of opt.viewports) {
   try {
     await page.goto(url, { waitUntil: 'load', timeout: 30000 });
     await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+    if (opt.waitFor) await page.waitForSelector(opt.waitFor, { timeout: 30000 });
   } catch (e) { loadError = String(e.message).split('\n')[0]; }
   await page.waitForTimeout(opt.wait);
 
@@ -695,9 +742,10 @@ for (const width of opt.viewports) {
     audit, focus, hover, dark,
     screenshots: { fold: opt.fold ? `${key}-fold.png` : null, full: `${key}-full.png`, darkFold: dark && dark.screenshot },
   };
-  await page.close();
+  await context.close();
 }
 if (folds.length) await contactSheet(browser, opt.out, folds);
+if (opt.compare) report.compare = await compareRuns(browser, opt.out, opt.compare);
 if (darkFolds.length) await contactSheet(browser, opt.out, darkFolds, 'contact-dark.png');
 await browser.close();
 
@@ -717,6 +765,11 @@ if (folds.length) console.log(`  look first: ${join(opt.out, 'contact.png')} (al
 for (const [k, v] of Object.entries(report.viewports)) {
   const detail = [...v.fails, ...v.warns.map((w) => `warn:${w}`)].join(' · ') || 'clean';
   console.log(`  ${k.padEnd(5)} ${v.status}  ${detail}`);
+}
+if (report.compare) {
+  const fs_ = Object.entries(report.compare.files);
+  const changed = fs_.filter(([, f]) => f.status === 'changed');
+  console.log(`  compare vs ${report.compare.baseline}: ${fs_.length - changed.length} identical, ${changed.length} changed${changed.length ? ' — ' + changed.map(([n, f]) => `${n} ${f.changedPct}%${f.sizeChanged ? ` (${f.sizeChanged})` : ''}`).join(', ') : ''}`);
 }
 const first = Object.values(report.viewports).find((v) => v.audit);
 if (first) {
@@ -779,6 +832,11 @@ for (const [k, v] of Object.entries(report.viewports)) {
     L.push(`- Names & alt: ${un.n} unnamed controls · ${ia.n} images without alt · ${widest.audit.structure.h1Count} h1 · ${widest.audit.structure.skippedLevels.length} skipped heading levels`);
     const decl = widest.audit.fonts.declared, errs = decl.filter((x) => x.status === 'error').map((x) => x.family);
     L.push(`- Fonts: ${decl.length ? `${decl.length} declared, ${errs.length ? `${errs.length} failed to load (${[...new Set(errs)].join(', ')}) — rendered with fallbacks` : 'all loaded'}` : 'none declared (system stack)'}`);
+    if (report.compare) {
+      const fs_ = Object.entries(report.compare.files);
+      const changed = fs_.filter(([, f]) => f.status === 'changed');
+      L.push(`- Compared with ${report.compare.baseline}: ${changed.length ? changed.map(([n, f]) => `${n.replace('.png', '')} ${f.changedPct}% changed${f.sizeChanged ? ` (${f.sizeChanged})` : ''}`).join(' · ') : `all ${fs_.length} screenshots identical`}`);
+    }
     console.log(`\nVerified (render.mjs · ${opt.out}):\n${L.join('\n')}`);
   }
 }

@@ -39,7 +39,9 @@ MAX_READ = 400_000
 KNOWN_FRAMEWORKS = [
     ("next", "Next.js"), ("@remix-run/react", "Remix"), ("react-router", "React Router"),
     ("react-router-dom", "React Router"), ("@tanstack/react-router", "TanStack Router"),
-    ("astro", "Astro"), ("gatsby", "Gatsby"), ("vite", "Vite"), ("react-scripts", "Create React App"),
+    ("nuxt", "Nuxt"), ("@sveltejs/kit", "SvelteKit"), ("@angular/core", "Angular"),
+    ("astro", "Astro"), ("gatsby", "Gatsby"), ("vue", "Vue"), ("svelte", "Svelte"), ("solid-js", "Solid"),
+    ("vite", "Vite"), ("react-scripts", "Create React App"),
 ]
 KNOWN_UI = {
     "@radix-ui/react-dialog": "Radix primitives", "@radix-ui/react-slot": "Radix primitives",
@@ -143,6 +145,33 @@ def detect_stack(root: Path) -> dict:
                 deps_source = os.path.relpath(pp, root)
                 break
 
+    # A workspace root (npm/yarn/pnpm workspaces) is not an app: point at the packages that are.
+    workspace_apps: list[str] = []
+    patterns: list[str] = []
+    try:
+        ws = json.loads(read(pkg_path)).get("workspaces") if pkg_path.exists() else None
+        if isinstance(ws, dict):
+            ws = ws.get("packages")
+        if isinstance(ws, list):
+            patterns += [w for w in ws if isinstance(w, str)]
+    except (json.JSONDecodeError, AttributeError):
+        pass
+    pnpm = root / "pnpm-workspace.yaml"
+    if pnpm.exists():
+        patterns += re.findall(r"^\s*-\s*['\"]?([^'\"\n#]+)['\"]?", read(pnpm), re.M)
+    for pat in patterns:
+        for d in sorted(root.glob(pat.strip().rstrip("/"))):
+            pj = d / "package.json"
+            if not d.is_dir() or not pj.exists():
+                continue
+            try:
+                dd = json.loads(read(pj))
+                ddeps = {**dd.get("dependencies", {}), **dd.get("devDependencies", {})}
+            except (json.JSONDecodeError, AttributeError):
+                continue
+            if any(key in ddeps for key, _ in KNOWN_FRAMEWORKS) or "tailwindcss" in ddeps:
+                workspace_apps.append(os.path.relpath(d, root))
+
     framework = next((label for key, label in KNOWN_FRAMEWORKS if key in deps), None)
     router = None
     if framework == "Next.js":
@@ -180,6 +209,7 @@ def detect_stack(root: Path) -> dict:
         "framework": framework,
         "router": router,
         "react": deps.get("react"),
+        "workspaceApps": workspace_apps,
         "tailwind": tw,
         "tailwindMajor": tw_major,
         "tailwindConfigFiles": [rel(root, p) for p in config_files],
@@ -409,6 +439,8 @@ def md(data: dict) -> str:
     if s["motion"]:
         bits.append("Motion: " + ", ".join(s["motion"]))
     out += ["## Stack", "- " + (" · ".join(bits) if bits else "no package.json or no recognised UI stack")]
+    if s.get("workspaceApps"):
+        out.append("- workspace root; the UI apps are: " + ", ".join(f"`{a}`" for a in s["workspaceApps"]) + " — run inspect.py on the one you are changing")
     if s.get("depsSource") and s["depsSource"] != "package.json":
         out.append(f"- dependencies read from `{s['depsSource']}` (workspace root)")
     out.append("")

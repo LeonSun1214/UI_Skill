@@ -1,0 +1,36 @@
+name: ui-craft
+on:
+  push:
+    paths: ["ui-craft/**", ".github/workflows/ui-craft.yml"]
+  pull_request:
+    paths: ["ui-craft/**"]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: npm, cache-dependency-path: ui-craft/scripts/package-lock.json }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Syntax
+        run: |
+          for f in ui-craft/scripts/*.mjs ui-craft/scripts/lib/*.mjs; do node --check "$f"; done
+          python3 -m py_compile ui-craft/scripts/inspect.py ui-craft/scripts/contrast.py ui-craft/evals/*.py
+      - name: Install runtime
+        working-directory: ui-craft/scripts
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Doctor
+        working-directory: ui-craft/scripts
+        run: node doctor.mjs
+      - name: Self-test (instruments + real-project options)
+        working-directory: ui-craft/scripts
+        run: node selftest.mjs
+      - name: contrast.py and inspect.py on the fixtures
+        run: |
+          python3 ui-craft/scripts/contrast.py '#6b615b' '#fbf8f3'
+          python3 ui-craft/scripts/contrast.py --css ui-craft/evals/fixtures/established/src/index.css --text ink,muted,brand --on surface,panel
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/established | head -20

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Late content</title>
+<style>
+  body { margin: 0; padding: 32px; font: 16px/1.5 system-ui, sans-serif; color: #1a1a1a; background: #fff; }
+  a { color: #1d4ed8; } a:hover { text-decoration: none; }
+  a:focus-visible { outline: 3px solid #1a1a1a; outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Loading…</h1>
+  <div id="app"></div>
+</main>
+<script>
+  // Simulates an SPA that hydrates after the network is idle: the real content (with a
+  // low-contrast link) only exists 1200ms after load. --wait-for #app [data-hydrated] catches it.
+  setTimeout(() => {
+    document.querySelector('h1').textContent = 'Hydrated';
+    const app = document.getElementById('app');
+    app.innerHTML = '<p>Content that arrived late. <a href="#" style="color:#9ca3af">A faint link (2.5:1)</a></p>';
+    app.dataset.hydrated = '1';
+  }, 1200);
+</script>
+</body>
+</html>
