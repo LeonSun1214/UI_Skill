@@ -1,7 +1,7 @@
 ---
 name: ui-craft
 metadata:
-  version: 0.5.0
+  version: 0.6.0
 description: >-
   Build, change, and review UI in React + Tailwind projects with a render → look → measure → fix loop, so what ships is checked against a real screenshot and real DOM measurements (contrast, tap targets, overflow, keyboard focus, motion) instead of guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "is this accessible", "check the mobile view" — even when they never say "design" or "UI". Also use it to inspect an existing project's design conventions before adding to it.
 ---
@@ -32,8 +32,8 @@ real leak in past runs:
    block at the end of `render.mjs` output *are* the report. Open `report.json` only
    to get the selector of a FAIL you're about to fix, and print that entry alone.
 3. **Don't write your own probes.** Contrast math → `contrast.py`. Screenshots and
-   measurements → `render.mjs`. If the loop can't measure something, say so in the
-   report instead of building a script for it.
+   measurements → `render.mjs`. Package, icon and font facts → `verify.py`. If the
+   loop can't measure something, say so in the report instead of building a script.
 4. **Images have a budget.** One contact sheet per round. At most one full-page
    screenshot per round, and only for a question you can name before opening it.
 5. **Don't audit the environment.** No checks of installed fonts, proxies, git-ignore
@@ -152,6 +152,21 @@ invent a new token when a matching one exists. Load a display face through
 `next/font` or a `<link>` with `preconnect`, not an `@import` inside CSS (it blocks
 rendering).
 
+When the code is written, before starting a server, check the facts you had to
+remember rather than read:
+
+```bash
+python3 <skill-dir>/scripts/verify.py <project-root>
+```
+
+It confirms every imported package is installed, every icon name is really
+exported by its package (with the closest real name when it isn't), every Google
+Fonts family and weight exists and carries the subset the page's language needs,
+and every `@font-face` file is there. Fix every FAIL — each one is a broken build
+or a font that silently falls back. A WARN about a missing language subset means
+the display face you chose won't render that script; pick one that does (Noto
+Serif SC, Noto Sans SC, LXGW WenKai …) or accept the fallback and say so.
+
 ### 4. Verify — the loop
 
 This is the part that produces quality. Don't skip it because the code looks right.
@@ -227,8 +242,8 @@ Don't work around these by hand; each has a flag, and the loop stays the same:
 
 ### 5. Report
 
-Paste the `Verified` block from the last render — don't recompute or reword its
-numbers — then three short lines:
+Paste the `Verified` block from the last render and the `Facts:` line from
+`verify.py` — don't recompute or reword their numbers — then three short lines:
 
 ```
 Verified (render.mjs · .ui-craft/pricing-2):
@@ -240,6 +255,7 @@ Verified (render.mjs · .ui-craft/pricing-2):
 - Motion: reduced-motion rule present · 3 animated elements
 - Names & alt: 0 unnamed controls · 0 images without alt · 1 h1 · 0 skipped heading levels
 - Fonts: 2 declared, all loaded
+Facts: 9 imports across 4 packages, 0 missing · 6 icon names checked, 0 wrong · 2 web fonts checked against Google Fonts, 0 missing · page language zh-cn · 0 warnings
 Not verifiable here: Fraunces didn't load (offline) — rendered with the fallback
 Inherited, not changed: the project's Input border is 1.34:1 on white; set --color-line to #948980 to fix
 Judgment calls: testimonials are 3-up at 1440; 2-up would breathe more
@@ -254,6 +270,7 @@ Include the contact-sheet path so the user can look too.
 | Starting on any existing codebase | run `scripts/inspect.py` — nothing else for a match task |
 | Choosing a look, or the output feels generic | `references/anti-generic.md` |
 | Picking token values, light or dark | run `scripts/contrast.py` |
+| Code written, before the first render | run `scripts/verify.py` |
 | Building a landing / dashboard / form / auth / empty state from scratch | that one section of `references/patterns.md` |
 | A rule the loop can't measure (forms, zoom, dragging, flashing) | that section of `references/constraints.md` |
 | The contact sheet raised a doubt | sections 1, 2, 9 of `references/critique-rubric.md`; the rest only for a long greenfield page |

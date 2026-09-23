@@ -18,6 +18,7 @@ The model already knows what glassmorphism is.
 | "跟现有页面风格完全一致" | the model guesses the conventions | `inspect.py` lists the tokens, radius, shadow, primitives the code uses; the new page reuses them |
 | "加上深色模式" | colours chosen by eye | the dark rendering audited like the light one — the input border that reads fine on white and vanishes on dark is a number in the report |
 | "看起来太像 AI 模板" | a different template | a before/after render, the template tells named, one deliberate move |
+| a Chinese page set in Fraunces, an icon that lucide never had | a broken build or a silent fallback | `verify.py` names the invented package, icon or font before the first render |
 
 Measured against [ui-ux-pro-max](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill)
 and against no skill on four tasks (greenfield landing page, page in an established
@@ -94,6 +95,7 @@ All standard tools; the skill calls them, and so can you.
 | `scripts/render.mjs <url\|file>` | screenshots + audits at 375/768/1440, dark pass when the page has a dark rule, `contact.png`, `report.json`, the `Verified` block |
 | `scripts/inspect.py <project>` | stack, declared tokens, fonts, primitives, and the classes the code actually uses; verdict *match* or *establish* |
 | `scripts/contrast.py fg bg …` / `--css tokens.css` | WCAG ratios for pairs or a token file, light and dark side by side |
+| `scripts/verify.py <project>` | the facts a model invents: imported packages installed, icon names exported, Google Fonts families/weights real and carrying the page's language subset, `@font-face` files present |
 | `scripts/harness.mjs` | component-in-isolation page for Vite + React |
 | `scripts/login-state.mjs` | capture a logged-in session for `--storage-state` |
 | `scripts/doctor.mjs` (`npm run doctor`) | is this machine ready? |

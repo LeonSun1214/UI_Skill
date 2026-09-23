@@ -1,0 +1,1 @@
+{ "name": "facts-test", "private": true, "description": "Planted hallucinations for verify.py: 2 wrong icon names, 1 missing package, 1 fake Google Font, 1 missing @font-face file (5 FAILs); plus CJK-subset and unloaded-font warnings." }

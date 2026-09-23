@@ -29,6 +29,11 @@ jobs:
       - name: Self-test (instruments + real-project options)
         working-directory: ui-craft/scripts
         run: node selftest.mjs
+      - name: verify.py catches the planted facts (5 FAILs expected)
+        run: |
+          (cd ui-craft/evals/fixtures && npm ci --no-audit --no-fund)
+          python3 ui-craft/scripts/verify.py ui-craft/evals/fixtures/facts-test | tee /tmp/facts.txt
+          test "$(grep -c '^FAIL' /tmp/facts.txt)" = "5"
       - name: contrast.py and inspect.py on the fixtures
         run: |
           python3 ui-craft/scripts/contrast.py '#6b615b' '#fbf8f3'

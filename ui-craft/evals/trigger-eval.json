@@ -1,0 +1,22 @@
+[
+  {"query": "我在做一个给独立开发者用的开票工具，Vite + React + Tailwind 4，App.tsx 基本是空的。帮我做个落地页，核心卖点是自动从 Stripe 拉账单、一键生成合规发票、多币种。要有定价区（Free 和 Pro $12/月），做完让我能在浏览器里看到。", "should_trigger": true},
+  {"query": "在 src/pages/settings 下加一个「通知设置」页面（路由 /settings/notifications）：邮件通知开关、每周摘要开关、推送时段选择、保存按钮。要跟现有的 Profile 页风格完全一致，别自己发挥。", "should_trigger": true},
+  {"query": "our marketing homepage in src/App.tsx looks exactly like every other AI-generated SaaS template (indigo gradient hero, three feature cards with icons in circles). boss says it has no identity. product is a restaurant queue/paging system. make it feel like ours without touching the copy or the section order", "should_trigger": true},
+  {"query": "给 Maple Books 加深色模式，跟随系统 prefers-color-scheme，总览页和设置页都要。现有的浅色一点都不能变，深色下的可读性要和浅色一样好。", "should_trigger": true},
+  {"query": "can you check whether the checkout form in apps/web/src/checkout/Form.tsx is actually accessible? a customer said they couldn't tab through it and the error messages are hard to read. we use react-hook-form and tailwind", "should_trigger": true},
+  {"query": "the dashboard at /admin looks fine on my monitor but on my phone the stat cards overflow sideways and the table is unreadable. next 15 app router, tailwind v4. fix the mobile view pls", "should_trigger": true},
+  {"query": "这个 Modal 组件（src/components/ui/Modal.tsx）看着有点土，帮我 polish 一下，间距、字号、按钮层级都可以调，但别换设计语言，项目里其他组件都是这种风格", "should_trigger": true},
+  {"query": "我们要开始做一个新产品的前台，还没写代码。先帮我把设计方向定下来：字体、配色、圆角、间距这些 token 写到 src/index.css 的 @theme 里，然后做一个登录页试试这套 token。", "should_trigger": true},
+  {"query": "empty state for the Projects list when a user has zero projects — right now it's just a blank div. needs an illustration-free design that fits our existing cards (see src/components/ProjectCard.tsx), a primary 'New project' action, and it has to work at 375px", "should_trigger": true},
+  {"query": "before I open the PR, can you take a look at the new pricing page and tell me if anything looks off? it's at localhost:5173/pricing. I mostly care about hierarchy and whether the Pro plan reads as the recommended one", "should_trigger": true},
+  {"query": "帮我写一个 Express 的 /api/invoices 接口，从 Stripe 拉过去 30 天的 invoice 列表，加上分页和错误处理，返回 JSON。", "should_trigger": false},
+  {"query": "our vite build is failing after upgrading to tailwind v4 — 'Cannot apply unknown utility class bg-brand'. here's the error and my vite.config.ts. I think it's the @theme migration but not sure", "should_trigger": false},
+  {"query": "write playwright e2e tests for the checkout flow: add item, apply coupon, pay with the test card, assert the confirmation page shows the order id. tests live in e2e/ and we use the page object pattern", "should_trigger": false},
+  {"query": "I have monthly revenue by region in data/revenue.csv (columns: month, region, revenue, target). make a chart that shows each region's revenue against target over the last 12 months, something I can drop into our weekly deck", "should_trigger": false},
+  {"query": "帮我做一个 10 页的 PPT 介绍我们的排队叫号系统，面向餐饮连锁的老板，要有产品截图位、定价对比和客户案例，输出 pptx。", "should_trigger": false},
+  {"query": "design a logo for 'Ledgerly', an invoicing tool for indie devs — something with a ledger/book motif, works small as a favicon, give me a few directions as png", "should_trigger": false},
+  {"query": "the ProfileSettings component re-renders on every keystroke and the form feels laggy. it's a controlled form with ~30 fields in one useState object. refactor it so typing in one field doesn't re-render the whole thing", "should_trigger": false},
+  {"query": "set up a design tokens package in our monorepo: primitive → semantic → component layers, export as CSS variables and a JSON for Figma tokens studio, with a build step in turbo. no UI code yet, just the token pipeline", "should_trigger": false},
+  {"query": "我们的 React 项目要加 i18n，中英文切换，用 react-i18next，把 src/pages 下现有的文案抽到 locales/zh.json 和 en.json 里，导航栏加个语言切换。", "should_trigger": false},
+  {"query": "write the copy for our landing page hero and the three feature blurbs. product: automatic invoicing from Stripe for solo developers. tone: dry, no enterprise buzzwords. just the text, the page already exists", "should_trigger": false}
+]

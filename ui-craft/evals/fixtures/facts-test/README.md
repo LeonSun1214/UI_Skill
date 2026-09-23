@@ -1,0 +1,1 @@
+Test project for `scripts/verify.py`. Expected: exactly 5 FAIL lines (Bogus, FakeIcon, not-installed-pkg, Frauncez, /fonts/maple-display.woff2) and 3 WARN lines. `node_modules` is a relative symlink to the shared fixtures install.

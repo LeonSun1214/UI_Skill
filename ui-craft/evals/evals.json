@@ -22,7 +22,8 @@
         "motion: either no CSS animations run, or a prefers-reduced-motion rule exists",
         "report-numbers: SUMMARY.md reports measured numbers for contrast and tap targets, not just adjectives",
         "hover-feedback: every button and standalone link changes at least one visible property on hover (the page must not exist in one state only)",
-        "non-text-contrast: every control that is identified by its boundary — form fields, icon-only buttons, switches — reaches 3:1 against its surroundings in the light rendering (WCAG 1.4.11); a text-labelled button with a <3:1 surface is warned, not failed"
+        "non-text-contrast: every control that is identified by its boundary — form fields, icon-only buttons, switches — reaches 3:1 against its surroundings in the light rendering (WCAG 1.4.11); a text-labelled button with a <3:1 surface is warned, not failed",
+        "facts: verify.py finds no invented facts in the project — every imported package is installed, every icon name is exported by its package, every Google Fonts family and weight exists and @font-face files are present"
       ]
     },
     {
@@ -46,7 +47,8 @@
         "save-feedback: saving gives visible confirmation — the page source has a live region (role=status / aria-live) or shows 已保存",
         "summary-matches: SUMMARY.md names at least one existing primitive or token it reused (Switch, Button, Card, Field, brand, Fraunces, rounded-md)",
         "hover-feedback: every button and standalone link changes at least one visible property on hover (the page must not exist in one state only)",
-        "non-text-contrast: every control that is identified by its boundary — form fields, icon-only buttons, switches — reaches 3:1 against its surroundings in the light rendering (WCAG 1.4.11); a text-labelled button with a <3:1 surface is warned, not failed"
+        "non-text-contrast: every control that is identified by its boundary — form fields, icon-only buttons, switches — reaches 3:1 against its surroundings in the light rendering (WCAG 1.4.11); a text-labelled button with a <3:1 surface is warned, not failed",
+        "facts: verify.py finds no invented facts in the project — every imported package is installed, every icon name is exported by its package, every Google Fonts family and weight exists and @font-face files are present"
       ]
     },
     {
@@ -69,7 +71,8 @@
         "before-after: outputs contain both a before render and an after render of the page (screenshots)",
         "summary-critique: SUMMARY.md names at least two specific template tells it removed (indigo/靛蓝/紫, 渐变/gradient, 图标/圆, Inter/字体, 模板/template)",
         "hover-feedback: every button and standalone link changes at least one visible property on hover (the page must not exist in one state only)",
-        "non-text-contrast: every control that is identified by its boundary — form fields, icon-only buttons, switches — reaches 3:1 against its surroundings in the light rendering (WCAG 1.4.11); a text-labelled button with a <3:1 surface is warned, not failed"
+        "non-text-contrast: every control that is identified by its boundary — form fields, icon-only buttons, switches — reaches 3:1 against its surroundings in the light rendering (WCAG 1.4.11); a text-labelled button with a <3:1 surface is warned, not failed",
+        "facts: verify.py finds no invented facts in the project — every imported package is installed, every icon name is exported by its package, every Google Fonts family and weight exists and @font-face files are present"
       ]
     },
     {
@@ -90,7 +93,8 @@
         "hover-feedback: every button and standalone link changes at least one visible property on hover",
         "no-raw-palette: source still contains zero raw Tailwind palette classes — dark values are added as tokens, not sprinkled as dark:bg-zinc-900",
         "tokens-unchanged: the light @theme block in src/index.css keeps its values (dark values are added, light ones untouched)",
-        "summary-dark-numbers: SUMMARY.md reports measured dark-mode numbers (contrast checked / failures), not just 'supports dark mode'"
+        "summary-dark-numbers: SUMMARY.md reports measured dark-mode numbers (contrast checked / failures), not just 'supports dark mode'",
+        "facts: verify.py finds no invented facts in the project — every imported package is installed, every icon name is exported by its package, every Google Fonts family and weight exists and @font-face files are present"
       ]
     }
   ]

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.0 — facts, and a tuned description
+
+- `verify.py`: every imported package must be installed, every icon name exported by
+  its package (closest real name suggested), every Google Fonts family and weight
+  must exist and carry the subset the page's language needs, every `@font-face`
+  file must exist; a font-family nothing loads is a WARN. Bundled catalog of 1,908
+  Google Fonts families (`scripts/data/google-fonts.json`, Jan 2026 snapshot).
+- `facts` assertion in every eval; SKILL.md runs `verify.py` before the first render
+  and pastes its `Facts:` line into the report.
+- The description was re-tuned on a 20-query trigger eval set (see
+  `evals/trigger-eval.json`).
+
 ## 0.5.0 — real projects, and a product
 
 - `render.mjs`: `--storage-state`, `--cookie`, `--header`, `--auth` (logged-in pages);

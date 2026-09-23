@@ -417,6 +417,20 @@ def c_summary_critique(ctx):
     return (len(groups) >= 2), (f"{len(groups)} tell groups named: {[g.split('|')[0] for g in groups]}" if s else "no SUMMARY.md")
 
 
+def c_facts(ctx):
+    """verify.py finds no hallucinated package, icon name or web font in the run's project."""
+    project = ctx.get("project")
+    if not project or not Path(project).is_dir():
+        return False, "no project directory"
+    r = subprocess.run([sys.executable, str(SKILL / "scripts" / "verify.py"), str(project)], capture_output=True, text=True, timeout=120)
+    lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
+    fails = [ln for ln in lines if ln.startswith("FAIL")]
+    facts = next((ln for ln in lines if ln.startswith("Facts:")), "")
+    if fails:
+        return False, f"{len(fails)} invented facts: " + " | ".join(f[6:] for f in fails[:3])
+    return True, facts[7:] if facts else "verify.py ran, no FAIL lines"
+
+
 def c_summary_dark_numbers(ctx):
     s = ctx["summary"]
     if not s:
@@ -442,6 +456,7 @@ CHECKERS = {
     "hover-feedback": c_hover_feedback, "non-text-contrast": c_non_text_contrast,
     "dark-support": c_dark_support, "dark-contrast": c_dark_contrast, "light-unchanged": c_light_unchanged,
     "summary-dark-numbers": c_summary_dark_numbers,
+    "facts": c_facts,
 }
 
 
@@ -451,7 +466,7 @@ def grade_run(eval_dir: Path, meta: dict, run: Path, port: int, skip_render: boo
     eval_id = int(meta["eval_id"])
     files = source_files(project) if project.exists() else {}
     ctx = {
-        "eval_id": eval_id, "files": files,
+        "eval_id": eval_id, "files": files, "project": str(project),
         "src": "\n".join(files.values()),
         "css": "\n".join(t for p, t in files.items() if p.endswith(".css")),
         "summary": read(outputs / "SUMMARY.md"),

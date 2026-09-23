@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+/* Maple Books design tokens — warm paper, terracotta accent, one radius, no shadows. */
+@theme {
+  --color-brand: #b5451b;
+  --color-brand-strong: #8f3413;
+  --color-brand-soft: #f6e7df;
+  --color-brand-fg: #ffffff;
+  --color-surface: #fbf8f3;
+  --color-panel: #ffffff;
+  --color-ink: #2a2320;
+  --color-muted: #6b615b;
+  --color-line: #e5ddd3;
+  --color-success: #2f6b3a;
+  --color-danger: #b42318;
+
+  --font-display: "Fraunces", Georgia, serif;
+  --font-mono: "Bricolage Grotesque", ui-monospace, monospace;
+  --font-body: "IBM Plex Sans", system-ui, sans-serif;
+
+  --radius-md: 6px;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-body);
+    color: var(--color-ink);
+    background: var(--color-surface);
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    letter-spacing: -0.01em;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      transition-duration: 0.01ms !important;
+      animation-duration: 0.01ms !important;
+    }
+  }
+}
+
+@font-face {
+  font-family: "Maple Display";
+  src: url("/fonts/maple-display.woff2") format("woff2");
+}
