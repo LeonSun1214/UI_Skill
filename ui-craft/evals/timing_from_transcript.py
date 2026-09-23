@@ -67,6 +67,11 @@ def summarize(path: Path) -> dict:
             resume_cache += int(u.get("cache_creation_input_tokens", 0) or 0)
         if cur is not None:
             prev = cur
+    # The first request of a run either pays the cache write for the harness prefix (system
+    # prompt + tool definitions, ~30k) or gets it free from a sibling run that started minutes
+    # earlier. Add back what came free so every run carries the prefix exactly once.
+    first_usage = next(iter(usage_by_id.values()), {})
+    prefix_free = int(first_usage.get("cache_read_input_tokens", 0) or 0)
     wall = (parse_ts(last) - parse_ts(first)).total_seconds() if first and last else None
     stamps.sort()
     gaps = [(b - a).total_seconds() for a, b in zip(stamps, stamps[1:])]
@@ -85,6 +90,8 @@ def summarize(path: Path) -> dict:
         "total_tokens": tot["input_tokens"] + tot["output_tokens"] + tot["cache_creation_input_tokens"],
         "resume_cache_write_tokens": resume_cache,
         "total_tokens_excl_resume": tot["input_tokens"] + tot["output_tokens"] + tot["cache_creation_input_tokens"] - resume_cache,
+        "prefix_cached_free_tokens": prefix_free,
+        "total_tokens_comparable": tot["input_tokens"] + tot["output_tokens"] + tot["cache_creation_input_tokens"] - resume_cache + prefix_free,
         "tokens_incl_cache_read": sum(tot.values()),
         "source": "transcript-derived (sum of input+output+cache_creation per unique message)",
     }

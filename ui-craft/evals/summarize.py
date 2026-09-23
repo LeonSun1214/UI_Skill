@@ -34,7 +34,7 @@ def collect(it: Path):
                 failed = [e["text"].split(":")[0] for e in g["expectations"] if not e["passed"]]
                 rows.append((eval_dir.name, cfg.name, run.name, g["summary"]["passed"], g["summary"]["total"],
                              t.get("total_tokens"), t.get("total_duration_seconds"), failed,
-                             t.get("total_tokens_excl_resume")))
+                             t.get("total_tokens_comparable") or t.get("total_tokens_excl_resume")))
     return rows
 
 
@@ -70,9 +70,9 @@ def table(rows):
     for c in cfgs:
         toks = [r[8] for r in rows if r[1] == c and r[8]]
         excl.append(f"{statistics.mean(toks):,.0f}" if toks else "—")
-    out.append("| token mean excl. outage re-cache | " + " | ".join(excl) + " |")
+    out.append("| token mean, comparable | " + " | ".join(excl) + " |")
     out.append("")
-    out.append("(a)k (b)k = billed tokens (billed minus the cache re-write after a rate-limit interruption)")
+    out.append("(a)k (b)k = billed tokens (comparable: minus the cache re-write after an interruption, plus the harness-prefix cache write when a sibling run had paid it)")
     return "\n".join(out), cfgs
 
 
