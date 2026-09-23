@@ -33,7 +33,8 @@ def collect(it: Path):
                 t = load(run / "timing.json") or {}
                 failed = [e["text"].split(":")[0] for e in g["expectations"] if not e["passed"]]
                 rows.append((eval_dir.name, cfg.name, run.name, g["summary"]["passed"], g["summary"]["total"],
-                             t.get("total_tokens"), t.get("total_duration_seconds"), failed))
+                             t.get("total_tokens"), t.get("total_duration_seconds"), failed,
+                             t.get("total_tokens_excl_resume")))
     return rows
 
 
@@ -51,6 +52,8 @@ def table(rows):
                 continue
             r = rs[0]
             tok = f" · {r[5] / 1000:.0f}k" if r[5] else ""
+            if r[5] and r[8] and r[8] != r[5]:
+                tok += f" ({r[8] / 1000:.0f}k)"
             cells.append(f"{r[3]}/{r[4]}{tok}")
         out.append(f"| {ev} | " + " | ".join(cells) + " |")
     tot = []
@@ -63,12 +66,19 @@ def table(rows):
         toks = [r[5] for r in rows if r[1] == c and r[5]]
         means.append(f"{statistics.mean(toks):,.0f}" if toks else "—")
     out.append("| token mean | " + " | ".join(means) + " |")
+    excl = []
+    for c in cfgs:
+        toks = [r[8] for r in rows if r[1] == c and r[8]]
+        excl.append(f"{statistics.mean(toks):,.0f}" if toks else "—")
+    out.append("| token mean excl. outage re-cache | " + " | ".join(excl) + " |")
+    out.append("")
+    out.append("(a)k (b)k = billed tokens (billed minus the cache re-write after a rate-limit interruption)")
     return "\n".join(out), cfgs
 
 
 def failures(rows):
     out = []
-    for ev, cfg, run, p, t, tok, sec, failed in rows:
+    for ev, cfg, run, p, t, tok, sec, failed, _ in rows:
         if failed:
             out.append(f"- {ev} · {cfg}: " + ", ".join(failed))
     return "\n".join(out) or "- none"
