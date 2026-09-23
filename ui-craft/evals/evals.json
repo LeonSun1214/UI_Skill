@@ -75,7 +75,7 @@
     {
       "id": 4,
       "name": "dark-mode",
-      "prompt": "给 Maple Books 加上深色模式：跟随系统的 prefers-color-scheme，总览页和两个设置页都要支持。现有的浅色外观一点都不能变，深色下的可读性要和浅色一样好。",
+      "prompt": "给 Maple Books 加上深色模式：跟随系统的 prefers-color-scheme，总览页和个人资料设置页都要支持。现有的浅色外观一点都不能变，深色下的可读性要和浅色一样好。",
       "files": [
         "fixtures/established"
       ],
