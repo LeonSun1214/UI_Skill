@@ -33,7 +33,7 @@ HERE = Path(__file__).resolve().parent          # <skill>/evals
 SKILL = HERE.parent                                 # <skill>
 RENDER = SKILL / "scripts" / "render.mjs"
 FIXTURES = SKILL / "evals" / "fixtures"
-ROUTES = {1: "/", 2: "/settings/notifications", 3: "/", 4: "/"}
+ROUTES = {1: ["/"], 2: ["/settings/notifications"], 3: ["/"], 4: ["/", "/settings/profile"]}  # every route is graded
 FIXTURE_FOR = {1: "greenfield", 2: "established", 3: "generic", 4: "established"}
 FIXTURE_LIGHT_BG = {4: "rgb(251, 248, 243)"}  # Maple Books paper — must survive a dark-mode addition
 # Maple Books ships `--color-line: #e5ddd3` (1.35:1 on white) on its Field border and Switch track. The
@@ -458,20 +458,44 @@ def grade_run(eval_dir: Path, meta: dict, run: Path, port: int, skip_render: boo
         "outputs": [str(p.relative_to(outputs)) for p in outputs.rglob("*") if p.is_file()] if outputs.exists() else [],
         "rep": None, "render_error": "",
     }
-    out = run / "grader-render"
+    # One render per route: grader-render (first route), grader-render-2, ... Render-based
+    # assertions must hold on every route.
+    routes = ROUTES[eval_id]
+    outs = [run / ("grader-render" if i == 0 else f"grader-render-{i + 1}") for i in range(len(routes))]
+    out = outs[0]
+    reps: list[tuple[str, dict | None]] = []
     if not project.exists():
         ctx["render_error"] = "no project directory"
-    elif skip_render and (out / "report.json").exists():
-        ctx["rep"] = json.loads(read(out / "report.json"))
+    elif skip_render and all((o / "report.json").exists() for o in outs):
+        reps = [(r, json.loads(read(o / "report.json"))) for r, o in zip(routes, outs)]
     else:
         proc = boot(project, port, run / "grader-vite.log")
         if proc is None:
             ctx["render_error"] = "dev server did not start: " + read(run / "grader-vite.log")[-300:]
         else:
             try:
-                ctx["rep"], ctx["render_error"] = render(port, ROUTES[eval_id], out)
+                for r, o in zip(routes, outs):
+                    rep, err = render(port, r, o)
+                    reps.append((r, rep))
+                    if err and not ctx["render_error"]:
+                        ctx["render_error"] = f"{r}: {err}"
             finally:
                 stop(proc)
+    ctx["rep"] = reps[0][1] if reps else None
+    ctx["reps"] = reps
+
+    def run_checker(fn, key):
+        if key not in NEEDS_RENDER or len(reps) <= 1:
+            return fn(ctx)
+        results = []
+        for route, rep in reps:
+            if rep is None:
+                results.append((False, f"{route}: not rendered"))
+                continue
+            sub = dict(ctx, rep=rep)
+            ok, ev = fn(sub)
+            results.append((bool(ok), f"{route}: {ev}"))
+        return all(ok for ok, _ in results), " | ".join(ev for _, ev in results)
 
     expectations = []
     for text in meta.get("assertions", []):
@@ -484,10 +508,10 @@ def grade_run(eval_dir: Path, meta: dict, run: Path, port: int, skip_render: boo
             passed, evidence = False, "not rendered: " + (ctx["render_error"] or "unknown")
         else:
             try:
-                passed, evidence = fn(ctx)
+                passed, evidence = run_checker(fn, key)
             except Exception as e:  # a checker crash is a failed check with a reason
                 passed, evidence = False, f"checker error: {type(e).__name__}: {e}"
-        expectations.append({"text": text, "passed": bool(passed), "evidence": str(evidence)[:400]})
+        expectations.append({"text": text, "passed": bool(passed), "evidence": str(evidence)[:600]})
 
     passed = sum(1 for e in expectations if e["passed"])
     grading = {
@@ -496,6 +520,7 @@ def grade_run(eval_dir: Path, meta: dict, run: Path, port: int, skip_render: boo
                     "pass_rate": round(passed / len(expectations), 4) if expectations else 0.0},
         "grader": "grade.py (programmatic; re-rendered with render.mjs)",
         "render_dir": str(out.relative_to(run)) if ctx["rep"] else None,
+        "routes": routes,
     }
     # Timing stays in the sibling timing.json: the aggregator only reads tokens from
     # there, and only when grading.json carries no timing of its own.
