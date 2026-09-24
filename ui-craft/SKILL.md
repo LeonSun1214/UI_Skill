@@ -3,7 +3,7 @@ name: ui-craft
 metadata:
   version: 0.6.0
 description: >-
-  Build, change, and review UI in React + Tailwind projects with a render → look → measure → fix loop, so what ships is checked against a real screenshot and real DOM measurements (contrast, tap targets, overflow, keyboard focus, motion) instead of guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "is this accessible", "check the mobile view" — even when they never say "design" or "UI". Also use it to inspect an existing project's design conventions before adding to it.
+  Build, change, and review UI in React + Tailwind projects (Vite, Next.js) with a render → look → measure → fix loop, so what ships is checked against a real screenshot and real DOM measurements (contrast, tap targets, overflow, keyboard focus, hover, motion, dark mode) instead of guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even when they never say "design" or "UI". Also use it to inspect an existing project's design conventions before adding to it.
 ---
 
 # ui-craft
