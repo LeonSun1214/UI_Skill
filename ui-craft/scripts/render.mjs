@@ -612,6 +612,13 @@ for (const width of opt.viewports) {
     await context.addCookies(opt.cookies.map((c) => ({ ...c, url })));
   }
   if (opt.initScript) await context.addInitScript({ path: opt.initScript });
+  // `scroll-behavior: smooth` makes scrollTo() animate, so a fold screenshot taken right after
+  // "scroll back to top" can land mid-way down the page. Measure with instant scrolling; the
+  // page's own transitions are untouched.
+  await context.addInitScript(() => {
+    const fix = () => { const st = document.createElement('style'); st.setAttribute('data-ui-craft', 'scroll'); st.textContent = 'html, body { scroll-behavior: auto !important; }'; (document.head || document.documentElement).appendChild(st); };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fix); else fix();
+  });
   for (const m of opt.mocks) {
     const body = readFileSync(m.file);
     const type = /\.json$/i.test(m.file) ? 'application/json' : /\.html?$/i.test(m.file) ? 'text/html' : /\.js$/i.test(m.file) ? 'application/javascript' : /\.png$/i.test(m.file) ? 'image/png' : /\.svg$/i.test(m.file) ? 'image/svg+xml' : 'text/plain';

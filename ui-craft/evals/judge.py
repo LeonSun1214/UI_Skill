@@ -5,11 +5,11 @@ Uses `claude -p` (the Claude Code CLI, with the account's own auth) to look at e
 contact sheet (three viewports above the fold, one image) and grade it against
 references/critique-rubric.md. Two modes:
 
-  python3 judge.py score <iteration-dir> [--only EVAL] [--config CFG] [--model M] [--force]
+  python3 judge.py score <iteration-dir> [--only EVAL] [--config CFG] [--model M] [--force] [--dark]
       writes <run>/judge.json: six 1–5 scores (hierarchy, distinctive, typography, spacing,
       color, overall) + one sentence each. Skips runs that already have judge.json unless --force.
 
-  python3 judge.py pair <iteration-dir> --a with_skill --b ui_ux_pro_max [--only EVAL] [--model M]
+  python3 judge.py pair <iteration-dir> --a with_skill --b ui_ux_pro_max [--only EVAL] [--model M] [--dark]
       for every eval, shows both contact sheets and asks which page a design lead would ship;
       asked twice with the images swapped, so a position preference cancels out. Writes
       <iteration>/judge-pairs.json and prints a table.
@@ -28,7 +28,7 @@ HERE = Path(__file__).resolve().parent
 RUBRIC = HERE.parent / "references" / "critique-rubric.md"
 DIMENSIONS = ["hierarchy", "distinctive", "typography", "spacing", "color", "overall"]
 
-SCORE_PROMPT = """You are a senior product designer reviewing a web page from screenshots. Use the Read tool to view the image at {image}. It is a contact sheet: the same page above the fold at 375, 768 and 1440 px, side by side.
+SCORE_PROMPT = """You are a senior product designer reviewing a web page from screenshots. Use the Read tool to view the image at {image}. It is a contact sheet: the same page above the fold at 375, 768 and 1440 px, side by side{dark_note}.
 
 Judge what the pixels show against this rubric (excerpt):
 - Hierarchy: one thing wins the first three seconds, then a clear second and third; size, weight and colour change between levels; one primary action per view.
@@ -41,7 +41,7 @@ Judge what the pixels show against this rubric (excerpt):
 Score each 1–5 (1 = template-grade or broken, 3 = competent and forgettable, 5 = a page a good studio would put in its portfolio). Be strict: 4 and 5 must be earned. Reply with ONLY a JSON object, no prose before or after:
 {{"hierarchy": n, "distinctive": n, "typography": n, "spacing": n, "color": n, "overall": n, "notes": {{"hierarchy": "...", "distinctive": "...", "typography": "...", "spacing": "...", "color": "...", "overall": "..."}}}}"""
 
-PAIR_PROMPT = """You are a design lead choosing between two implementations of the same brief. Use the Read tool to view image A at {a} and then image B at {b}. Each is a contact sheet of one page above the fold at 375, 768 and 1440 px.
+PAIR_PROMPT = """You are a design lead choosing between two implementations of the same brief. Use the Read tool to view image A at {a} and then image B at {b}. Each is a contact sheet of one page above the fold at 375, 768 and 1440 px{dark_note}.
 
 The brief both were built for: {brief}
 
@@ -73,8 +73,12 @@ def call_claude(prompt: str, cwd: Path, model: str | None, timeout: int = 240) -
     return data
 
 
+DARK = False  # set by --dark: judge the dark-mode contact sheets instead of the light ones
+
+
 def contact_for(run: Path) -> Path | None:
-    for cand in (run / "grader-render" / "contact.png", run / "outputs" / "after-contact.png", run / "outputs" / "render" / "contact.png"):
+    name = "contact-dark.png" if DARK else "contact.png"
+    for cand in (run / "grader-render" / name, run / "outputs" / f"after-{name}", run / "outputs" / "render" / name):
         if cand.exists():
             return cand
     return None
@@ -103,14 +107,14 @@ def cmd_score(it: Path, only, config, model, force):
     total_cost = 0.0
     rows = []
     for eval_dir, cfg, run in runs_in(it, only, config):
-        out = run / "judge.json"
+        out = run / ("judge-dark.json" if DARK else "judge.json")
         if out.exists() and not force:
             data = json.loads(out.read_text(encoding="utf-8"))
         else:
             img = contact_for(run)
             if not img:
                 print(f"{eval_dir.name:32} {cfg.name:14} no contact sheet"); continue
-            data = call_claude(SCORE_PROMPT.format(image=img), cwd=img.parent, model=model)
+            data = call_claude(SCORE_PROMPT.format(image=img, dark_note=" — rendered in dark mode (prefers-color-scheme: dark); judge it as a dark theme" if DARK else ""), cwd=img.parent, model=model)
             if not data or "_error" in (data or {}):
                 print(f"{eval_dir.name:32} {cfg.name:14} judge failed: {(data or {}).get('_error', 'timeout')}"); continue
             data["image"] = str(img.relative_to(run))
@@ -141,7 +145,7 @@ def cmd_pair(it: Path, a: str, b: str, only, model):
         brief = brief_of(eval_dir)[:400]
         votes = []
         for order, (x, y) in enumerate(((ia, ib), (ib, ia))):
-            data = call_claude(PAIR_PROMPT.format(a=x, b=y, brief=brief), cwd=it, model=model)
+            data = call_claude(PAIR_PROMPT.format(a=x, b=y, brief=brief, dark_note=", rendered in dark mode" if DARK else ""), cwd=it, model=model)
             if not data or "_error" in data:
                 votes.append({"order": order, "winner": None, "error": (data or {}).get("_error", "timeout")}); continue
             total_cost += float(data.get("_cost") or 0)
@@ -153,7 +157,7 @@ def cmd_pair(it: Path, a: str, b: str, only, model):
         verdict = picks[0] if len(picks) == 2 and picks[0] == picks[1] else ("split" if len(picks) == 2 else "incomplete")
         results[eval_dir.name] = {"a": a, "b": b, "votes": votes, "verdict": verdict}
         print(f"{eval_dir.name:32} {verdict:14} " + " | ".join(f"{v.get('picked', '?')} ({v.get('confidence', '?')}) {str(v.get('reason', v.get('error', '')))[:90]}" for v in votes))
-    out = it / "judge-pairs.json"
+    out = it / ("judge-pairs-dark.json" if DARK else "judge-pairs.json")
     existing = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {}
     existing[f"{a}_vs_{b}"] = results
     out.write_text(json.dumps(existing, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -170,6 +174,8 @@ def main() -> int:
     opt = lambda flag, default=None: a[a.index(flag) + 1] if flag in a else default
     it = Path(a[1]).resolve()
     model = opt("--model", "claude-fable-5-1")
+    global DARK
+    DARK = "--dark" in a
     if a[0] == "score":
         cmd_score(it, opt("--only"), opt("--config"), model, "--force" in a)
     elif a[0] == "pair":
