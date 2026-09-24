@@ -159,7 +159,10 @@ def cmd_pair(it: Path, a: str, b: str, only, model):
         print(f"{eval_dir.name:32} {verdict:14} " + " | ".join(f"{v.get('picked', '?')} ({v.get('confidence', '?')}) {str(v.get('reason', v.get('error', '')))[:90]}" for v in votes))
     out = it / ("judge-pairs-dark.json" if DARK else "judge-pairs.json")
     existing = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {}
-    existing[f"{a}_vs_{b}"] = results
+    merged = existing.get(f"{a}_vs_{b}", {})
+    merged.update(results)  # a --only run refreshes one eval and keeps the others
+    existing[f"{a}_vs_{b}"] = merged
+    results = merged
     out.write_text(json.dumps(existing, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     wins = {a: 0, b: 0, "split": 0}
     for r in results.values():

@@ -27,12 +27,17 @@ grader that re-renders every output:
 
 | | ui-craft | ui-ux-pro-max | no skill |
 |---|---|---|---|
-| assertions passed | **49 / 49** | 45 / 49 | 40 / 49 |
+| assertions passed | **53 / 53** | 49 / 53 | 44 / 53 |
 | tokens per task (comparable, evals 1–3) | 194k | 201k | 164k |
+| visual judge, overall 1–5 (evals 1–3) | 3.67 | 3.33 | 3.67 |
+| pairwise vs ui-craft, both orders | — | 0–2, 1 split | 1–1, 1 split |
 
 The misses of the other two are what a renderer catches and a database cannot: text at
 4.37:1 reported as "≥ 4.5:1", buttons that change nothing on hover, dark-mode input
-borders at 1.35:1 described as intentional. Details in `evals/` and the sprint notes.
+borders at 1.35:1 described as intentional. On looks alone — a vision model scoring
+the contact sheets blind — ui-craft is level with a strong model working unaided
+and a little ahead of ui-ux-pro-max. The advantage is verification, not taste; the
+notes say so. Details in `evals/` and the sprint notes.
 
 ## Install
 

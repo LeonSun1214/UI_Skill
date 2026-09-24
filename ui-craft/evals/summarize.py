@@ -136,6 +136,8 @@ def main():
     if pairs:
         print("\nVisual judge, pairwise (both image orders; 'split' = the two orders disagreed):")
         for key, res in pairs.items():
+            if key.startswith("_") or "_vs_" not in key:
+                continue
             a, b = key.split("_vs_")
             wins = {a: 0, b: 0, "split": 0}
             for ev, r in res.items():
