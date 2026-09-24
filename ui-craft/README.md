@@ -96,6 +96,7 @@ All standard tools; the skill calls them, and so can you.
 | `scripts/inspect.py <project>` | stack, declared tokens, fonts, primitives, and the classes the code actually uses; verdict *match* or *establish* |
 | `scripts/contrast.py fg bg …` / `--css tokens.css` | WCAG ratios for pairs or a token file, light and dark side by side |
 | `scripts/verify.py <project>` | the facts a model invents: imported packages installed, icon names exported, Google Fonts families/weights real and carrying the page's language subset, `@font-face` files present |
+| `scripts/direction.py init / check --fix / write / from-css` | the brief as `brief.json`: every colour role measured light and dark, failing tokens nudged, the `@theme` block written into the CSS and `DIRECTION.md` generated so the next session inherits the decisions |
 | `scripts/harness.mjs` | component-in-isolation page for Vite + React |
 | `scripts/login-state.mjs` | capture a logged-in session for `--storage-state` |
 | `scripts/doctor.mjs` (`npm run doctor`) | is this machine ready? |
@@ -110,8 +111,10 @@ a screenshot), `constraints.md` (the rules with sources, marked measured or manu
 
 `evals/` is the benchmark: prompts and assertions (`evals.json`), three fixture
 projects plus a Next.js one, an objective grader that re-renders every output
-(`grade.py`), token accounting from transcripts (`timing_from_transcript.py`,
-`transcript_profile.py`) and a three-way summary (`summarize.py`). Runs live in a
+(`grade.py`), a visual judge that scores the contact sheets and compares
+configurations pairwise (`judge.py`), token accounting from transcripts
+(`timing_from_transcript.py`, `transcript_profile.py`) and a three-way summary
+(`summarize.py`). Runs live in a
 git-ignored `ui-craft-workspace/`; see the sprint notes there for what each
 iteration changed and why.
 

@@ -32,9 +32,11 @@ def collect(it: Path):
                     continue
                 t = load(run / "timing.json") or {}
                 failed = [e["text"].split(":")[0] for e in g["expectations"] if not e["passed"]]
+                j = load(run / "judge.json") or {}
                 rows.append((eval_dir.name, cfg.name, run.name, g["summary"]["passed"], g["summary"]["total"],
                              t.get("total_tokens"), t.get("total_duration_seconds"), failed,
-                             t.get("total_tokens_comparable") or t.get("total_tokens_excl_resume")))
+                             t.get("total_tokens_comparable") or t.get("total_tokens_excl_resume"),
+                             j.get("overall"), j.get("distinctive")))
     return rows
 
 
@@ -54,7 +56,8 @@ def table(rows):
             tok = f" · {r[5] / 1000:.0f}k" if r[5] else ""
             if r[5] and r[8] and r[8] != r[5]:
                 tok += f" ({r[8] / 1000:.0f}k)"
-            cells.append(f"{r[3]}/{r[4]}{tok}")
+            vis = f" · look {r[9]}/5" if r[9] is not None else ""
+            cells.append(f"{r[3]}/{r[4]}{tok}{vis}")
         out.append(f"| {ev} | " + " | ".join(cells) + " |")
     tot = []
     for c in cfgs:
@@ -71,6 +74,13 @@ def table(rows):
         toks = [r[8] for r in rows if r[1] == c and r[8]]
         excl.append(f"{statistics.mean(toks):,.0f}" if toks else "—")
     out.append("| token mean, comparable | " + " | ".join(excl) + " |")
+    looks = []
+    for c in cfgs:
+        v = [r[9] for r in rows if r[1] == c and r[9] is not None]
+        d = [r[10] for r in rows if r[1] == c and r[10] is not None]
+        looks.append(f"{statistics.mean(v):.2f} (distinctive {statistics.mean(d):.2f})" if v else "—")
+    if any(l != "—" for l in looks):
+        out.append("| visual judge, overall 1–5 | " + " | ".join(looks) + " |")
     out.append("")
     out.append("(a)k (b)k = billed tokens (comparable: minus the cache re-write after an interruption, plus the harness-prefix cache write when a sibling run had paid it)")
     return "\n".join(out), cfgs
@@ -78,7 +88,7 @@ def table(rows):
 
 def failures(rows):
     out = []
-    for ev, cfg, run, p, t, tok, sec, failed, _ in rows:
+    for ev, cfg, run, p, t, tok, sec, failed, _, _o, _d in rows:
         if failed:
             out.append(f"- {ev} · {cfg}: " + ", ".join(failed))
     return "\n".join(out) or "- none"
@@ -122,6 +132,15 @@ def main():
         return 1
     md, cfgs = table(rows)
     print(md)
+    pairs = load(it / "judge-pairs.json")
+    if pairs:
+        print("\nVisual judge, pairwise (both image orders; 'split' = the two orders disagreed):")
+        for key, res in pairs.items():
+            a, b = key.split("_vs_")
+            wins = {a: 0, b: 0, "split": 0}
+            for ev, r in res.items():
+                wins[r["verdict"] if r["verdict"] in wins else "split"] += 1
+            print(f"- {a} vs {b}: {wins[a]}–{wins[b]}, {wins['split']} split · " + "; ".join(f"{ev.split('-')[1]}: {r['verdict']}" for ev, r in res.items()))
     print("\nFailures:\n" + failures(rows))
     if "--patch-benchmark" in sys.argv:
         print("\n" + patch_benchmark(it, cfgs))

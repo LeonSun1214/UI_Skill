@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.0 — a persisted direction, and a judge for taste
+
+- `direction.py`: the six-line brief as `docs/design/brief.json`; `check` measures
+  every colour role light and dark (text and accent 4.5:1 on every surface, the
+  accent's foreground 4.5:1 on it, boundaries 3:1, hairlines exempt), `--fix`
+  nudges failing tokens in OKLCH lightness, `write` emits the `@theme` block plus
+  the dark override between markers in the CSS and generates `DIRECTION.md` with
+  the tokens, the measured ratios and the pages built so far; `from-css` seeds a
+  brief from an existing project. SKILL.md uses it for whole projects and design
+  systems, and the next session reads `DIRECTION.md` first.
+- `evals/judge.py`: a visual judge for the benchmark — `claude -p` looks at each
+  run's contact sheet and scores hierarchy, distinctiveness, typography, spacing,
+  colour and overall 1–5 against the critique rubric; pairwise mode shows two
+  runs in both orders and asks which a design lead would ship. `summarize.py`
+  shows the scores and the pairwise verdicts.
+
 ## 0.6.0 — facts, and a tuned description
 
 - `verify.py`: every imported package must be installed, every icon name exported by

@@ -34,6 +34,14 @@ jobs:
           (cd ui-craft/evals/fixtures && npm ci --no-audit --no-fund)
           python3 ui-craft/scripts/verify.py ui-craft/evals/fixtures/facts-test | tee /tmp/facts.txt
           test "$(grep -c '^FAIL' /tmp/facts.txt)" = "5"
+      - name: direction.py finds the planted contrast failures and fixes them
+        run: |
+          cp ui-craft/scripts/selftest/brief.json /tmp/brief.json
+          if python3 ui-craft/scripts/direction.py check /tmp/brief.json > /tmp/dir.txt; then echo "expected FAILs"; exit 1; fi
+          test "$(grep -c '^FAIL' /tmp/dir.txt)" = "4"
+          python3 ui-craft/scripts/direction.py check /tmp/brief.json --fix | tail -1 | grep -q "0 below minimum"
+          python3 ui-craft/scripts/direction.py write /tmp/brief.json --css /tmp/index.css --doc /tmp/DIRECTION.md | tail -1
+          grep -q "ui-craft:tokens" /tmp/index.css && grep -q "Measured contrast" /tmp/DIRECTION.md
       - name: contrast.py and inspect.py on the fixtures
         run: |
           python3 ui-craft/scripts/contrast.py '#6b615b' '#fbf8f3'

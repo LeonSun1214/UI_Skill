@@ -1,0 +1,19 @@
+{
+  "name": "Selftest",
+  "audience": "people who read the numbers",
+  "feel": ["plain", "warm", "unhurried"],
+  "distinctive": "the muted text is deliberately too light in dark mode so --fix has work to do",
+  "density": "standard",
+  "type": {"display": "Fraunces", "body": "IBM Plex Sans", "mono": null, "why": "serif display over a plain sans"},
+  "radius": "6px",
+  "roles": {
+    "surface": ["surface", "panel"],
+    "text": ["ink", "muted"],
+    "accent": {"brand": "brand-fg"},
+    "boundary": ["line-strong"],
+    "hairline": ["line"]
+  },
+  "light": {"surface": "#fbf8f3", "panel": "#ffffff", "ink": "#2a2320", "muted": "#6b615b", "line": "#e5ddd3", "line-strong": "#cfc4b8", "brand": "#b5451b", "brand-fg": "#ffffff"},
+  "dark":  {"surface": "#17120f", "panel": "#221c18", "ink": "#f2ebe3", "muted": "#6b615b", "line": "#3f362f", "line-strong": "#7d7268", "brand": "#e8744a", "brand-fg": "#1a1210"},
+  "pages": []
+}
