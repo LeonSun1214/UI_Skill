@@ -611,8 +611,8 @@ def main() -> int:
             if args.config and cfg.name != args.config:
                 continue
             for run in sorted(cfg.glob("run-*")):
-                if not (run / "outputs").is_dir() or not any((run / "outputs").iterdir()):
-                    print(f"{eval_dir.name:32} {cfg.name:14} {run.name}  (no outputs yet — skipped)")
+                if not (run / "outputs" / "SUMMARY.md").exists():  # every eval's required output; a run in progress has screenshots first
+                    print(f"{eval_dir.name:32} {cfg.name:14} {run.name}  (no SUMMARY.md yet — skipped)")
                     continue
                 port = free_port(port + 1)
                 g = grade_run(eval_dir, meta, run, port, args.skip_render)

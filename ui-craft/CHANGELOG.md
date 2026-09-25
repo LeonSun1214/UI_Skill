@@ -1,13 +1,28 @@
 # Changelog
 
+## 0.8.1 — the critique rule, measured
+
+- Nine variance runs with the critic in the loop (three per task on tasks 1–3): a
+  round after a *would not ship* verdict flipped it in three of four cases; a round
+  after a *would ship* verdict with one dimension at 3 returned the same scores. The
+  rule is now: a round is owed for a not-ship verdict or two dimensions at 3 or
+  below; one 3 is a note for the report. `critique.mjs` prints the verdict that way.
+- The critic also runs once on a review of an existing page, after the fixes: on the
+  review task the judge preferred the two pages that polished the hierarchy (active
+  nav state, labelled actions) over the one that only fixed the ten defects.
+- `grade.py` skips a run until its `SUMMARY.md` exists; `summarize.py` prints no
+  spread for identical runs.
+- The sprint notes and each iteration's summary table live in `evals/notes/`.
+
 ## 0.8.0 — an independent critic, and the review path
 
 - `critique.mjs`: after the instruments pass, a fresh `claude -p` session that has
   seen neither the code nor the conversation views the contact sheet (and the dark
   one) and returns six rubric scores, a ship/no-ship verdict and the three changes
   that would most improve the page. SKILL.md step 4d treats the three changes like
-  FAILs and owes one more round when any dimension scores 3 or below; once per
-  round, at most twice per task, never on match tasks in an established project.
+  FAILs and owes one more round when any dimension scores 3 or below (tightened in
+  0.8.1); once per round, at most twice per task, never on match tasks in an
+  established project.
   Self-review is anchored on what the model just decided; this is not.
 - Eval 5, *review and fix*: a working admin page (`evals/fixtures/review`) with ten
   planted defects — 4.4:1 grey text, 20 px unnamed icon buttons with the focus

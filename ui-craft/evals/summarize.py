@@ -86,7 +86,7 @@ def table(rows):
             if rs:
                 p_sum += statistics.mean(r[3] for r in rs)
                 t_sum += rs[0][4]
-        tot.append(f"**{p_sum:g}/{t_sum:g}**")
+        tot.append(f"**{p_sum:.1f}/{t_sum:g}**" if p_sum != int(p_sum) else f"**{int(p_sum)}/{t_sum:g}**")
     out.append("| **pass (per-eval mean over runs)** | " + " | ".join(tot) + " |")
     means = []
     for c in cfgs:

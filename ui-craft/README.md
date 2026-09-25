@@ -21,23 +21,32 @@ The model already knows what glassmorphism is.
 | a Chinese page set in Fraunces, an icon that lucide never had | a broken build or a silent fallback | `verify.py` names the invented package, icon or font before the first render |
 
 Measured against [ui-ux-pro-max](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill)
-and against no skill on four tasks (greenfield landing page, page in an established
-codebase, de-templating a homepage, adding dark mode), graded by a programmatic
-grader that re-renders every output:
+and against no skill on five tasks — greenfield landing page, page in an established
+codebase, de-templating a homepage, adding dark mode, review-and-fix of a page with
+ten planted defects — graded by a programmatic grader that re-renders every output.
+ui-craft and no-skill ran three times each on tasks 1–3 (cells are means, spread
+noted); ui-ux-pro-max once per task:
 
 | | ui-craft | ui-ux-pro-max | no skill |
 |---|---|---|---|
-| assertions passed | **53 / 53** | 49 / 53 | 44 / 53 |
-| tokens per task (comparable, evals 1–3) | 194k | 201k | 164k |
-| visual judge, overall 1–5 (evals 1–3) | 3.67 | 3.33 | 3.67 |
-| pairwise vs ui-craft, both orders | — | 0–2, 1 split | 1–1, 1 split |
+| assertions passed, tasks 1–3 + review (56) | **56 / 56** in every run | 53 / 56 | 50.7 / 56 (±1 per task) |
+| dark-mode task (12, earlier iteration) | **12 / 12** | 11 / 12 | 11 / 12 |
+| tokens per task (comparable, tasks 1–3) | 212k | 201k | 176k |
+| tokens, review task | **162k** | 275k | 180k |
+| visual judge, overall 1–5 (tasks 1–3) | 3.67 | 3.33 | 3.56 |
+| pairwise vs ui-craft, both orders (tasks 1–3) | — | 0–2, 1 split | 0–3 |
 
-The misses of the other two are what a renderer catches and a database cannot: text at
-4.37:1 reported as "≥ 4.5:1", buttons that change nothing on hover, dark-mode input
-borders at 1.35:1 described as intentional. On looks alone — a vision model scoring
-the contact sheets blind — ui-craft is level with a strong model working unaided
-and a little ahead of ui-ux-pro-max. The advantage is verification, not taste; the
-notes say so. Details in `evals/` and the sprint notes.
+The misses of the other two are what a renderer catches and a database cannot, and
+they repeat run after run: body text at 3.7:1, 20 px nav links, focus rings at
+1.04:1, buttons that change nothing on hover, a landing page left in the system
+font, a report with no numbers in it. On looks alone the picture is narrower: the
+absolute judge puts nearly every page at 4 and hands out no 5s, so on that scale
+ui-craft (3.67) and a strong model working unaided (3.56) are level. Head to head,
+the judge picked ui-craft's page over the unaided one on all three tasks and over
+ui-ux-pro-max on two, with one split. On the review task it picked the other two,
+which polished the hierarchy where ui-craft only fixed the defects — since 0.8.1
+the critic runs there too. The advantage is verification; on taste the evidence is
+a lean, not a margin. Details in `evals/notes/`.
 
 ## Install
 
@@ -119,9 +128,9 @@ projects plus a Next.js one, an objective grader that re-renders every output
 (`grade.py`), a visual judge that scores the contact sheets and compares
 configurations pairwise (`judge.py`), token accounting from transcripts
 (`timing_from_transcript.py`, `transcript_profile.py`) and a three-way summary
-(`summarize.py`). Runs live in a
-git-ignored `ui-craft-workspace/`; see the sprint notes there for what each
-iteration changed and why.
+(`summarize.py`). `evals/notes/` holds the sprint notes — what each iteration
+changed and why — and every iteration's summary table; the raw runs live in a
+git-ignored `ui-craft-workspace/`.
 
 ## Limits
 

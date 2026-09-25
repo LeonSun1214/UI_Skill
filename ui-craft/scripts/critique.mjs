@@ -81,5 +81,8 @@ console.log(`- Scores: ${dims.map((d) => `${d} ${data[d] ?? '?'}`).join(' · ')}
 if (data.first_impression) console.log(`- First impression: ${data.first_impression}`);
 for (const [i, c] of (data.changes || []).entries()) console.log(`- Change ${i + 1}: ${c}`);
 const low = dims.filter((d) => typeof data[d] === 'number' && data[d] <= 3 && d !== 'overall');
-if (low.length) console.log(`- Below 4: ${low.join(', ')} — one more round is owed (SKILL.md step 4d)`);
+// A round is owed when the critic would not ship it, or when two or more dimensions sit at 3 or
+// below. One 3 under a ship verdict is a note for the report (SKILL.md step 4d).
+if (data.ship === false || low.length >= 2) console.log(`- Round owed: ${data.ship === false ? 'would not ship' : 'two or more dimensions at 3 or below'}${low.length ? ` (${low.join(', ')})` : ''} — apply the three changes and render once more (SKILL.md step 4d)`);
+else if (low.length === 1) console.log(`- ${low[0]} at ${data[low[0]]}: note it in the report; no further round (ship verdict, one dimension)`);
 else console.log('- Nothing below 4.');

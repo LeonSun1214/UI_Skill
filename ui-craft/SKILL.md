@@ -1,7 +1,7 @@
 ---
 name: ui-craft
 metadata:
-  version: 0.8.0
+  version: 0.8.1
 description: >-
   Build, change, and review UI in React + Tailwind projects (Vite, Next.js) with a render → look → measure → fix loop, so what ships is checked against a real screenshot and real DOM measurements (contrast, tap targets, overflow, keyboard focus, hover, motion, dark mode) instead of guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even when they never say "design" or "UI". Also use it to inspect an existing project's design conventions before adding to it.
 ---
@@ -242,14 +242,18 @@ node <skill-dir>/scripts/critique.mjs .ui-craft/pricing-1/contact.png --brief "<
 It shows the sheet to a fresh session that sees only the pixels and the brief and
 returns six scores, a ship / don't-ship verdict and the three changes that would
 most improve the page. Treat the three changes like FAILs: apply them, or say in
-the report why not. Any of hierarchy, distinctive, typography, spacing or color at
-3 or below means one more round even when the instruments are clean. Once per
-round, at most twice per task; not on match tasks in an established project — the
-existing pages already set the look.
+the report why not. A *would not ship* verdict, or two or more of hierarchy,
+distinctive, typography, spacing and color at 3 or below, means one more round
+even when the instruments are clean. One 3 under a *would ship* verdict is a note
+for the report, not a round: in the runs measured, that extra round never moved a
+score. Once per round, at most twice per task; not on match tasks in an
+established project — the existing pages already set the look. On a review of an
+existing page ("audit this", "看不清"), once, after the fixes: its three changes
+are findings — fix the ones inside the ask, list the rest.
 
 **e. Apply, re-render, stop.** A clean round 1 — zero FAILs, zero WARNs, a
 contact-sheet pass that found nothing you'd be embarrassed to ship, and (where it
-ran) a critique with nothing at 3 or below — is done: deliver. Otherwise fix and render once more. A third round only if round 2 still
+ran) a critique that would ship it with at most one dimension at 3 — is done: deliver. Otherwise fix and render once more. A third round only if round 2 still
 has a FAIL. Never render "to confirm": if the last round measured clean and your
 fixes since then were only the ones it asked for, that report *is* the final
 report — say so and deliver. If you're still finding things after round 3, the
