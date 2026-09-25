@@ -8,7 +8,7 @@ description: >-
 
 # ui-craft
 
-Version 0.9.2. (An older copy of this file means the installed skill is behind the
+Version 0.10.0. (An older copy of this file means the installed skill is behind the
 repository: re-run `install.sh`; `doctor.mjs` says when that is the case.)
 
 UI work has a gap that code review can't close: the first draft always has two or
@@ -99,10 +99,14 @@ the CSS defines with their declarations (the vocabulary — you do not need the 
 file), the modules every page imports (the chrome, the store, the strings), one
 line per page with its signals (form, list, table, which classes and components),
 the routes, where the strings live and whether a dictionary is typed, and what
-stands between a fresh browser and the page — the theme script, a splash, the
-early returns in `App`, the requests the store makes, the dev proxy. Read the one
-page whose signals match yours and the vocabulary lines; that is the whole of the
-reading for a match task. Below it the report has the tokens the project
+stands between a fresh browser and the page — what `dark:` keys on and who sets
+it, the theme script, a splash, the early returns in `App`, the requests the store
+makes, the dev proxy. On Next.js it also names the layouts (root first, with the
+providers and chrome each wraps a page in), the middleware and the routes it
+guards, what `[locale]` defaults to, and, for a thin page that hands everything
+to a layout or template, the file that is the real page. Read the one page whose
+signals match yours (or the file it renders) and the vocabulary lines; that is
+the whole of the reading for a match task. Below it the report has the tokens the project
 *declares* and the classes the code *actually uses*: dominant color families,
 radius, shadow, text sizes, semantic tokens (`bg-primary`) versus raw palette
 (`bg-indigo-600`), and which primitives already exist.
@@ -301,7 +305,7 @@ Don't work around these by hand; each has a flag, and the loop stays the same:
 | The task is one component, not a page | `node <skill-dir>/scripts/harness.mjs <project> --component src/components/ui/Button.tsx --states '[{"children":"Save"},{"variant":"secondary","children":"Cancel"},{"disabled":true,"children":"Off"}]'` writes `.ui-craft/harness/index.html`; render that URL on the project's own dev server. Vite + React only. |
 | You are changing a page that exists (a card on the dashboard, a row on the settings page) — or must prove one did not change | render it before touching anything, then render after with `--compare .ui-craft/<page>-0`: the Verified block reports the height change first, then the share of the overlap that moved, and writes `diff-*.png`. The new content is expected to differ; anything else that moved is a regression to explain. |
 | Monorepo | `inspect.py` on the workspace root lists the UI app packages; run it, and the dev server, in the one you are changing. |
-| Next.js | `next dev` is slower to answer; wait for the port, then render the route. Fonts loaded through `next/font` show as loaded in the report. |
+| Next.js | `next dev` is slower to answer; wait for the port, then render the route **as `http://localhost:PORT`**, not `127.0.0.1`: since 15.2 the dev server refuses its own `/_next/*` scripts from any other host (403), the page is then never hydrated, and the report says so. Pages are server components unless they say `'use client'`: the `requests` line reads *none*, the data came with the HTML, and `--mock` cannot answer it — start what the `dev` script starts (a database, a content compiler). Fonts loaded through `next/font` show as loaded in the report. |
 
 ### 5. Report
 

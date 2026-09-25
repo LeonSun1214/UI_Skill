@@ -228,7 +228,10 @@ function domAudit(INTERACTIVE) {
       }
     }
     const cs = getComputedStyle(el);
-    const inlineText = cs.display === 'inline' && !!el.closest('p,li,dd,td,th,blockquote,figcaption,small');
+    // A link inside prose is exempt from the target size (WCAG 2.5.8); a nav item in an <li> is not prose:
+    // the host must carry text beyond the link's own.
+    const host = cs.display === 'inline' && el.closest('p,li,dd,td,th,blockquote,figcaption,small');
+    const inlineText = !!host && (host.innerText || '').trim().length > (el.innerText || '').trim().length + 2;
     const w = Math.round(r.width), h = Math.round(r.height);
     const item = { selector: short(el), size: `${w}×${h}`, inlineText, viaLabel: !!(el.labels && el.labels.length) };
     if (w < 24 || h < 24) targets.below24.push(item);
@@ -407,7 +410,8 @@ function domAudit(INTERACTIVE) {
   const bodyText = (document.body.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 6000);
 
   const pageTitle = (document.title || '').trim().slice(0, 80);
-  return { pageColors, contrast, nonText, targets, unnamedControls, overflow, motion, darkSupport, fonts, imagesMissingAlt, structure, viewportMeta, bodyText, pageTitle };
+  const passwordField = !!document.querySelector('input[type="password"]');
+  return { pageColors, contrast, nonText, targets, unnamedControls, overflow, motion, darkSupport, fonts, imagesMissingAlt, structure, viewportMeta, bodyText, pageTitle, passwordField };
 }
 
 // ------------------------------------------------- keyboard focus (real Tabs)
@@ -522,7 +526,8 @@ async function hoverAudit(page, max = 20) {
       if (el.disabled || el.getAttribute('aria-disabled') === 'true') return null; // no state change owed
       const tag = el.tagName.toUpperCase();
       const isButton = tag === 'BUTTON' || el.getAttribute('role') === 'button' || (tag === 'INPUT' && /submit|button|reset/.test(el.type));
-      const inlineText = cs.display === 'inline' && !!el.closest('p,li,dd,td,th,blockquote,figcaption,small');
+      const host = cs.display === 'inline' && el.closest('p,li,dd,td,th,blockquote,figcaption,small');
+      const inlineText = !!host && (host.innerText || '').trim().length > (el.innerText || '').trim().length + 2; // prose, not a nav item in an <li>
       if (!isButton && (tag !== 'A' || inlineText)) return null; // only buttons and standalone links
       if (el.hasAttribute('aria-current')) return null; // "you are here" — inert by convention
       if (['aria-pressed', 'aria-checked', 'aria-selected'].some((a) => el.getAttribute(a) === 'true')) return null; // the chosen segment / tab / option
@@ -683,10 +688,14 @@ for (const width of opt.viewports) {
   const origin = (() => { try { return new URL(url).origin; } catch { return ''; } })();
   page.on('console', (m) => {
     // "Failed to load resource" carries no URL; the request/response listeners record those with one.
-    if (m.type() === 'error' && !/^Failed to load resource/.test(m.text())) consoleErrors.push(m.text().slice(0, 200));
+    if (m.type() === 'error' && !/^Failed to load resource|WebSocket connection to '[^']*(_next\/hmr|webpack-hmr|@vite\/client|__vite_hmr|sockjs)/.test(m.text())) consoleErrors.push(m.text().slice(0, 200));
   });
   page.on('pageerror', (e) => consoleErrors.push(`pageerror: ${String(e.message).slice(0, 200)}`));
-  page.on('requestfailed', (r) => failedRequests.push(`${r.failure()?.errorText || 'failed'} ${r.url().slice(0, 120)}`));
+  page.on('requestfailed', (r) => {
+    const why = r.failure()?.errorText || 'failed';
+    if (why === 'net::ERR_ABORTED') return; // cut short by a navigation of ours (reload, next viewport), not a failure of the page
+    failedRequests.push(`${why} ${r.url().slice(0, 120)}`);
+  });
   page.on('response', (r) => {
     if (r.status() >= 400 && !/\/favicon\.ico(\?|$)/.test(r.url())) httpErrors.push(`${r.status()} ${r.url().slice(0, 120)}`);
     const rt = r.request().resourceType();
@@ -741,7 +750,9 @@ for (const width of opt.viewports) {
     // A page that reads matchMedia once at boot and sets data-theme / a class from it never sees the
     // emulation above. If the colours did not move, load it again under the dark scheme, the way a
     // dark-mode visitor would, and measure that.
+    let reloaded = false;
     if (audit && dAudit.pageColors.background === audit.pageColors.background) {
+      reloaded = true;
       try {
         await page.reload({ waitUntil: 'load', timeout: 30000 });
         await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
@@ -771,6 +782,7 @@ for (const width of opt.viewports) {
     dark = {
       mode: audit && audit.darkSupport.class && !audit.darkSupport.media ? 'class'
         : audit && audit.darkSupport.attr && !audit.darkSupport.media && !audit.darkSupport.class ? 'attribute' : 'media',
+      reloaded, // the in-place emulation changed nothing; the page was loaded again under the dark scheme
       forced: opt.dark === 'force',
       themeChanged: changed,
       pageColors: dAudit.pageColors,
@@ -821,6 +833,7 @@ for (const width of opt.viewports) {
   if (consoleErrors.length) warns.push(`console errors ${consoleErrors.length}`);
   if (failedRequests.length) warns.push(`failed requests ${failedRequests.length}`);
   if (httpErrors.length) warns.push(`http errors ${httpErrors.length}`);
+  if (httpErrors.some((e) => /^403 .*\/_next\//.test(e))) warns.push('Next.js dev refused its own scripts (403 on /_next/*): the page was not hydrated — render it through http://localhost:PORT, or add this host to allowedDevOrigins in next.config');
 
   const status = fails.length ? 'FAIL' : 'PASS';
   if (fails.length) anyFail = true;
@@ -867,8 +880,9 @@ if (first) {
   // Which page this was: a session that did not stick lands on the sign-in page, and every number
   // below would then describe that page. Say so where it cannot be missed.
   const h1s = (first.audit.structure && first.audit.structure.headings || []).filter((h) => h.level === 1).map((h) => h.text);
-  console.log(`  page: ${JSON.stringify(first.audit.pageTitle || '(no title)')}${h1s.length ? ` · h1 ${h1s.map((t) => JSON.stringify(t.slice(0, 40))).join(', ')}` : ' · no h1'}${/sign in|log in|login|登录/i.test((first.audit.pageTitle || '') + ' ' + h1s.join(' ') + ' ' + (first.audit.bodyText || '').slice(0, 200)) ? '  ← looks like a sign-in page: was the session passed? (--cookie / --storage-state)' : ''}`);
+  console.log(`  page: ${JSON.stringify(first.audit.pageTitle || '(no title)')}${h1s.length ? ` · h1 ${h1s.map((t) => JSON.stringify(t.slice(0, 40))).join(', ')}` : ' · no h1'}${(/sign ?in|log ?in|登录/i.test((first.audit.pageTitle || '') + ' ' + h1s.join(' ')) || (first.audit.passwordField && /sign ?in|log ?in|login|登录|password|密码/i.test((first.audit.bodyText || '').slice(0, 400)))) ? '  ← looks like a sign-in page: was the session passed? (--cookie / --storage-state)' : ''}`);
   const reqs = first.requests || [];
+  if (!reqs.length && !first.loadError) console.log('  requests (xhr/fetch): none — the data came with the HTML (server-rendered or static); nothing for --mock to answer');
   if (reqs.length) {
     // Each endpoint once, with a count: a store that fetches twice (StrictMode, a refetch) would
     // otherwise fill the line with repeats and push the calls a --mock needs behind the "…".
@@ -880,26 +894,41 @@ if (first) {
   }
   console.log(`  dark mode: ${first.audit.darkSupport.any ? `supported (${['media', 'class', 'attr'].filter((k) => first.audit.darkSupport[k]).map((k) => k === 'attr' ? 'attribute' : k).join('+')})` : 'not implemented'}${report.summary.darkRendered ? ' — rendered and audited' : ''}`);
 }
-const top = (arr, n, fmt) => arr.slice(0, n).map(fmt).map((s) => `      ${s}`).join('\n');
-for (const [k, v] of Object.entries(report.viewports)) {
-  if (!v.audit) continue;
-  const lines = [];
-  if (v.audit.contrast.failures.length) lines.push(`    contrast:\n${top(v.audit.contrast.failures, 6, (f) => `${f.ratio}:1 (need ${f.required}) ${f.selector} — ${f.color} on ${f.background}`)}`);
-  if (v.audit.nonText.failures.length) lines.push(`    non-text contrast:\n${top(v.audit.nonText.failures, 5, (f) => `${f.ratio}:1 (need 3) ${f.selector} — ${f.via} ${f.color} against ${f.against}`)}`);
-  if (v.audit.nonText.weak.length) lines.push(`    weak button surface (WCAG-exempt, text-labelled):\n${top(v.audit.nonText.weak, 4, (f) => `${f.ratio}:1 ${f.selector} — ${f.via} ${f.color} against ${f.against}`)}`);
-  if (v.audit.overflow.horizontal) lines.push(`    overflow:\n${top(v.audit.overflow.offenders, 4, (o) => `${o.selector} right=${o.right}`)}`);
-  const hard = v.audit.targets.below24.filter((t) => !t.inlineText);
-  if (hard.length) lines.push(`    targets<24:\n${top(hard, 6, (t) => `${t.size} ${t.selector}`)}`);
-  if (v.focus && v.focus.invisible.length) lines.push(`    focus invisible:\n${top(v.focus.invisible, 6, (s) => s)}`);
-  if (v.focus && v.focus.obscured.length) lines.push(`    focus obscured:\n${top(v.focus.obscured, 4, (s) => s)}`);
-  if (v.focus && v.focus.lowContrastRing.length) lines.push(`    focus ring <3:1:\n${top(v.focus.lowContrastRing, 4, (s) => s)}`);
-  if (v.hover && v.hover.noHoverFeedback.length) lines.push(`    no hover feedback:\n${top(v.hover.noHoverFeedback, 6, (s) => s)}`);
-  if (v.dark && v.dark.nonText.failures.length) lines.push(`    dark non-text contrast:\n${top(v.dark.nonText.failures, 5, (f) => `${f.ratio}:1 (need 3) ${f.selector} — ${f.via} ${f.color} against ${f.against}`)}`);
-  if (v.dark && v.dark.focus.lowContrastRing.length) lines.push(`    dark focus ring <3:1:\n${top(v.dark.focus.lowContrastRing, 4, (s) => s)}`);
-  if (v.dark && v.dark.contrast.failures.length) lines.push(`    dark contrast:\n${top(v.dark.contrast.failures, 6, (f) => `${f.ratio}:1 (need ${f.required}) ${f.selector} — ${f.color} on ${f.background}`)}`);
-  if (v.audit.unnamedControls.length) lines.push(`    unnamed:\n${top(v.audit.unnamedControls, 6, (s) => s)}`);
-  if (v.audit.imagesMissingAlt.length) lines.push(`    img without alt:\n${top(v.audit.imagesMissingAlt, 4, (s) => s)}`);
-  if (lines.length) console.log(`  ${k}:\n${lines.join('\n')}`);
+// ---- findings, once. A line that holds at every viewport is printed once; one that holds at some
+// carries their widths. Printed per viewport, the same finding three times over was a third of the output.
+const specs = [
+  ['contrast', (v) => v.audit.contrast.failures, 6, (f) => `${f.ratio}:1 (need ${f.required}) ${f.selector} — ${f.color} on ${f.background}`],
+  ['non-text contrast', (v) => v.audit.nonText.failures, 5, (f) => `${f.ratio}:1 (need 3) ${f.selector} — ${f.via} ${f.color} against ${f.against}`],
+  ['weak button surface (WCAG-exempt, text-labelled)', (v) => v.audit.nonText.weak, 4, (f) => `${f.ratio}:1 ${f.selector} — ${f.via} ${f.color} against ${f.against}`],
+  ['overflow', (v) => (v.audit.overflow.horizontal ? v.audit.overflow.offenders : []), 4, (o) => `${o.selector} right=${o.right}`],
+  ['targets<24', (v) => v.audit.targets.below24.filter((t) => !t.inlineText), 6, (t) => `${t.size} ${t.selector}`],
+  ['focus invisible', (v) => v.focus && v.focus.invisible, 6, (s) => s],
+  ['focus obscured', (v) => v.focus && v.focus.obscured, 4, (s) => s],
+  ['focus ring <3:1', (v) => v.focus && v.focus.lowContrastRing, 4, (s) => s],
+  ['no hover feedback', (v) => v.hover && v.hover.noHoverFeedback, 6, (s) => s, 'one viewport'], // probed at the widest only
+  ['dark non-text contrast', (v) => v.dark && v.dark.nonText.failures, 5, (f) => `${f.ratio}:1 (need 3) ${f.selector} — ${f.via} ${f.color} against ${f.against}`],
+  ['dark focus ring <3:1', (v) => v.dark && v.dark.focus.lowContrastRing, 4, (s) => s],
+  ['dark contrast', (v) => v.dark && v.dark.contrast.failures, 6, (f) => `${f.ratio}:1 (need ${f.required}) ${f.selector} — ${f.color} on ${f.background}`],
+  ['unnamed', (v) => v.audit.unnamedControls, 6, (s) => s],
+  ['img without alt', (v) => v.audit.imagesMissingAlt, 4, (s) => s],
+];
+{
+  const audited = Object.entries(report.viewports).filter(([, v]) => v.audit);
+  const widths = audited.map(([k]) => k);
+  const sections = []; // [title, Map(line → Set(width)), probedOnce]
+  for (const [title, pick, n, fmt, once] of specs) {
+    const m = new Map();
+    for (const [k, v] of audited) for (const s of (pick(v) || []).slice(0, n).map(fmt)) (m.get(s) || m.set(s, new Set()).get(s)).add(k);
+    if (m.size) sections.push([title, m, !!once]);
+  }
+  if (sections.length) {
+    const tag = (ws) => (ws.size === widths.length ? '' : `  [${widths.filter((w) => ws.has(w)).join(', ')}]`);
+    console.log(widths.length > 1 ? `  findings at ${widths.join(' / ')} (an untagged line holds at every viewport):` : `  ${widths[0]}:`);
+    for (const [title, m, once] of sections) {
+      console.log(`    ${title}:`);
+      for (const [s, ws] of m) console.log(`      ${s}${widths.length > 1 && !once ? tag(ws) : ''}`);
+    }
+  }
 }
 // ---- the Verified block: the numbers the report to the user is made of. Paste it; don't recompute.
 {
@@ -918,7 +947,7 @@ for (const [k, v] of Object.entries(report.viewports)) {
       const dw = darks.reduce((a, b) => (a.width > b.width ? a : b));
       const df = worst((v) => v.dark ? v.dark.contrast.failures.length : 0), dbf = worst((v) => v.dark ? v.dark.nonText.failures.length : 0);
       const dr = worst((v) => v.dark ? v.dark.focus.lowContrastRing.length : 0);
-      L.push(`- Dark mode: rendered (${dw.dark.mode}) · ${dw.dark.contrast.checked} text elements, ${df.n} below threshold${at(df)} · ${dw.dark.nonText.checked} boundaries, ${dbf.n} below 3:1 · ${dr.n} focus rings below 3:1 · background ${widest.audit.pageColors.background} → ${dw.dark.pageColors.background}${dw.dark.themeChanged ? '' : ' (unchanged!)'}`);
+      L.push(`- Dark mode: rendered (${dw.dark.mode}${dw.dark.reloaded ? ', after a reload under the dark scheme' : ''}) · ${dw.dark.contrast.checked} text elements, ${df.n} below threshold${at(df)} · ${dw.dark.nonText.checked} boundaries, ${dbf.n} below 3:1 · ${dr.n} focus rings below 3:1 · background ${widest.audit.pageColors.background} → ${dw.dark.pageColors.background}${dw.dark.themeChanged ? '' : ' (unchanged!)'}`);
     } else {
       L.push(`- Dark mode: ${widest.audit.darkSupport.any ? 'rule present but not rendered' : 'no dark rule — not rendered'}`);
     }

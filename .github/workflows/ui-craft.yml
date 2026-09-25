@@ -49,4 +49,5 @@ jobs:
           python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/established | tee /tmp/inspect.txt | head -20
           grep -q "## Start here" /tmp/inspect.txt
           grep -q "settings/profile" /tmp/inspect.txt   # the route table found the nested Route
-          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/nextjs | grep -q "app/page.tsx"
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/nextjs | tee /tmp/inspect-next.txt | grep -q "app/page.tsx"
+          grep -q "app/layout.tsx. wraps every page" /tmp/inspect-next.txt   # the App Router layout is on the reading list

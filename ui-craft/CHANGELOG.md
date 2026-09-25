@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.10.0 — the first Next.js repositories, and a third less output
+
+Two public Next.js apps (a Tailwind 4 + `next-themes` + contentlayer blog on
+Next 15; an i18n boilerplate with route groups, `[locale]`, Clerk and a proxy on
+Next 16) put through `inspect.py` and `render.mjs`, without an agent. Both scripts
+worked; neither said enough.
+
+- `render.mjs` prints the findings once: a line that holds at every viewport is
+  untagged, one that holds at some carries their widths (`[375]`). The same block
+  printed three times over was a third of the output (54 → 33 lines on a team page).
+- `inspect.py` *Start here* on Next.js: the layouts, root first, with the css,
+  `next/font`, providers and chrome each wraps a page in; the middleware and the
+  routes it guards; what `[locale]` defaults to and whether `/` carries it; a thin
+  page names the layout or template it renders, with that file's signals; pages
+  that are server components say so. Every project: what `dark:` keys on
+  (`@custom-variant dark`, `darkMode:` in the config, or the OS scheme) and who
+  sets it (`next-themes`: attribute, default, storage key). Dictionaries that are
+  `.json` are found now.
+- `render.mjs` on `next dev`: a 403 on `/_next/*` (the dev server refusing its
+  scripts from `127.0.0.1` since Next 15.2 — the page is never hydrated) gets a
+  line naming the cause and the fix; HMR sockets and requests cut short by the
+  render's own navigations no longer count as errors; a dark pass that needed a
+  reload says so; a page with no xhr/fetch says the data came with the HTML.
+- A "Sign in" link in a nav no longer marks a page as a sign-in page: the title
+  or h1 has to say so, or a password field has to be there.
+- A link alone in an `<li>` (a nav item) is a control, not prose: it is measured
+  for size and probed for hover. Prose links stay exempt.
+- Self-test: a check that the findings block is printed once (20 in all). Notes in
+  `evals/notes/trial-next-4.md`.
+
 ## 0.9.2 — the requests line, from the first run on a Mac
 
 - The `requests` line names each endpoint once with a count (`200 GET /api/auth/me ×2`)

@@ -107,7 +107,7 @@ Verified (render.mjs · .ui-craft/pricing-2):
 | One component, not a page | `node scripts/harness.mjs <project> --component src/ui/Button.tsx --states '[…]'` writes a Vite-served page that mounts it once per state |
 | Did the light theme change? | `--compare .ui-craft/before` pixel-diffs every screenshot against a previous run and writes `diff-*.png` |
 | Monorepo | `inspect.py` on the workspace root lists the app packages; run it on the one you are changing |
-| Next.js | works with `next dev`; `inspect.py` reads the App Router and `next/font` |
+| Next.js | works with `next dev` (render through `localhost`, not `127.0.0.1`: newer dev servers refuse their own scripts from another host); `inspect.py` reads the App Router — layouts, middleware, `[locale]`, the file a thin page renders — and `next/font` |
 
 ## Scripts
 
@@ -116,7 +116,7 @@ All standard tools; the skill calls them, and so can you.
 | Script | Purpose |
 |---|---|
 | `scripts/render.mjs <url\|file>` | screenshots + audits at 375/768/1440, dark pass when the page has a dark rule, `contact.png`, `report.json`, the `Verified` block |
-| `scripts/inspect.py <project>` | a *Start here* reading list (the CSS vocabulary with declarations, what every page imports, one line per page, routes, where the strings live, what runs before a page renders), then stack, declared tokens, fonts, primitives and the classes the code actually uses; verdict *match* or *establish* |
+| `scripts/inspect.py <project>` | a *Start here* reading list (the CSS vocabulary with declarations, what every page imports, one line per page, routes, where the strings live, what runs before a page renders — what `dark:` keys on and who sets it, the Next.js layouts and middleware), then stack, declared tokens, fonts, primitives and the classes the code actually uses; verdict *match* or *establish* |
 | `scripts/contrast.py fg bg …` / `--css tokens.css` | WCAG ratios for pairs or a token file, light and dark side by side |
 | `scripts/verify.py <project>` | the facts a model invents: imported packages installed, icon names exported, Google Fonts families/weights real and carrying the page's language subset, `@font-face` files present |
 | `scripts/direction.py init / check --fix / write / from-css` | the brief as `brief.json`: every colour role measured light and dark, failing tokens nudged, the `@theme` block written into the CSS and `DIRECTION.md` generated so the next session inherits the decisions |

@@ -84,6 +84,13 @@ def iter_files(root: Path):
             yield Path(dirpath) / name
 
 
+def iter_dirs(root: Path):
+    for dirpath, dirnames, _ in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
+        for d in dirnames:
+            yield Path(dirpath) / d
+
+
 def read(p: Path, limit: int = MAX_READ) -> str:
     try:
         return p.read_text(encoding="utf-8", errors="replace")[:limit]
@@ -543,6 +550,187 @@ def import_fanin(root: Path, src_files: list[Path]) -> list[dict]:
     return out[:12]
 
 
+def _signals(text: str) -> list[str]:
+    signals = []
+    if re.search(r"export\s+default\s+async\s+function", text):
+        signals.append("server component")
+    if "<form" in text:
+        signals.append("form")
+    n_fields = len(re.findall(r"<(?:input|select|textarea)\b", text))
+    if n_fields:
+        signals.append(f"{n_fields} field{'s' if n_fields > 1 else ''}")
+    if "<table" in text:
+        signals.append("table")
+    elif ".map(" in text and re.search(r"<(?:li|article|tr)\b", text):
+        signals.append("list")
+    if re.search(r'role="dialog"|<dialog\b|<Dialog\b', text):
+        signals.append("dialog")
+    return signals
+
+
+def _resolve_import(root: Path, from_file: Path, spec: str) -> Path | None:
+    """A local import's file: relative, `@/` and `~/` aliases, or a bare path from the root or src/."""
+    if spec.startswith("."):
+        bases = [from_file.parent / spec]
+    else:
+        stripped = re.sub(r"^[@~]/", "", spec)
+        bases = [root / stripped, root / "src" / stripped]
+    for b in bases:
+        for ext in ("", ".tsx", ".jsx", ".ts", ".js", "/index.tsx", "/index.jsx", "/index.ts", "/index.js"):
+            c = Path(str(b) + ext)
+            if c.is_file():
+                return c
+    return None
+
+
+def _rendered_by(root: Path, page: Path, text: str) -> dict | None:
+    """The local component a thin page hands everything to — a layout or template that is the real page."""
+    m = re.search(r"return\s*\(?\s*<([A-Z]\w*)", text)
+    if not m:
+        return None
+    name = m.group(1)
+    im = re.search(r"import\s+(?:\{[^}]*\b" + re.escape(name) + r"\b[^}]*\}|" + re.escape(name) + r"\b[^;'\"]*)\s*from\s*['\"]([^'\"]+)['\"]", text)
+    if not im:
+        return None
+    target = _resolve_import(root, page, im.group(1))
+    if not target or target == page or target.suffix not in {".tsx", ".jsx"}:
+        return None
+    t = read(target, 200_000)
+    signals = _signals(t)
+    if not signals and t.count("\n") < 30:          # a wrapper, not the page
+        return None
+    return {"name": name, "file": rel(root, target), "lines": t.count("\n") + 1, "signals": signals}
+
+
+def next_layouts(root: Path) -> list[dict]:
+    """App Router layouts, root first: what every page under them is wrapped in."""
+    app_dir = next((d for d in (root / "app", root / "src" / "app") if d.is_dir()), None)
+    if not app_dir:
+        return []
+    out = []
+    for lay in sorted(app_dir.rglob("layout.*"), key=lambda q: (len(q.parts), str(q))):
+        if set(lay.parts) & SKIP_DIRS or lay.suffix not in {".tsx", ".jsx", ".js", ".ts"}:
+            continue
+        t = read(lay, 200_000)
+        segs = lay.relative_to(app_dir).parent.parts
+        local: list[str] = []
+        for names, spec in re.findall(r"import\s+(\{[^}]+\}|\w+)\s*from\s*['\"]([^'\"]+)['\"]", t):
+            if spec.endswith(".css") or not _resolve_import(root, lay, spec):
+                continue
+            local += re.findall(r"[A-Z]\w*", names)
+        used = [n for n in dict.fromkeys(local) if re.search(r"<" + n + r"\b", t)]
+        providers = [n for n in used if "Provider" in n] + sorted({m for m in re.findall(r"<(\w*Provider\w*)", t) if m not in used})
+        fonts = [x.strip().split(" as ")[0] for f in re.findall(r"import\s*\{([^}]+)\}\s*from\s*['\"]next/font/(?:google|local)['\"]", t) for x in f.split(",") if x.strip()]
+        out.append({
+            "file": rel(root, lay), "scope": "/" + "/".join(segs),
+            "css": re.findall(r"import\s+['\"]([^'\"]+\.css)['\"]", t), "fonts": fonts,
+            "providers": providers, "chrome": [n for n in used if n not in providers],
+        })
+    return out[:6]
+
+
+def theme_mechanism(root: Path, css_files: list[Path], stack: dict, src_files: list[Path]) -> str | None:
+    """What `dark:` keys on, and who sets it — the dark pass in render.mjs needs to know."""
+    how = where = None
+    for c in css_files:
+        t = read(c)
+        m = re.search(r"@custom-variant\s+dark\s*(?:\(([^)]*)\)|\{([^}]*)\})", t)
+        if m:
+            sel = (m.group(1) or m.group(2) or "").strip()
+            how = "`.dark` on an ancestor" if ".dark" in sel else ("`[data-theme]` on an ancestor" if "data-theme" in sel else f"`{sel[:40]}`")
+            where = f"`{rel(root, c)}:{t[:m.start()].count(chr(10)) + 1}` (`@custom-variant dark`)"
+            break
+    if how is None:
+        for cfg in stack.get("tailwindConfigFiles") or []:
+            m = re.search(r"darkMode\s*:\s*(\[[^\]]*\]|['\"][^'\"]*['\"])", read(root / cfg))
+            if m:
+                v = m.group(1)
+                how = ("`[data-theme]` on an ancestor" if "data-" in v else "`.dark` on an ancestor" if "class" in v or "selector" in v
+                       else "the OS scheme (`prefers-color-scheme`)" if "media" in v else f"`{v[:40]}`")
+                where = f"`{cfg}` (`darkMode: {v[:40]}`)"
+                break
+    uses_dark = any("dark:" in read(p, 200_000) for p in src_files[:MAX_SRC_FILES] if p.suffix in {".tsx", ".jsx", ".vue", ".svelte", ".astro", ".html", ".mdx"})
+    if how is None:
+        if not stack.get("tailwind") or not uses_dark:
+            return None
+        how, where = "the OS scheme (`prefers-color-scheme`)", "Tailwind's default, no toggle in the app"
+    setter = None
+    if "next-themes" in (stack.get("deps") or {}):
+        for p in src_files:
+            if p.suffix not in {".tsx", ".jsx"}:
+                continue
+            m = re.search(r"<ThemeProvider\b([^>]*)>", read(p, 100_000))
+            if m:
+                attrs = m.group(1)
+                attr = re.search(r"attribute=\{?['\"]([^'\"]+)", attrs)
+                default = re.search(r"defaultTheme=\{?['\"]?([\w.]+)", attrs)
+                key = re.search(r"storageKey=\{?['\"]([^'\"]+)", attrs)
+                dflt, dsrc = (default.group(1) if default else "light"), None
+                if "." in dflt:                                   # {siteMetadata.theme}: read it from that module
+                    obj, field = dflt.split(".", 1)
+                    for q in src_files:
+                        if q.stem.lower() == obj.lower():
+                            mm = re.search(r"\b" + re.escape(field) + r"\s*:\s*['\"](\w+)['\"]", read(q, 100_000))
+                            if mm:
+                                dflt, dsrc = mm.group(1), rel(root, q)
+                                break
+                setter = (f"set before paint by next-themes in `{rel(root, p)}` (attribute `{attr.group(1) if attr else 'data-theme'}`, "
+                          f"default `{dflt}`" + (f" from `{dsrc}`" if dsrc else "") + f", localStorage `{key.group(1) if key else 'theme'}`)")
+                break
+        setter = setter or "next-themes is installed"
+    return f"`dark:` applies under {how} — {where}" + (f"; {setter}" if setter else "") + ("" if uses_dark else " — no `dark:` class uses it yet")
+
+
+MIDDLEWARE_LIBS = {
+    "@clerk/nextjs": "Clerk", "next-intl/middleware": "next-intl", "next-auth": "NextAuth", "@supabase/ssr": "Supabase",
+    "@kinde-oss": "Kinde", "@auth0/nextjs-auth0": "Auth0", "@workos-inc": "WorkOS",
+}
+
+
+def middleware_line(root: Path) -> str | None:
+    for name in ("middleware", "proxy"):
+        for d in (root, root / "src"):
+            for ext in (".ts", ".js", ".mjs"):
+                p = d / f"{name}{ext}"
+                if not p.is_file():
+                    continue
+                t = read(p)
+                libs = [label for key, label in MIDDLEWARE_LIBS.items() if key in t]
+                matchers = re.findall(r"(?:const|let|var)\s+(\w+)\s*=\s*createRouteMatcher\(\s*\[([^\]]*)\]", t)
+                guarded = [grp for name, grp in matchers if re.search(r"protect|private|guard|member|admin", name, re.I)] or [grp for _, grp in matchers]
+                pats = [x.strip().strip("'\"`") for grp in guarded[:1] for x in grp.split(",") if x.strip()]
+                matcher = re.search(r"matcher\s*:\s*(\[[^\]]*\]|['\"][^'\"]*['\"])", t)
+                bits = []
+                if libs:
+                    bits.append(", ".join(libs))
+                if pats:
+                    bits.append("guards " + ", ".join(f"`{x}`" for x in pats[:4]) + " — a render there needs a session (`--cookie` / `--storage-state`)")
+                elif matcher:
+                    bits.append(f"matcher `{matcher.group(1)[:60]}`")
+                return f"`{rel(root, p)}` runs before every page" + (": " + "; ".join(bits) if bits else "")
+    return None
+
+
+def locale_routing(root: Path, src_files: list[Path], routes: list) -> dict | None:
+    if not any("[locale]" in path or "[lang]" in path for path, _ in routes):
+        return None
+    for p in sorted(src_files, key=lambda q: (0 if re.search(r"i18n|routing|config", q.stem, re.I) else 1, str(q))):
+        if p.suffix not in {".ts", ".tsx", ".js", ".mjs"}:
+            continue
+        t = read(p, 100_000)
+        default = re.search(r"defaultLocale\s*:\s*['\"](\w[\w-]*)['\"]", t)
+        if not default:
+            continue
+        locales = re.search(r"locales\s*:\s*\[([^\]]*)\]", t)
+        prefix = re.search(r"localePrefix[^\n]*?['\"](always|as-needed|never)['\"]", t)
+        return {
+            "file": rel(root, p), "default": default.group(1),
+            "locales": [x.strip().strip("'\"") for x in locales.group(1).split(",") if x.strip()] if locales else [],
+            "prefix": prefix.group(1) if prefix else None,
+        }
+    return None
+
+
 def page_signatures(root: Path, src_files: list[Path], vocab_names: list[str]) -> dict:
     pages, routes = [], []
     for p in src_files:
@@ -557,25 +745,15 @@ def page_signatures(root: Path, src_files: list[Path], vocab_names: list[str]) -
         if p.stem in {"layout", "template", "loading", "error", "not-found", "index"} and "app" not in dirs and p.stem != "index":
             continue
         text = read(p, 200_000)
-        signals = []
-        if "<form" in text:
-            signals.append("form")
-        n_fields = len(re.findall(r"<(?:input|select|textarea)\b", text))
-        if n_fields:
-            signals.append(f"{n_fields} field{'s' if n_fields > 1 else ''}")
-        if "<table" in text:
-            signals.append("table")
-        elif ".map(" in text and re.search(r"<(?:li|article|tr)\b", text):
-            signals.append("list")
-        if re.search(r'role="dialog"|<dialog\b|<Dialog\b', text):
-            signals.append("dialog")
+        signals = _signals(text)
+        rendered = _rendered_by(root, p, text)
         used = sorted(((n, _cls_uses(n, [text])) for n in vocab_names), key=lambda x: -x[1])
         comps: list[str] = []
         for names in re.findall(r"import\s*\{([^}]+)\}\s*from\s*['\"][^'\"]*components/[^'\"]+['\"]", text):
             comps += [x.strip().split(" as ")[0] for x in names.split(",") if x.strip() and not x.strip().startswith("type ")]
         pages.append({
             "file": str(rp), "lines": text.count("\n") + 1, "signals": signals,
-            "classes": [f"{n} ×{c}" for n, c in used if c][:3], "components": comps[:6],
+            "classes": [f"{n} ×{c}" for n, c in used if c][:3], "components": comps[:6], "renders": rendered,
         })
     pages.sort(key=lambda x: x["file"])
     for p in src_files:
@@ -596,7 +774,8 @@ def page_signatures(root: Path, src_files: list[Path], vocab_names: list[str]) -
 
 def copy_mechanism(root: Path, src_files: list[Path], deps: dict) -> dict:
     libs = [label for key, label in I18N_LIBS.items() if key in deps]
-    dirs = sorted({rel(root, p.parent) for p in src_files if p.parent.name.lower() in I18N_DIRS})
+    dirs = sorted({rel(root, p.parent) for p in src_files if p.parent.name.lower() in I18N_DIRS}
+                  | {rel(root, d) for d in iter_dirs(root) if d.name.lower() in I18N_DIRS})
     hook = None
     for p in src_files[:MAX_SRC_FILES]:
         m = re.search(r"\b(useI18n|useTranslation|useTranslations|useIntl|useLingui)\b", read(p, 100_000))
@@ -723,10 +902,18 @@ def start_here(root: Path, src_files: list[Path], css_files: list[Path], stack: 
     ui_files = [p for p in src_files if p.suffix in {".tsx", ".jsx", ".vue", ".svelte", ".astro", ".html", ".mdx"}]
     texts = [read(p, 200_000) for p in ui_files[:MAX_SRC_FILES]]
     vocab = css_vocabulary(root, css_files, texts)
+    sig = page_signatures(root, src_files, [v["name"] for v in vocab])
+    is_next = stack.get("framework") == "Next.js"
     return {
         "vocabulary": vocab,
         "imported": import_fanin(root, src_files),
-        **page_signatures(root, src_files, [v["name"] for v in vocab]),
+        **sig,
+        "layouts": next_layouts(root) if is_next else [],
+        "theme": theme_mechanism(root, css_files, stack, src_files),
+        "middleware": middleware_line(root) if is_next else None,
+        "locale": locale_routing(root, src_files, sig["routes"]),
+        "next": is_next,
+        "contentlayer": any(k in deps for k in ("contentlayer", "contentlayer2", "next-contentlayer", "next-contentlayer2")),
         "copy": copy_mechanism(root, src_files, deps),
         "boot": boot_requests(root, src_files),
         "dev": dev_setup(root),
@@ -753,9 +940,17 @@ def md_start_here(sh: dict) -> list[str]:
                 bits.append(", ".join(pg["classes"]))
             if pg["components"]:
                 bits.append("imports " + ", ".join(pg["components"]))
+            r = pg.get("renders")
+            if r:
+                bits.append(f"renders {r['name']} (`{r['file']}` · {r['lines']} lines" + (f" · {', '.join(r['signals'])}" if r["signals"] else "") + ")")
             out.append(f"  - `{pg['file']}` · " + " · ".join(bits))
     if sh["routes"]:
         out.append("- Routes: " + " · ".join(f"`{path}` → {comp}" for path, comp in sh["routes"][:20]))
+    loc = sh.get("locale")
+    if loc:
+        out.append(f"  - `[locale]`: {', '.join(loc['locales']) or '?'} · default `{loc['default']}`"
+                   + (f" · prefix {loc['prefix']}" + (" → `/` is the default locale" if loc["prefix"] != "always" else " → every path starts with the locale") if loc["prefix"] else "")
+                   + f" (`{loc['file']}`)")
     c = sh["copy"]
     if c["dictionaries"] or c["libs"] or c["hook"]:
         parts = []
@@ -768,7 +963,24 @@ def md_start_here(sh: dict) -> list[str]:
         if c["hook"]:
             parts.append(f"components call `{c['hook']}()`")
         out.append("- Strings: " + "; ".join(parts) + ". New copy goes into every dictionary.")
-    before = list(sh["gates"])
+    before = []
+    if sh.get("theme"):
+        before.append("theme: " + sh["theme"])
+    for i, lay in enumerate(sh.get("layouts") or []):
+        parts = []
+        if lay["css"]:
+            parts.append("css " + ", ".join(f"`{c}`" for c in lay["css"]))
+        if lay["fonts"]:
+            parts.append("next/font " + ", ".join(lay["fonts"]))
+        if lay["providers"]:
+            parts.append("providers " + ", ".join(lay["providers"]))
+        if lay["chrome"]:
+            parts.append("chrome " + ", ".join(lay["chrome"]))
+        scope = "wraps every page" if i == 0 else f"wraps `{lay['scope']}/*`"
+        before.append(f"`{lay['file']}` {scope}" + (": " + " · ".join(parts) if parts else ""))
+    if sh.get("middleware"):
+        before.append(sh["middleware"])
+    before += list(sh["gates"])
     b = sh["boot"]
     for f in b["files"]:
         via = f" through `{b['apiModule']}`" + (f" (base `{b['base']}`)" if b["base"] else "") if b["apiModule"] else ""
@@ -779,12 +991,21 @@ def md_start_here(sh: dict) -> list[str]:
     if d["helpers"]:
         before.append("starts everything: " + ", ".join(f"`{h}`" for h in d["helpers"]))
     if d["scripts"]:
-        before.append("scripts: " + ", ".join(f"`{k}` = `{v}`" for k, v in list(d["scripts"].items())[:3]))
+        line = "scripts: " + ", ".join(f"`{k}` = `{v}`" for k, v in list(d["scripts"].items())[:3])
+        if sh.get("next"):
+            dev = d["scripts"].get("dev", "")
+            line += " — Next.js listens on :3000 unless `-p` says otherwise"
+            if re.search(r"run-p|concurrently|npm-run-all|&&|\s&\s", dev):
+                line += "; `dev` starts more than Next (a database, a worker): run it as it is"
+            if sh.get("contentlayer"):
+                line += "; contentlayer compiles the content on start"
+        before.append(line)
     if before:
         out.append("- Before a page renders:")
         out += [f"  - {ln}" for ln in before]
     if sh["pages"] or sh["vocabulary"]:
-        out.append("- Read next: " + (("the page above whose signals match yours" if sh["pages"] else "the vocabulary lines")
+        thin = any(pg.get("renders") for pg in sh["pages"])
+        out.append("- Read next: " + (("the page above whose signals match yours" + (" (a thin page: the file it renders)" if thin else "") if sh["pages"] else "the vocabulary lines")
                    + (" and the vocabulary lines" if sh["pages"] and sh["vocabulary"] else ""))
                    + ". Not the CSS file, not the store.")
     else:

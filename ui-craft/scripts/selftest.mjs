@@ -75,6 +75,15 @@ try {
     expect(!/contrast \d/.test(f.replace(/non-text contrast \d|dark contrast \d/g, '')), `light text contrast should be clean: ${f}`);
     return `${f} · warn: ${w}`;
   });
+  await check('findings printed once across viewports', async () => {
+    const r = await render(join(pages, 'instruments.html'), join(work, 'inst-merged'), '--viewports', '375,600');
+    const lines = r.stdout.split('\n');
+    expect(lines.some((l) => /^\s*findings at 375 \/ 600 \(an untagged line holds at every viewport\)/.test(l)), 'no merged findings header');
+    const ring = lines.filter((l) => /^ {4}focus ring <3:1:$/.test(l)); // the light section; 'dark focus ring' is its own
+    expect(ring.length === 1, `the focus-ring section should appear once, appeared ${ring.length} times`);
+    expect(!lines.some((l) => /^\s*(375|600):\s*$/.test(l)), 'a per-viewport block was printed');
+    return `${lines.filter((l) => /^\s{6}\S/.test(l)).length} finding lines, one block`;
+  });
   await check('instruments: clean button stays clean', () => {
     const names = [...v(inst).audit.nonText.failures, ...v(inst).focus.lowContrastRing.map((s) => ({ selector: s }))].map((x) => x.selector).join(' ');
     expect(!/OK button/.test(names), `the OK button was flagged: ${names}`);
