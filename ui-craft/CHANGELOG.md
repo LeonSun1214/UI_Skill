@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.11.3 — where a change is
+
+- `--compare` says where the changed pixels are: the landmarks (header, nav, main's
+  children by their heading, aside, footer) that hold nine tenths of them, up to
+  three — *within the header (y 20–40 px)*, *within the header and "Software"* —
+  or *spread over the page*. The second trial asked for this: 17–27 % of pixels
+  changed because everything below a taller row shifted, and a percentage could
+  not tell that from a colour change. The audit records the landmarks in
+  `structure.landmarks`; a 2× screenshot is scaled to them.
+
 ## 0.11.2 — the three-way trial on a real repository, and the ragged grid
 
 The fifth trial's task run under ui-ux-pro-max and with no skill, graded by the

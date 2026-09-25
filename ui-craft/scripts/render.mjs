@@ -394,7 +394,23 @@ function domAudit(INTERACTIVE) {
   const skippedLevels = [];
   let prev = 0;
   for (const h of headings) { if (prev && h.level > prev + 1) skippedLevels.push(`h${prev} → h${h.level} "${h.text}"`); prev = h.level; }
+  // Where things are on the page, in document pixels, so --compare can say "within the header" instead
+  // of a percentage: the landmarks, and the top-level children of main named by their first heading.
+  const landmarks = [];
+  const addRegion = (el, name) => { const r = el.getBoundingClientRect(); if (r.height >= 8) landmarks.push({ name, top: Math.round(r.top + window.scrollY), bottom: Math.round(r.bottom + window.scrollY) }); };
+  for (const [sel, name] of [['header, [role="banner"]', 'header'], ['nav, [role="navigation"]', 'nav'], ['aside, [role="complementary"]', 'aside'], ['footer, [role="contentinfo"]', 'footer']]) {
+    const el = document.querySelector(sel); if (el) addRegion(el, name);
+  }
+  const mainEl = document.querySelector('main, [role="main"]');
+  if (mainEl) {
+    addRegion(mainEl, 'main');
+    for (const child of [...mainEl.children].slice(0, 12)) {
+      const h = child.querySelector('h1, h2, h3');
+      addRegion(child, h ? `"${(h.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 30)}"` : child.tagName.toLowerCase() + (child.id ? `#${child.id}` : ''));
+    }
+  }
   const structure = {
+    landmarks,
     h1Count: headings.filter((h) => h.level === 1).length,
     headings: headings.slice(0, 40),
     skippedLevels,
@@ -728,18 +744,20 @@ async function compareRuns(browser, outDir, baseDir, viewports) {
       const out = document.createElement('canvas'); out.width = w; out.height = h;
       const ox = out.getContext('2d'); ox.drawImage(ib, 0, 0); const od = ox.getImageData(0, 0, w, h);
       let changed = 0;
+      const band = 20, bands = new Array(Math.ceil(h / band)).fill(0); // changed pixels per 20 px of height
       for (let i = 0; i < da.length; i += 4) {
         const d = Math.abs(da[i] - db[i]) + Math.abs(da[i + 1] - db[i + 1]) + Math.abs(da[i + 2] - db[i + 2]);
-        if (d > 48) { changed++; od.data[i] = 255; od.data[i + 1] = 0; od.data[i + 2] = 200; od.data[i + 3] = 255; }
+        if (d > 48) { changed++; bands[Math.floor((i / 4) / w / band)]++; od.data[i] = 255; od.data[i + 1] = 0; od.data[i + 2] = 200; od.data[i + 3] = 255; }
         else { od.data[i] = 128 + od.data[i] / 2; od.data[i + 1] = 128 + od.data[i + 1] / 2; od.data[i + 2] = 128 + od.data[i + 2] / 2; }
       }
       ox.putImageData(od, 0, 0);
-      return { w, h, aw: ia.width, ah: ia.height, bw: ib.width, bh: ib.height, changed, total: w * h, png: changed ? out.toDataURL('image/png') : null };
+      return { w, h, aw: ia.width, ah: ia.height, bw: ib.width, bh: ib.height, changed, total: w * h, bands, band, png: changed ? out.toDataURL('image/png') : null };
     }, [a, b]);
     const entry = {
       changedPixels: r.changed, comparedPixels: r.total, changedPct: +((100 * r.changed) / r.total).toFixed(2),
       sizeChanged: (r.aw !== r.bw || r.ah !== r.bh) ? `${r.aw}×${r.ah} → ${r.bw}×${r.bh}` : null,
       heightDelta: r.bh - r.ah,
+      where: r.changed ? locateChanges(r.bands, r.band, ((viewports || {})[name.split('-')[0]] || {}).audit?.structure?.landmarks || [], r.h, r.w / (Number(name.split('-')[0]) || r.w)) : null,
       diff: null,
     };
     if (r.png) {
@@ -757,10 +775,34 @@ async function compareRuns(browser, outDir, baseDir, viewports) {
 // A layout shift and a colour change score alike as "pixels changed"; the height comes first so
 // a page that grew by 200 px reads as that, then as a share of the overlap that moved.
 function describeChange(f) {
-  if (!f.sizeChanged) return `${f.changedPct}% changed`;
+  const where = f.where ? `, ${f.where}` : '';
+  if (!f.sizeChanged) return `${f.changedPct}% changed${where}`;
   const h = f.heightDelta || 0;
   const grew = h ? `${h > 0 ? '+' : ''}${h} px ${h > 0 ? 'taller' : 'shorter'}, then ` : `size ${f.sizeChanged}, then `;
-  return `${grew}${f.changedPct}% of the overlap changed (${f.sizeChanged})`;
+  return `${grew}${f.changedPct}% of the overlap changed (${f.sizeChanged})${where}`;
+}
+
+// Which regions hold the changed pixels: the landmarks (and main's children by heading) that together
+// hold 90 % of them, up to three; otherwise "spread over the page". Always with the y range.
+function locateChanges(bands, band, landmarks, height, scale = 1) {
+  // bands are in image pixels; landmarks in CSS pixels (the screenshot may be 2×). A band that straddles
+  // a landmark's edge is split by overlap.
+  const total = bands.reduce((a, b) => a + b, 0);
+  if (!total) return null;
+  const first = bands.findIndex((n) => n > 0), last = bands.length - 1 - [...bands].reverse().findIndex((n) => n > 0);
+  const range = `y ${Math.round(first * band / scale)}–${Math.round(Math.min(height, (last + 1) * band) / scale)} px`;
+  const named = (l) => (['header', 'nav', 'footer', 'aside'].includes(l.name) ? `the ${l.name}` : l.name);
+  const shares = landmarks.filter((l) => l.name !== 'main')
+    .map((l) => ({ ...l, n: bands.reduce((acc, n, i) => {
+      const a = i * band, b = (i + 1) * band, top = l.top * scale, bottom = l.bottom * scale;
+      const overlap = Math.max(0, Math.min(b, bottom) - Math.max(a, top));
+      return acc + n * (overlap / band);
+    }, 0) }))
+    .filter((l) => l.n > 0).sort((a, b) => b.n - a.n);
+  const pick = []; let acc = 0;
+  for (const l of shares) { if (pick.some((q) => q.top <= l.top && q.bottom >= l.bottom)) continue; pick.push(l); acc += l.n; if (acc / total >= 0.9) break; }
+  if (acc / total >= 0.9 && pick.length <= 3) return `within ${pick.map(named).join(' and ')} (${range})`;
+  return `spread over the page (${range})`;
 }
 
 async function contactSheet(browser, outDir, folds, name = 'contact.png') {

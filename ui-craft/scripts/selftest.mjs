@@ -232,7 +232,8 @@ try {
     expect(changed.length > 0 && changed.every(([, f]) => f.diff), `different page should differ and write diff images: ${JSON.stringify(other.compare.files)}`);
     const full = other.compare.files['600-full.png'];
     expect(full && typeof full.heightDelta === 'number', `full-page entry should carry heightDelta: ${JSON.stringify(full)}`);
-    return `${same.length} identical on re-render; ${changed.length} changed vs another page (${changed[0][1].changedPct}%, full page ${full.heightDelta >= 0 ? '+' : ''}${full.heightDelta} px)`;
+    expect(changed.every(([, f]) => /^(within|spread over the page|at y)/.test(f.where || '')), `changed entries should say where: ${JSON.stringify(changed.map(([n, f]) => [n, f.where]))}`);
+    return `${same.length} identical on re-render; ${changed.length} changed vs another page (${changed[0][1].changedPct}%, full page ${full.heightDelta >= 0 ? '+' : ''}${full.heightDelta} px, ${full.where})`;
   });
 } finally {
   server.close();
