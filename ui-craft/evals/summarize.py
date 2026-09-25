@@ -52,7 +52,10 @@ def table(rows):
             return None
         if len(vals) == 1:
             return fmt(vals[0])
-        return f"{fmt(statistics.mean(vals))} ±{fmt(statistics.pstdev(vals)).lstrip('0') if fmt is not int else fmt(statistics.pstdev(vals))}"
+        mean, sd = statistics.mean(vals), statistics.pstdev(vals)
+        if sd == 0:
+            return fmt(mean)  # identical runs: no spread to show
+        return f"{fmt(mean)} ±{fmt(sd)}"
 
     for ev in evals:
         cells = []

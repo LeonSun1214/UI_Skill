@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.8.0 — an independent critic, and the review path
+
+- `critique.mjs`: after the instruments pass, a fresh `claude -p` session that has
+  seen neither the code nor the conversation views the contact sheet (and the dark
+  one) and returns six rubric scores, a ship/no-ship verdict and the three changes
+  that would most improve the page. SKILL.md step 4d treats the three changes like
+  FAILs and owes one more round when any dimension scores 3 or below; once per
+  round, at most twice per task, never on match tasks in an established project.
+  Self-review is anchored on what the model just decided; this is not.
+- Eval 5, *review and fix*: a working admin page (`evals/fixtures/review`) with ten
+  planted defects — 4.4:1 grey text, 20 px unnamed icon buttons with the focus
+  outline removed, a nine-column table that overflows at 375, colour-only status
+  dots, a photo without alt, an infinite pulse with no reduced-motion rule, a
+  skipped heading level, `user-scalable=no`. New grader checks: zoom allowed,
+  heading order, status text, found-issues (≥ 6 of 10 named in the reply).
+- `render.mjs` records the page's visible text (`bodyText`) so a grader can check
+  copy without a second render; instant scrolling is pinned for the fold shots
+  (smooth scrolling had produced mid-page screenshots).
+- `judge.py pair --only` merges per eval; `summarize.py` shows mean ± spread
+  when a configuration has several runs.
+
 ## 0.7.0 — a persisted direction, and a judge for taste
 
 - `direction.py`: the six-line brief as `docs/design/brief.json`; `check` measures
