@@ -196,6 +196,15 @@ try {
     return v(r).actErrors[0].slice(0, 70);
   });
 
+  // 3e. a grid whose last row is short is reported; a full one is not
+  await check('ragged grid: three cards in two columns', async () => {
+    const r = await render(`${base}/grid.html`, join(work, 'grid'));
+    const g = v(r).audit.ragged || [];
+    expect(g.length === 1 && g[0].selector.includes('three') && g[0].columns === 2 && g[0].lastRow === 1, `expected the three-card grid alone: ${JSON.stringify(g)}`);
+    expect(v(r).warns.some((w) => /^ragged grid 1$/.test(w)), `warn missing: ${v(r).warns.join(' | ')}`);
+    return `${g[0].items} items in ${g[0].columns} columns, ${g[0].lastRow} alone · the four-card grid not flagged`;
+  });
+
   await check('--dismiss Escape lifts the splash', async () => {
     const a = await render(`${base}/splash.html`, join(work, 's0'));
     const b = await render(`${base}/splash.html`, join(work, 's1'), '--dismiss', 'Escape');

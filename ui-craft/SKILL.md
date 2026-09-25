@@ -8,7 +8,7 @@ description: >-
 
 # ui-craft
 
-Version 0.11.1. (An older copy of this file means the installed skill is behind the
+Version 0.11.2. (An older copy of this file means the installed skill is behind the
 repository: re-run `install.sh`; `doctor.mjs` says when that is the case.)
 
 UI work has a gap that code review can't close: the first draft always has two or
@@ -248,7 +248,10 @@ WARNs (targets under 44px, buttons that change nothing on hover, `cursor` not
 `pointer` on a custom control, a text button whose surface is under 3:1 against its
 surroundings, animations without a reduced-motion rule, skipped heading levels, font
 load errors, console errors) — fix unless there's a reason not to, and say the
-reason. A button with no hover feedback is almost always a miss, not a choice.
+reason. A button with no hover feedback is almost always a miss, not a choice. A grid whose last
+row is short (three cards in two columns, one alone with an empty slot beside it)
+reads unfinished before anything else is judged: the report says `ragged grid`;
+fill the sample data to the row, or let the last item span.
 
 A FAIL that comes from a shared primitive or token the user told you not to touch
 (a 1.3:1 hairline on the project's own `Input`) is *inherited*: leave it, and name it

@@ -416,12 +416,30 @@ function domAudit(INTERACTIVE) {
 
   const pageTitle = (document.title || '').trim().slice(0, 80);
   const passwordField = !!document.querySelector('input[type="password"]');
+  // A grid whose last row is short: three cards in two columns leave one alone with an empty slot
+  // beside it, and a page reads unfinished for it. Real data may have any count; sample data should
+  // fill the rows, or the last item should span. Grid and wrapping flex containers, three items up.
+  const ragged = [];
+  for (const el of [...document.querySelectorAll('*')].slice(0, 4000)) {
+    const cs = getComputedStyle(el);
+    const grid = cs.display === 'grid' || cs.display === 'inline-grid';
+    const wrap = (cs.display === 'flex' || cs.display === 'inline-flex') && cs.flexWrap === 'wrap';
+    if (!grid && !wrap) continue;
+    const kids = [...el.children].filter((k) => { const r = k.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(k).position !== 'absolute'; });
+    if (kids.length < 3) continue;
+    const rows = [];
+    for (const k of kids) { const top = Math.round(k.getBoundingClientRect().top); const row = rows.find((r) => Math.abs(r.top - top) < 4); if (row) row.n++; else rows.push({ top, n: 1 }); }
+    if (rows.length < 2) continue;
+    const cols = Math.max(...rows.map((r) => r.n)), last = rows[rows.length - 1].n;
+    if (cols >= 2 && last < cols) ragged.push({ selector: short(el), items: kids.length, columns: cols, lastRow: last });
+    if (ragged.length >= 4) break;
+  }
   const devOverlay = [...document.querySelectorAll('nextjs-portal, vite-error-overlay')].map((el) => el.tagName.toLowerCase())[0] || null;
   // What a form's error state says: live regions with text, and fields marked invalid.
   const alerts = [...document.querySelectorAll('[role="alert"], [role="status"], [aria-live="polite"], [aria-live="assertive"]')]
     .map((el) => (el.textContent || '').trim().replace(/\s+/g, ' ')).filter(Boolean).slice(0, 6).map((t) => t.slice(0, 80));
   const invalidFields = document.querySelectorAll('[aria-invalid="true"]').length;
-  return { pageColors, contrast, nonText, targets, unnamedControls, overflow, motion, darkSupport, fonts, imagesMissingAlt, structure, viewportMeta, bodyText, pageTitle, passwordField, devOverlay, alerts, invalidFields };
+  return { pageColors, contrast, nonText, targets, unnamedControls, overflow, motion, darkSupport, fonts, imagesMissingAlt, structure, viewportMeta, bodyText, pageTitle, passwordField, devOverlay, alerts, invalidFields, ragged };
 }
 
 // ------------------------------------------------- keyboard focus (real Tabs)
@@ -940,6 +958,7 @@ for (const width of opt.viewports) {
     if (audit.targets.between24and44.length) warns.push(`targets 24–44px ${audit.targets.between24and44.length}`);
     if (audit.motion.animatedElements && !audit.motion.reducedMotionRule) warns.push('animations without prefers-reduced-motion');
     if (audit.structure.h1Count !== 1) warns.push(`h1 count ${audit.structure.h1Count}`);
+    if ((audit.ragged || []).length) warns.push(`ragged grid ${audit.ragged.length}`);
     if (audit.structure.skippedLevels.length) warns.push(`skipped heading levels ${audit.structure.skippedLevels.length}`);
     const fontErrors = audit.fonts.declared.filter((f) => f.status === 'error').length;
     if (fontErrors) warns.push(`font load errors ${fontErrors}`);
@@ -1058,6 +1077,7 @@ const specs = [
   ['dark contrast', (v) => v.dark && v.dark.contrast.failures, 6, (f) => `${f.ratio}:1 (need ${f.required}) ${f.selector} — ${f.color} on ${f.background}`],
   ['unnamed', (v) => v.audit.unnamedControls, 6, (s) => s],
   ['img without alt', (v) => v.audit.imagesMissingAlt, 4, (s) => s],
+  ['ragged grid (the last row is short: fill the sample data, or let the last item span)', (v) => v.audit.ragged || [], 4, (g) => `${g.items} items in ${g.columns} columns, ${g.lastRow} alone in the last row — ${g.selector}`],
   ['dialog', (v) => (v.dialog ? [
     !v.dialog.focusInside && 'focus did not move into the dialog: focus its first control (or the close button) on open',
     v.dialog.modal && !v.dialog.trapped && `says it is modal, but Tab leaves it after ${v.dialog.escapedTo.after} → ${v.dialog.escapedTo.to}: trap focus, or use <dialog>.showModal()`,

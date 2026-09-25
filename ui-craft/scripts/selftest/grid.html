@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grid test</title>
+<style>
+  body { margin: 0; padding: 32px; font: 16px/1.5 system-ui, sans-serif; color: #1a1a1a; background: #fff; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 32px; }
+  .wrap { display: flex; flex-wrap: wrap; gap: 16px; }
+  .wrap > * { flex: 0 0 calc(50% - 8px); }
+  .card { border: 2px solid #6b7280; border-radius: 8px; padding: 16px; min-height: 60px; }
+</style>
+</head>
+<body>
+<h1>Grids</h1>
+<!-- three in two columns: the last row holds one, the slot beside it is empty -->
+<section class="grid" id="three"><div class="card">One</div><div class="card">Two</div><div class="card">Three</div></section>
+<!-- four in two columns: full rows, nothing to say -->
+<section class="wrap" id="four"><div class="card">One</div><div class="card">Two</div><div class="card">Three</div><div class="card">Four</div></section>
+</body>
+</html>

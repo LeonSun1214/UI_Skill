@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.11.2 — the three-way trial on a real repository, and the ragged grid
+
+The fifth trial's task run under ui-ux-pro-max and with no skill, graded by the
+same renderer (`evals/notes/trial-next-6.md`). ui-craft's page: fewest measured
+defects, fewest files read; no skill: cheapest; ui-ux-pro-max: the judge's
+choice in both orders, for one reason — four sample items per group where
+ui-craft's three left a card alone in the last row.
+
+- `render.mjs` reports a `ragged grid`: a grid or wrapping flex row, three items
+  up, whose last row is short — a warning naming the container, and a findings
+  line (fill the sample data, or let the last item span). Self-test `grid.html`
+  (25 checks).
+- SKILL.md, the look step: sample data fills the rows.
+- README: the real-repository paragraph under the results table.
+
 ## 0.11.1 — where the fifth trial's tokens went
 
 The transcript profile of the fifth trial (19 turns, 207k billed: 40k for the
