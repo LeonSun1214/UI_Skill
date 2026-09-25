@@ -45,6 +45,15 @@ def table(rows):
     cfgs = ["with_skill", "ui_ux_pro_max", "without_skill"]
     cfgs = [c for c in cfgs if any(r[1] == c for r in rows)] + sorted({r[1] for r in rows} - set(cfgs))
     out = ["| | " + " | ".join(cfgs) + " |", "|---|" + "---|" * len(cfgs)]
+    def pm(vals, fmt):
+        """mean ± stddev when there is more than one run, else the value"""
+        vals = [v for v in vals if v is not None]
+        if not vals:
+            return None
+        if len(vals) == 1:
+            return fmt(vals[0])
+        return f"{fmt(statistics.mean(vals))} ±{fmt(statistics.pstdev(vals)).lstrip('0') if fmt is not int else fmt(statistics.pstdev(vals))}"
+
     for ev in evals:
         cells = []
         for c in cfgs:
@@ -52,18 +61,30 @@ def table(rows):
             if not rs:
                 cells.append("—")
                 continue
-            r = rs[0]
-            tok = f" · {r[5] / 1000:.0f}k" if r[5] else ""
-            if r[5] and r[8] and r[8] != r[5]:
-                tok += f" ({r[8] / 1000:.0f}k)"
-            vis = f" · look {r[9]}/5" if r[9] is not None else ""
-            cells.append(f"{r[3]}/{r[4]}{tok}{vis}")
+            n = len(rs)
+            passed = pm([r[3] for r in rs], lambda v: f"{v:.1f}" if isinstance(v, float) and v != int(v) else f"{int(v)}")
+            total = rs[0][4]
+            tok = pm([r[8] or r[5] for r in rs if (r[8] or r[5])], lambda v: f"{v / 1000:.0f}k")
+            look = pm([r[9] for r in rs], lambda v: f"{v:.1f}" if isinstance(v, float) and v != int(v) else f"{int(v)}")
+            cell = f"{passed}/{total}"
+            if tok:
+                cell += f" · {tok}"
+            if look:
+                cell += f" · look {look}/5"
+            if n > 1:
+                cell += f" (n={n})"
+            cells.append(cell)
         out.append(f"| {ev} | " + " | ".join(cells) + " |")
     tot = []
     for c in cfgs:
-        rs = [r for r in rows if r[1] == c]
-        tot.append(f"**{sum(r[3] for r in rs)}/{sum(r[4] for r in rs)}**")
-    out.append("| **pass** | " + " | ".join(tot) + " |")
+        p_sum = t_sum = 0.0
+        for ev in evals:
+            rs = [r for r in rows if r[0] == ev and r[1] == c]
+            if rs:
+                p_sum += statistics.mean(r[3] for r in rs)
+                t_sum += rs[0][4]
+        tot.append(f"**{p_sum:g}/{t_sum:g}**")
+    out.append("| **pass (per-eval mean over runs)** | " + " | ".join(tot) + " |")
     means = []
     for c in cfgs:
         toks = [r[5] for r in rows if r[1] == c and r[5]]
