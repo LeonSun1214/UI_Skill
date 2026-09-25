@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.10.1 — the fifth trial, a fresh agent on Next.js
+
+A fresh agent built a `/uses` page on the Tailwind Next.js starter blog with
+0.10.0 (`evals/notes/trial-next-5.md`): 17 minutes, 207k tokens against the
+third trial's 381k, nine tool calls before the first render, `localhost` from the
+first render, `--compare` on the untouched sibling. What it exposed:
+
+- The dev server's own overlay (Next's "1 Issue" badge, a `<nextjs-portal>` with
+  its button in a shadow root; Vite's `<vite-error-overlay>`) sat in every
+  screenshot and, because Playwright's selectors pierce shadow roots, in the hover
+  and focus audits ("2 without feedback", "focus obscured"). It is hidden before
+  paint now, the report says so, and its errors still count under console errors.
+- SKILL.md: the project's checks run after the last render, not alongside it —
+  `tsc --noEmit` writes `tsconfig.tsbuildinfo`, the dev server rebuilds, and the
+  render in flight measured a half-built page; a lint script with `--fix`
+  reformats files the task never touched.
+- Self-test: the real-project fixture carries a Next-style overlay; the hover check
+  proves it is not probed (20 checks).
+
 ## 0.10.0 — the first Next.js repositories, and a third less output
 
 Two public Next.js apps (a Tailwind 4 + `next-themes` + contentlayer blog on

@@ -411,7 +411,8 @@ function domAudit(INTERACTIVE) {
 
   const pageTitle = (document.title || '').trim().slice(0, 80);
   const passwordField = !!document.querySelector('input[type="password"]');
-  return { pageColors, contrast, nonText, targets, unnamedControls, overflow, motion, darkSupport, fonts, imagesMissingAlt, structure, viewportMeta, bodyText, pageTitle, passwordField };
+  const devOverlay = [...document.querySelectorAll('nextjs-portal, vite-error-overlay')].map((el) => el.tagName.toLowerCase())[0] || null;
+  return { pageColors, contrast, nonText, targets, unnamedControls, overflow, motion, darkSupport, fonts, imagesMissingAlt, structure, viewportMeta, bodyText, pageTitle, passwordField, devOverlay };
 }
 
 // ------------------------------------------------- keyboard focus (real Tabs)
@@ -662,7 +663,7 @@ for (const width of opt.viewports) {
   // "scroll back to top" can land mid-way down the page. Measure with instant scrolling; the
   // page's own transitions are untouched.
   await context.addInitScript(() => {
-    const fix = () => { const st = document.createElement('style'); st.setAttribute('data-ui-craft', 'scroll'); st.textContent = 'html, body { scroll-behavior: auto !important; }'; (document.head || document.documentElement).appendChild(st); };
+    const fix = () => { const st = document.createElement('style'); st.setAttribute('data-ui-craft', 'scroll'); st.textContent = 'html, body { scroll-behavior: auto !important; } nextjs-portal, vite-error-overlay { display: none !important; }'; (document.head || document.documentElement).appendChild(st); };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fix); else fix();
   });
   for (const m of opt.mocks) {
@@ -883,6 +884,7 @@ if (first) {
   console.log(`  page: ${JSON.stringify(first.audit.pageTitle || '(no title)')}${h1s.length ? ` · h1 ${h1s.map((t) => JSON.stringify(t.slice(0, 40))).join(', ')}` : ' · no h1'}${(/sign ?in|log ?in|登录/i.test((first.audit.pageTitle || '') + ' ' + h1s.join(' ')) || (first.audit.passwordField && /sign ?in|log ?in|login|登录|password|密码/i.test((first.audit.bodyText || '').slice(0, 400)))) ? '  ← looks like a sign-in page: was the session passed? (--cookie / --storage-state)' : ''}`);
   const reqs = first.requests || [];
   if (!reqs.length && !first.loadError) console.log('  requests (xhr/fetch): none — the data came with the HTML (server-rendered or static); nothing for --mock to answer');
+  if (first.audit.devOverlay) console.log(`  dev overlay: <${first.audit.devOverlay}> hidden for the screenshots and the audits — its errors still count under console errors`);
   if (reqs.length) {
     // Each endpoint once, with a count: a store that fetches twice (StrictMode, a refetch) would
     // otherwise fill the line with repeats and push the calls a --mock needs behind the "…".

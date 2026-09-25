@@ -42,5 +42,12 @@
     <button type="button" aria-pressed="true">中</button>
     <button type="button" aria-pressed="false">EN</button>
   </div>
+<script>
+  // Next's dev badge: a custom element whose button lives in a shadow root. Playwright's selectors pierce
+  // shadow roots, so without the hide rule this button (no hover style) would be probed and flagged.
+  const portal = document.createElement('nextjs-portal');
+  portal.attachShadow({ mode: 'open' }).innerHTML = '<button type="button" style="position:fixed;left:16px;bottom:16px;min-height:44px;padding:0 16px;background:#b91c1c;color:#fff;border:0;border-radius:999px">1 Issue</button>';
+  document.body.appendChild(portal);
+</script>
 </body>
 </html>

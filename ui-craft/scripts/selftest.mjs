@@ -121,7 +121,9 @@ try {
   await check('pressed segment owes no hover feedback', () => {
     const h = v(rp).hover;
     expect(h && h.noHoverFeedback.length === 0, `pressed segment flagged: ${JSON.stringify(h && h.noHoverFeedback)}`);
-    return `${h.checked} hovered, 0 without feedback`;
+    expect(h.checked === 3, `the dev overlay's shadow button was probed: ${h.checked} hovered`);
+    expect(v(rp).audit.devOverlay === 'nextjs-portal', `dev overlay not reported: ${v(rp).audit.devOverlay}`);
+    return `${h.checked} hovered, 0 without feedback · <nextjs-portal> hidden`;
   });
 
   // 3. gated page: no auth → sign-in; each auth option → dashboard
