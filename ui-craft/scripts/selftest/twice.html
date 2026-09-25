@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Twice test</title>
+<style>
+  body { margin: 0; padding: 32px; font: 16px/1.5 system-ui, sans-serif; color: #1a1a1a; background: #fff; }
+  button { min-height: 44px; padding: 0 20px; background: #1d4ed8; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
+  button:hover { background: #1e40af; }
+  button:focus-visible { outline: 3px solid #1a1a1a; outline-offset: 2px; }
+</style>
+</head>
+<body>
+<!-- A store that asks for the same thing twice on boot (StrictMode, a refetch): the requests line
+     must still name the endpoint once, with a count, so a --mock reader sees every distinct call. -->
+<main>
+  <h1>Fetches twice</h1>
+  <p id="status">Loading…</p>
+  <button type="button">Reload</button>
+</main>
+<script>
+  Promise.all([fetch('/api/items'), fetch('/api/items')]).then((rs) => {
+    document.getElementById('status').textContent = rs.map((r) => r.status).join(' / ');
+  });
+</script>
+</body>
+</html>

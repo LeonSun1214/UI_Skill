@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.2 — the requests line, from the first run on a Mac
+
+- The `requests` line names each endpoint once with a count (`200 GET /api/auth/me ×2`)
+  and says how many were distinct. A dev-mode store that fetches twice (StrictMode, a
+  refetch) filled the twelve slots with repeats and pushed the calls a `--mock` needs
+  behind the "…": twenty requests, eight endpoints shown, four of them twice. It also
+  stops recording before the dark pass, whose reload would have counted a second load.
+- Self-test: `twice.html` and a check on the printed line (19 in all).
+
 ## 0.9.1 — what the third trial and the second asked for
 
 - `render.mjs --mock` takes an inline body (`'**/api/teams=[]'`) or a bare status

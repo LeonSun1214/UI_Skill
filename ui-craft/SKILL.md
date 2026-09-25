@@ -8,7 +8,7 @@ description: >-
 
 # ui-craft
 
-Version 0.9.1. (An older copy of this file means the installed skill is behind the
+Version 0.9.2. (An older copy of this file means the installed skill is behind the
 repository: re-run `install.sh`; `doctor.mjs` says when that is the case.)
 
 UI work has a gap that code review can't close: the first draft always has two or

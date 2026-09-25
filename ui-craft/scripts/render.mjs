@@ -679,6 +679,7 @@ for (const width of opt.viewports) {
   const failedRequests = [];
   const httpErrors = [];
   const requests = []; // every xhr/fetch the page made, with its status: what a second render would mock
+  let recordRequests = true; // one load's worth: the dark pass below may reload the page
   const origin = (() => { try { return new URL(url).origin; } catch { return ''; } })();
   page.on('console', (m) => {
     // "Failed to load resource" carries no URL; the request/response listeners record those with one.
@@ -689,7 +690,7 @@ for (const width of opt.viewports) {
   page.on('response', (r) => {
     if (r.status() >= 400 && !/\/favicon\.ico(\?|$)/.test(r.url())) httpErrors.push(`${r.status()} ${r.url().slice(0, 120)}`);
     const rt = r.request().resourceType();
-    if ((rt === 'xhr' || rt === 'fetch') && requests.length < 40) {
+    if (recordRequests && (rt === 'xhr' || rt === 'fetch') && requests.length < 40) {
       let path = r.url();
       try { const u = new URL(path); if (u.origin === origin) path = u.pathname + u.search; } catch { /* keep */ }
       requests.push({ method: r.request().method(), status: r.status(), url: path.slice(0, 120) });
@@ -729,6 +730,7 @@ for (const width of opt.viewports) {
   await page.screenshot({ path: join(opt.out, `${key}-full.png`), fullPage: true });
 
   // --- dark-mode pass: only when the page has a dark rule (or --dark). Same audit, new colours.
+  recordRequests = false;
   let dark = null;
   const wantDark = !loadError && opt.dark !== 'skip' && (opt.dark === 'force' || (audit && audit.darkSupport.any));
   if (wantDark) {
@@ -867,7 +869,15 @@ if (first) {
   const h1s = (first.audit.structure && first.audit.structure.headings || []).filter((h) => h.level === 1).map((h) => h.text);
   console.log(`  page: ${JSON.stringify(first.audit.pageTitle || '(no title)')}${h1s.length ? ` · h1 ${h1s.map((t) => JSON.stringify(t.slice(0, 40))).join(', ')}` : ' · no h1'}${/sign in|log in|login|登录/i.test((first.audit.pageTitle || '') + ' ' + h1s.join(' ') + ' ' + (first.audit.bodyText || '').slice(0, 200)) ? '  ← looks like a sign-in page: was the session passed? (--cookie / --storage-state)' : ''}`);
   const reqs = first.requests || [];
-  if (reqs.length) console.log(`  requests (xhr/fetch, ${reqs.length}): ${reqs.slice(0, 12).map((q) => `${q.status} ${q.method} ${q.url}`).join(' · ')}${reqs.length > 12 ? ' · …' : ''}  ← what a second render would --mock`);
+  if (reqs.length) {
+    // Each endpoint once, with a count: a store that fetches twice (StrictMode, a refetch) would
+    // otherwise fill the line with repeats and push the calls a --mock needs behind the "…".
+    const counts = new Map();
+    for (const q of reqs) { const k = `${q.status} ${q.method} ${q.url}`; counts.set(k, (counts.get(k) || 0) + 1); }
+    const distinct = [...counts].map(([k, n]) => (n > 1 ? `${k} ×${n}` : k));
+    const head = `${reqs.length}${distinct.length < reqs.length ? `, ${distinct.length} distinct` : ''}`;
+    console.log(`  requests (xhr/fetch, ${head}): ${distinct.slice(0, 16).join(' · ')}${distinct.length > 16 ? ` · … ${distinct.length - 16} more in report.json` : ''}  ← what a second render would --mock`);
+  }
   console.log(`  dark mode: ${first.audit.darkSupport.any ? `supported (${['media', 'class', 'attr'].filter((k) => first.audit.darkSupport[k]).map((k) => k === 'attr' ? 'attribute' : k).join('+')})` : 'not implemented'}${report.summary.darkRendered ? ' — rendered and audited' : ''}`);
 }
 const top = (arr, n, fmt) => arr.slice(0, n).map(fmt).map((s) => `      ${s}`).join('\n');

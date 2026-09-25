@@ -47,7 +47,8 @@ function render(target, out, ...extra) {
       clearTimeout(timer);
       const rp = join(out, 'report.json');
       if (!existsSync(rp)) return reject(new Error(`no report for ${target}: ${(err || log).trim().split('\n').slice(-3).join(' | ')}`));
-      resolve(JSON.parse(readFileSync(rp, 'utf8')));
+      // The report, with what render.mjs printed alongside (a check on the console lines reads it).
+      resolve(Object.defineProperty(JSON.parse(readFileSync(rp, 'utf8')), 'stdout', { value: log, enumerable: false }));
     });
   });
 }
@@ -144,6 +145,12 @@ try {
     const q = (v(r).requests || []).find((x) => /\/api\/items/.test(x.url));
     expect(q && q.status === 401, `requests line should show 401: ${JSON.stringify(v(r).requests)}`);
     return `h1=${h1(r)} · ${q.status} ${q.method} ${q.url}`;
+  });
+  await check('requests line counts a repeated call once', async () => {
+    const r = await render(`${base}/twice.html`, join(work, 'g8'));
+    const line = (r.stdout.split('\n').find((l) => /^\s*requests \(xhr\/fetch/.test(l)) || '').trim();
+    expect(/\(xhr\/fetch, 2, 1 distinct\)/.test(line) && /401 GET \/api\/items ×2/.test(line), `line was: ${line || '(none)'}`);
+    return line.replace(/\s+←.*$/, '');
   });
 
   // 3c. --dismiss lifts a splash that a key press removes
