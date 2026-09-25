@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Splash test</title>
+<style>
+  body { margin: 0; padding: 32px; font: 16px/1.5 system-ui, sans-serif; color: #1a1a1a; background: #fff; }
+  #splash { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; background: #101214; color: #f1f1f1; }
+  button { min-height: 44px; padding: 0 20px; background: #1d4ed8; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
+  button:hover { background: #1e40af; }
+  button:focus-visible { outline: 3px solid #1a1a1a; outline-offset: 2px; }
+</style>
+</head>
+<body>
+<!-- An intro that covers everything until a key is pressed, the way an app's splash does. -->
+<div id="splash"><p>Loading…</p></div>
+<main>
+  <h1>Under the splash</h1>
+  <p>The overlay stays until Escape is pressed; the button beneath it cannot be reached before that.</p>
+  <button type="button">Continue</button>
+</main>
+<script>
+  window.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const s = document.getElementById('splash');
+    if (s) s.remove();
+    document.title = 'Splash lifted';
+  });
+</script>
+</body>
+</html>

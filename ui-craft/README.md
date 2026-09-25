@@ -101,7 +101,8 @@ Verified (render.mjs · .ui-craft/pricing-2):
 | Situation | What the skill does |
 |---|---|
 | Page behind a login | `node scripts/login-state.mjs <login-url>` opens a window, you log in, the session is saved; renders replay it with `--storage-state`. Or `--cookie`, `--header "Authorization: Bearer …"`, `--auth user:pass`. |
-| Page needs data | `--mock '**/api/items=fixture.json'` answers requests from a file; `--init-script seed.js` runs before the app (localStorage, flags). |
+| Page needs data | `--mock '**/api/items=fixture.json'` answers requests from a file, `'**/api/teams=[]'` inline, `'**/api/auth/me=401'` a bare status; the output lists every xhr/fetch the page made with its status. `--init-script seed.js` runs before the app (localStorage, flags). |
+| A splash or cookie bar covers the page | `--dismiss Escape` or `--dismiss '.cookie-bar button'` |
 | SPA that hydrates late | `--wait-for '[data-loaded]'` |
 | One component, not a page | `node scripts/harness.mjs <project> --component src/ui/Button.tsx --states '[…]'` writes a Vite-served page that mounts it once per state |
 | Did the light theme change? | `--compare .ui-craft/before` pixel-diffs every screenshot against a previous run and writes `diff-*.png` |

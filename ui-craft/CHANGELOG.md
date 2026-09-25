@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.9.1 — what the third trial and the second asked for
+
+- `render.mjs --mock` takes an inline body (`'**/api/teams=[]'`) or a bare status
+  (`'**/api/auth/me=401'`) as well as a file; the output's `requests` line lists
+  every xhr/fetch the page made with its status, so the second render can mock
+  all of them without guessing shapes.
+- `render.mjs --dismiss Escape` (a key) or `--dismiss '.cookie-bar button'` (a
+  selector) gets past a splash or a cookie bar at 0 / 400 / 900 ms after load,
+  instead of an init script the model has to invent.
+- `--compare` reports the height change first ("+200 px taller, then 16.8 % of
+  the overlap changed"): a layout shift and a colour change no longer read alike.
+- SKILL.md: cost rule 8 — behaviour goes into the project's own test runner, not
+  a browser script of your own; step 4½ — a page you are changing gets a render
+  before and a `--compare` after; step 5 — the contact-sheet path must be one the
+  user can open. All three from the third trial (`evals/notes/trial-sunnote-3.md`).
+- Self-test: `splash.html` and three new checks (18 in all).
+
 ## 0.9.0 — the reading list
 
 - `inspect.py` opens with **Start here**: the classes the CSS defines with their

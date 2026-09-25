@@ -130,6 +130,31 @@ try {
     expect(/3 items/.test(h1(r)), `h1=${h1(r)}`); return h1(r);
   });
 
+  // 3b. --mock with an inline body and with a bare status; the requests line
+  await check('--mock inline JSON', async () => {
+    const r = await render(`${base}/gated.html`, join(work, 'g6'), '--mock', '**/api/items={"items":["x","y"]}');
+    expect(/2 items/.test(h1(r)), `h1=${h1(r)}`);
+    const q = (v(r).requests || []).find((x) => /\/api\/items/.test(x.url));
+    expect(q && q.status === 200, `requests line missing the mocked call: ${JSON.stringify(v(r).requests)}`);
+    return `${h1(r)} · requests: ${(v(r).requests || []).map((x) => `${x.status} ${x.method} ${x.url}`).join(', ')}`;
+  });
+  await check('--mock bare status overrides the server', async () => {
+    const r = await render(`${base}/gated.html`, join(work, 'g7'), '--header', 'Authorization: Bearer selftest', '--mock', '**/api/items=401');
+    expect(h1(r) === 'Sign in', `expected the 401 mock to win over the header: h1=${h1(r)}`);
+    const q = (v(r).requests || []).find((x) => /\/api\/items/.test(x.url));
+    expect(q && q.status === 401, `requests line should show 401: ${JSON.stringify(v(r).requests)}`);
+    return `h1=${h1(r)} · ${q.status} ${q.method} ${q.url}`;
+  });
+
+  // 3c. --dismiss lifts a splash that a key press removes
+  await check('--dismiss Escape lifts the splash', async () => {
+    const a = await render(`${base}/splash.html`, join(work, 's0'));
+    const b = await render(`${base}/splash.html`, join(work, 's1'), '--dismiss', 'Escape');
+    expect(v(a).audit.pageTitle === 'Splash test' && v(a).focus.obscured.length >= 1, `without: title=${v(a).audit.pageTitle}, obscured=${JSON.stringify(v(a).focus.obscured)}`);
+    expect(v(b).audit.pageTitle === 'Splash lifted' && v(b).focus.obscured.length === 0, `with: title=${v(b).audit.pageTitle}, obscured=${JSON.stringify(v(b).focus.obscured)}`);
+    return `without: ${v(a).focus.obscured.length} obscured · with: title "${v(b).audit.pageTitle}", 0 obscured`;
+  });
+
   // 4. late content: --wait-for
   await check('--wait-for', async () => {
     const a = await render(`${base}/hydrate.html`, join(work, 'h0'), '--wait', '100');
@@ -147,7 +172,9 @@ try {
     const other = await render(join(pages, 'dark-class.html'), join(work, 'dark2'), '--compare', join(work, 'inst'));
     const changed = Object.entries(other.compare.files).filter(([, f]) => f.status === 'changed');
     expect(changed.length > 0 && changed.every(([, f]) => f.diff), `different page should differ and write diff images: ${JSON.stringify(other.compare.files)}`);
-    return `${same.length} identical on re-render; ${changed.length} changed vs another page (${changed[0][1].changedPct}%)`;
+    const full = other.compare.files['600-full.png'];
+    expect(full && typeof full.heightDelta === 'number', `full-page entry should carry heightDelta: ${JSON.stringify(full)}`);
+    return `${same.length} identical on re-render; ${changed.length} changed vs another page (${changed[0][1].changedPct}%, full page ${full.heightDelta >= 0 ? '+' : ''}${full.heightDelta} px)`;
   });
 } finally {
   server.close();

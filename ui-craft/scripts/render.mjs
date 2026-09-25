@@ -15,7 +15,7 @@
  *   node render.mjs <url | path/to/page.html> [--out DIR] [--viewports 375,768,1440]
  *                   [--wait MS] [--wait-for SELECTOR] [--no-fold] [--dark | --no-dark] [--no-hover]
  *                   [--storage-state FILE] [--cookie k=v] [--header k:v] [--auth user:pass]
- *                   [--init-script FILE] [--mock PATTERN=FILE] [--compare DIR] [--strict]
+ *                   [--init-script FILE] [--mock PATTERN=FILE|JSON|STATUS] [--dismiss KEY|SELECTOR] [--compare DIR] [--strict]
  *
  * Writes  DIR/contact.png             all viewports above the fold, one image (look first)
  *         DIR/<width>-fold.png        above the fold      DIR/<width>-full.png   full page
@@ -47,7 +47,9 @@ const USAGE = `usage: node render.mjs <url | path/to/page.html> [options]
   --header k:v         extra HTTP header on every request, e.g. Authorization (repeatable)
   --auth user:pass     HTTP basic auth
   --init-script F      JS file run in every page before its scripts (seed localStorage, flags, fetch mocks)
-  --mock PATTERN=F     answer requests whose URL matches PATTERN (glob or /regex/) with the file's contents (repeatable)
+  --mock PATTERN=X     answer requests whose URL matches PATTERN (glob or /regex/) with X: a file, an inline body
+                       ('**/api/teams=[]', '**/api/config={"demo":false}') or a bare status ('**/api/auth/me=401') (repeatable)
+  --dismiss X          after load, press a key (Escape, Enter) or click a selector, at 0 / 400 / 900 ms: lifts a splash, closes a cookie bar
   --compare DIR        pixel-diff every screenshot against the same-named one in DIR (a previous run)
   --strict             exit 1 when any viewport FAILs
 env  UI_CRAFT_CHROME   path to a Chrome/Chromium binary to use`;
@@ -59,7 +61,7 @@ if (!argv.length || argv.includes('--help') || argv.includes('-h')) {
   process.exit(argv.length ? 0 : 1);
 }
 const opt = { out: '.ui-craft/latest', viewports: [375, 768, 1440], wait: 500, waitFor: null, fold: true, dark: 'auto', hover: true, strict: false,
-  storageState: null, cookies: [], headers: {}, auth: null, initScript: null, mocks: [], compare: null };
+  storageState: null, cookies: [], headers: {}, auth: null, initScript: null, mocks: [], compare: null, dismiss: null };
 let target = null;
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
@@ -79,6 +81,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--init-script') opt.initScript = argv[++i];
   else if (a === '--mock') { const v = argv[++i]; const k = v.lastIndexOf('='); if (k > 0) opt.mocks.push({ pattern: v.slice(0, k), file: v.slice(k + 1) }); }
   else if (a === '--compare') opt.compare = argv[++i];
+  else if (a === '--dismiss') opt.dismiss = argv[++i];
   else if (a.startsWith('--')) { console.error(`unknown option ${a}\n${USAGE}`); process.exit(1); }
   else target = a;
 }
@@ -408,6 +411,19 @@ function domAudit(INTERACTIVE) {
 }
 
 // ------------------------------------------------- keyboard focus (real Tabs)
+// --dismiss: what a person does to get past a splash or a cookie bar. A key name is pressed,
+// anything else is clicked as a selector; three times, because the listener may not be up yet.
+async function dismiss(page, what) {
+  if (!what) return;
+  const isKey = /^[A-Z][A-Za-z0-9]*$/.test(what);
+  for (const delay of [0, 400, 900]) {
+    if (delay) await page.waitForTimeout(delay);
+    if (isKey) await page.keyboard.press(what).catch(() => {});
+    else { const el = await page.$(what).catch(() => null); if (el) await el.click({ timeout: 1000, force: true }).catch(() => {}); }
+  }
+  await page.waitForTimeout(400);
+}
+
 async function focusAudit(page, max = 30) {
   const baseline = await page.evaluate((selector) => {
     const visible = (el) => { const cs = getComputedStyle(el); if (cs.display === 'none' || cs.visibility === 'hidden') return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
@@ -573,6 +589,7 @@ async function compareRuns(browser, outDir, baseDir) {
     const entry = {
       changedPixels: r.changed, comparedPixels: r.total, changedPct: +((100 * r.changed) / r.total).toFixed(2),
       sizeChanged: (r.aw !== r.bw || r.ah !== r.bh) ? `${r.aw}×${r.ah} → ${r.bw}×${r.bh}` : null,
+      heightDelta: r.bh - r.ah,
       diff: null,
     };
     if (r.png) {
@@ -585,6 +602,15 @@ async function compareRuns(browser, outDir, baseDir) {
   }
   await page.close();
   return result;
+}
+
+// A layout shift and a colour change score alike as "pixels changed"; the height comes first so
+// a page that grew by 200 px reads as that, then as a share of the overlap that moved.
+function describeChange(f) {
+  if (!f.sizeChanged) return `${f.changedPct}% changed`;
+  const h = f.heightDelta || 0;
+  const grew = h ? `${h > 0 ? '+' : ''}${h} px ${h > 0 ? 'taller' : 'shorter'}, then ` : `size ${f.sizeChanged}, then `;
+  return `${grew}${f.changedPct}% of the overlap changed (${f.sizeChanged})`;
 }
 
 async function contactSheet(browser, outDir, folds, name = 'contact.png') {
@@ -635,15 +661,25 @@ for (const width of opt.viewports) {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fix); else fix();
   });
   for (const m of opt.mocks) {
-    const body = readFileSync(m.file);
-    const type = /\.json$/i.test(m.file) ? 'application/json' : /\.html?$/i.test(m.file) ? 'text/html' : /\.js$/i.test(m.file) ? 'application/javascript' : /\.png$/i.test(m.file) ? 'image/png' : /\.svg$/i.test(m.file) ? 'image/svg+xml' : 'text/plain';
+    // What answers: a file, a bare status (empty body), or the text itself (JSON when it looks like JSON).
+    let status = 200, body, type;
+    if (/^\d{3}$/.test(m.file)) { status = Number(m.file); body = ''; type = 'text/plain'; }
+    else if (existsSync(m.file)) {
+      body = readFileSync(m.file);
+      type = /\.json$/i.test(m.file) ? 'application/json' : /\.html?$/i.test(m.file) ? 'text/html' : /\.js$/i.test(m.file) ? 'application/javascript' : /\.png$/i.test(m.file) ? 'image/png' : /\.svg$/i.test(m.file) ? 'image/svg+xml' : 'text/plain';
+    } else {
+      body = m.file;
+      type = /^\s*(?:[\[{"]|null\b|true\b|false\b|-?\d)/.test(m.file) ? 'application/json' : 'text/plain';
+    }
     const matcher = /^\/.*\/$/.test(m.pattern) ? new RegExp(m.pattern.slice(1, -1)) : m.pattern;
-    await context.route(matcher, (route) => route.fulfill({ status: 200, contentType: type, body }));
+    await context.route(matcher, (route) => route.fulfill({ status, contentType: type, body }));
   }
   const page = await context.newPage();
   const consoleErrors = [];
   const failedRequests = [];
   const httpErrors = [];
+  const requests = []; // every xhr/fetch the page made, with its status: what a second render would mock
+  const origin = (() => { try { return new URL(url).origin; } catch { return ''; } })();
   page.on('console', (m) => {
     // "Failed to load resource" carries no URL; the request/response listeners record those with one.
     if (m.type() === 'error' && !/^Failed to load resource/.test(m.text())) consoleErrors.push(m.text().slice(0, 200));
@@ -652,6 +688,12 @@ for (const width of opt.viewports) {
   page.on('requestfailed', (r) => failedRequests.push(`${r.failure()?.errorText || 'failed'} ${r.url().slice(0, 120)}`));
   page.on('response', (r) => {
     if (r.status() >= 400 && !/\/favicon\.ico(\?|$)/.test(r.url())) httpErrors.push(`${r.status()} ${r.url().slice(0, 120)}`);
+    const rt = r.request().resourceType();
+    if ((rt === 'xhr' || rt === 'fetch') && requests.length < 40) {
+      let path = r.url();
+      try { const u = new URL(path); if (u.origin === origin) path = u.pathname + u.search; } catch { /* keep */ }
+      requests.push({ method: r.request().method(), status: r.status(), url: path.slice(0, 120) });
+    }
   });
 
   let loadError = null;
@@ -660,6 +702,7 @@ for (const width of opt.viewports) {
     await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
     if (opt.waitFor) await page.waitForSelector(opt.waitFor, { timeout: 30000 });
   } catch (e) { loadError = String(e.message).split('\n')[0]; }
+  if (!loadError) await dismiss(page, opt.dismiss);
   await page.waitForTimeout(opt.wait);
 
   // Scroll through once so lazy / IntersectionObserver content mounts, then back to top.
@@ -702,6 +745,7 @@ for (const width of opt.viewports) {
         await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
         if (opt.waitFor) await page.waitForSelector(opt.waitFor, { timeout: 30000 });
       } catch { /* keep the in-place measurement below */ }
+      await dismiss(page, opt.dismiss);
       await page.waitForTimeout(opt.wait);
       if (audit.darkSupport.class) await page.evaluate(() => document.documentElement.classList.add('dark'));
       await page.evaluate(async () => {
@@ -780,7 +824,7 @@ for (const width of opt.viewports) {
   if (fails.length) anyFail = true;
   report.viewports[key] = {
     width, height, status, fails, warns, loadError,
-    console: consoleErrors.slice(0, 20), failedRequests: failedRequests.slice(0, 20), httpErrors: httpErrors.slice(0, 20),
+    console: consoleErrors.slice(0, 20), failedRequests: failedRequests.slice(0, 20), httpErrors: httpErrors.slice(0, 20), requests: requests.slice(0, 40),
     audit, focus, hover, dark,
     screenshots: { fold: opt.fold ? `${key}-fold.png` : null, full: `${key}-full.png`, darkFold: dark && dark.screenshot },
   };
@@ -811,7 +855,7 @@ for (const [k, v] of Object.entries(report.viewports)) {
 if (report.compare) {
   const fs_ = Object.entries(report.compare.files);
   const changed = fs_.filter(([, f]) => f.status === 'changed');
-  console.log(`  compare vs ${report.compare.baseline}: ${fs_.length - changed.length} identical, ${changed.length} changed${changed.length ? ' — ' + changed.map(([n, f]) => `${n} ${f.changedPct}%${f.sizeChanged ? ` (${f.sizeChanged})` : ''}`).join(', ') : ''}`);
+  console.log(`  compare vs ${report.compare.baseline}: ${fs_.length - changed.length} identical, ${changed.length} changed${changed.length ? ' — ' + changed.map(([n, f]) => `${n} ${describeChange(f)}`).join(', ') : ''}`);
 }
 const first = Object.values(report.viewports).find((v) => v.audit);
 if (first) {
@@ -822,6 +866,8 @@ if (first) {
   // below would then describe that page. Say so where it cannot be missed.
   const h1s = (first.audit.structure && first.audit.structure.headings || []).filter((h) => h.level === 1).map((h) => h.text);
   console.log(`  page: ${JSON.stringify(first.audit.pageTitle || '(no title)')}${h1s.length ? ` · h1 ${h1s.map((t) => JSON.stringify(t.slice(0, 40))).join(', ')}` : ' · no h1'}${/sign in|log in|login|登录/i.test((first.audit.pageTitle || '') + ' ' + h1s.join(' ') + ' ' + (first.audit.bodyText || '').slice(0, 200)) ? '  ← looks like a sign-in page: was the session passed? (--cookie / --storage-state)' : ''}`);
+  const reqs = first.requests || [];
+  if (reqs.length) console.log(`  requests (xhr/fetch, ${reqs.length}): ${reqs.slice(0, 12).map((q) => `${q.status} ${q.method} ${q.url}`).join(' · ')}${reqs.length > 12 ? ' · …' : ''}  ← what a second render would --mock`);
   console.log(`  dark mode: ${first.audit.darkSupport.any ? `supported (${['media', 'class', 'attr'].filter((k) => first.audit.darkSupport[k]).map((k) => k === 'attr' ? 'attribute' : k).join('+')})` : 'not implemented'}${report.summary.darkRendered ? ' — rendered and audited' : ''}`);
 }
 const top = (arr, n, fmt) => arr.slice(0, n).map(fmt).map((s) => `      ${s}`).join('\n');
@@ -882,7 +928,7 @@ for (const [k, v] of Object.entries(report.viewports)) {
     if (report.compare) {
       const fs_ = Object.entries(report.compare.files);
       const changed = fs_.filter(([, f]) => f.status === 'changed');
-      L.push(`- Compared with ${report.compare.baseline}: ${changed.length ? changed.map(([n, f]) => `${n.replace('.png', '')} ${f.changedPct}% changed${f.sizeChanged ? ` (${f.sizeChanged})` : ''}`).join(' · ') : `all ${fs_.length} screenshots identical`}`);
+      L.push(`- Compared with ${report.compare.baseline}: ${changed.length ? changed.map(([n, f]) => `${n.replace('.png', '')} ${describeChange(f)}`).join(' · ') : `all ${fs_.length} screenshots identical`}`);
     }
     console.log(`\nVerified (render.mjs · ${opt.out}):\n${L.join('\n')}`);
   }

@@ -1,14 +1,14 @@
 ---
 name: ui-craft
 metadata:
-  version: 0.9.0
+  version: 0.9.1
 description: >-
   Build, change, and review UI in React + Tailwind projects (Vite, Next.js) with a render → look → measure → fix loop, so what ships is checked against a real screenshot and real DOM measurements (contrast, tap targets, overflow, keyboard focus, hover, motion, dark mode) instead of guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even when they never say "design" or "UI". Also use it to inspect an existing project's design conventions before adding to it.
 ---
 
 # ui-craft
 
-Version 0.9.0. (An older copy of this file means the installed skill is behind the
+Version 0.9.1. (An older copy of this file means the installed skill is behind the
 repository: re-run `install.sh`; `doctor.mjs` says when that is the case.)
 
 UI work has a gap that code review can't close: the first draft always has two or
@@ -52,6 +52,10 @@ real leak in past runs:
 7. **The report is short.** Twenty lines unless the user asked for detail: what
    changed, the pasted `Verified` block, the decisions you made, what couldn't be
    verified.
+8. **Behaviour goes into the project's own tests.** A value that must clamp, a
+   setting that must persist: write the unit test the project already has a
+   runner for (vitest, jest, pytest). A browser script of your own to check what
+   the page *does* is the expensive way; the loop measures what the page *shows*.
 
 ## Setup (first time on a machine)
 
@@ -290,12 +294,12 @@ Don't work around these by hand; each has a flag, and the loop stays the same:
 | Situation | Do this |
 |---|---|
 | The page is behind a login | the render output's first lines name the page that rendered (`page: "…" · h1 …`); a sign-in title there means the session did not stick. Then: ask the user to run `node <skill-dir>/scripts/login-state.mjs <login-url> --out .ui-craft/state.json` (a window opens, they log in, it saves the session), then render with `--storage-state .ui-craft/state.json`. A token you were given: `--header "Authorization: Bearer …"` or `--cookie session=…`. |
-| The page needs data a backend would provide | the inspector's *Start here* section names the calls the store makes and the dev proxy's target: start that backend if a script does it (`dev.sh`, `compose.yaml`), else `--mock '**/api/items=.ui-craft/items.json'` answers those requests from a file you write; `--init-script .ui-craft/seed.js` runs before the app (localStorage, feature flags). |
+| The page needs data a backend would provide | the inspector's *Start here* section names the calls the store makes and the dev proxy's target: start that backend if a script does it (`dev.sh`, `compose.yaml`). Else `--mock`: a file (`'**/api/items=.ui-craft/items.json'`), an inline body (`'**/api/teams=[]'`, `'**/api/config={"demo_mode":false}'`) or a bare status (`'**/api/auth/me=401'`, a signed-out visitor). The render output's `requests` line lists every xhr/fetch the page made with its status, so the second render can mock all of them. `--init-script .ui-craft/seed.js` runs before the app (localStorage under the key the inspector names, feature flags). |
 | Content appears after hydration or a fetch | `--wait-for '[data-loaded]'` (any selector that exists only when the real content does). |
-| A splash or intro animation covers the page | `--init-script` a file that does what a person would: `setTimeout(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })), 400)`, or sets the storage key the splash checks; plus `--wait` for the fade. |
+| A splash, intro animation or cookie bar covers the page | `--dismiss Escape` (any key name) or `--dismiss '.cookie-bar button'` (a selector to click), pressed at 0 / 400 / 900 ms after load; plus `--wait` for the fade. The report's `focus … obscured` count says whether something is still on top. |
 | The theme is set by a script at boot (`data-theme`) | nothing: the dark pass reloads the page under the dark scheme when in-place emulation changes nothing, and the report names the mode (`media`, `class`, `attribute`). |
 | The task is one component, not a page | `node <skill-dir>/scripts/harness.mjs <project> --component src/components/ui/Button.tsx --states '[{"children":"Save"},{"variant":"secondary","children":"Cancel"},{"disabled":true,"children":"Off"}]'` writes `.ui-craft/harness/index.html`; render that URL on the project's own dev server. Vite + React only. |
-| You must prove an existing page did not change | render it before touching anything, then render after with `--compare .ui-craft/<page>-0`: the Verified block reports changed pixels per screenshot and writes `diff-*.png`. |
+| You are changing a page that exists (a card on the dashboard, a row on the settings page) — or must prove one did not change | render it before touching anything, then render after with `--compare .ui-craft/<page>-0`: the Verified block reports the height change first, then the share of the overlap that moved, and writes `diff-*.png`. The new content is expected to differ; anything else that moved is a regression to explain. |
 | Monorepo | `inspect.py` on the workspace root lists the UI app packages; run it, and the dev server, in the one you are changing. |
 | Next.js | `next dev` is slower to answer; wait for the port, then render the route. Fonts loaded through `next/font` show as loaded in the report. |
 
@@ -321,7 +325,9 @@ Critique: hierarchy 4 · distinctive 4 · typography 4 · spacing 4 · color 4 �
 Judgment calls: testimonials are 3-up at 1440; 2-up would breathe more
 ```
 
-Include the contact-sheet path so the user can look too.
+Include the contact-sheet path so the user can look too — a path they can open:
+the project's `.ui-craft/<page>-<n>/contact.png`, or the copy you saved for them,
+never a temp directory.
 
 ## When to read what
 
