@@ -482,6 +482,29 @@ def css_vocabulary(root: Path, css_files: list[Path], src_texts: list[str]) -> l
     return items[:16]
 
 
+def props_of(path: Path) -> list[str]:
+    """Prop names of a component file's main export, from its destructured signature or its
+    Props type — enough to use it without opening the file."""
+    t = read(path, 120_000)
+    t = re.sub(r"//[^\n]*", "", re.sub(r"/\*.*?\*/", "", t, flags=re.S))
+    m = re.search(r"export\s+(?:default\s+)?function\s+\w+\s*\(\s*\{([^}]*)\}", t) \
+        or re.search(r"export\s+(?:const|default)\s+\w*\s*=?\s*(?:React\.forwardRef[^(]*)?\(?\s*\{([^}]*)\}", t)
+    names: list[str] = []
+    if m:
+        for part in m.group(1).split(","):
+            part = part.strip()
+            if not part:
+                continue
+            name = re.split(r"[=:]", part, 1)[0].strip()
+            if name and re.match(r"^\.{0,3}\w+$", name):
+                names.append(name)
+    if not names:
+        pm = re.search(r"(?:interface|type)\s+\w*Props\b[^{]*\{([^}]*)\}", t)
+        if pm:
+            names = [n for n in re.findall(r"^\s*(\w+)\??\s*:", pm.group(1), re.M)]
+    return names[:9]
+
+
 def import_fanin(root: Path, src_files: list[Path]) -> list[dict]:
     """Local modules by how many files import them: the chrome, the store, the strings."""
     counts: collections.Counter = collections.Counter()
@@ -515,7 +538,8 @@ def import_fanin(root: Path, src_files: list[Path]) -> list[dict]:
         parts = {x.lower() for x in found.parts}
         is_component = bool(parts & COMPONENT_DIR_NAMES)
         if n >= 3 or (is_component and n >= 2):
-            out.append({"file": rel(root, found), "importers": n, "component": is_component})
+            out.append({"file": rel(root, found), "importers": n, "component": is_component,
+                        "props": props_of(found) if is_component else []})
     return out[:12]
 
 
@@ -690,7 +714,8 @@ def md_start_here(sh: dict) -> list[str]:
         for v in sh["vocabulary"]:
             out.append(f"  - `.{v['name']}` ×{v['uses']} — {v['file']}:{v['line']} — {v['decl']}")
     if sh["imported"]:
-        out.append("- Imported most: " + " · ".join(f"`{m['file']}` ({m['importers']})" for m in sh["imported"]))
+        out.append("- Imported most: " + " · ".join(
+            f"`{m['file']}` ({m['importers']}" + (f"; props {', '.join(m['props'])}" if m.get("props") else "") + ")" for m in sh["imported"]))
     if sh["pages"]:
         out.append("- Pages, one line each:")
         for pg in sh["pages"]:

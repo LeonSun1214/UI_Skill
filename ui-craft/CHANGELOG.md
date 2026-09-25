@@ -12,7 +12,11 @@
   splash and its storage key, the early returns in `App`, the calls the store
   makes through the API module and its base path, the dev proxy's target, the
   scripts that start a backend. Two real-repository trials had put two thirds of
-  their wall clock into reading files to learn exactly this.
+  their wall clock into reading files to learn exactly this. Shared components
+  carry their prop names, so a primitive can be used without opening it.
+- Measured on eval-2 (a two-page fixture): reads and tokens inside the spread of
+  the earlier runs — the fixture is too small for finding files to cost anything.
+  The number to watch is the next real-repository task (`evals/notes/notes-sprint-9.md`).
 - SKILL.md: step 1 and cost rule 6 read that section and one sibling page,
   nothing else; step 4½ starts the backend the section names before mocking.
 
