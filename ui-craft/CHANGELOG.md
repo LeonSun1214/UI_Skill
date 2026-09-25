@@ -1,14 +1,38 @@
 # Changelog
 
-## 0.8.2 — first real-repository trial
+## 0.8.2 — what the first real repository taught the instruments
 
-- `render.mjs`: when the in-place dark-scheme emulation changes nothing (a boot
-  script that read `matchMedia` once and set `data-theme`), the page is reloaded
-  under the dark scheme and measured again. Found on a Vite + Tailwind 3 app whose
-  "dark" audit had been measuring the light page.
-- `evals/notes/trial-sunnotice.md`: nine findings from the trial, of which the
-  stale installed copy, comment-blind `verify.py`, gradient-filled controls,
-  `outline-style: auto` rings and pressed segments are open.
+Nine findings from a trial on a Vite + Tailwind 3 app with a FastAPI backend, a
+boot-script theme and a splash (`evals/notes/trial-sunnotice.md`); the ones that
+were the skill's to fix:
+
+- `render.mjs`: the dark pass reloads the page under the dark scheme when in-place
+  emulation changes nothing (a boot script that read `matchMedia` once and set
+  `data-theme` never saw the emulation; the "dark" audit had measured the light
+  page). CSS keyed on `[data-theme=…]` now counts as dark support, mode
+  `attribute`.
+- `render.mjs`: a control drawn on a gradient or image is *unverifiable*, not a
+  1:1 failure against the page colour (the theme switch's selected segment). The
+  Verified block counts them.
+- `render.mjs`: a focus ring drawn by the browser (`outline-style: auto`, the
+  two-tone default) is visible and not measured — its computed `outline-color`
+  is not what is painted; every control on a dark page had read 1.06:1.
+- `render.mjs`: a pressed, checked or selected control (`aria-pressed="true"`,
+  `aria-checked="true"`, `aria-selected="true"`) owes no hover feedback, like
+  `aria-current` and disabled ones.
+- `verify.py` strips comments before scanning imports: two JSDoc sentences had
+  been reported as missing packages.
+- `inspect.py` on a root with no UI stack (frontend/ + backend/, an apps/ folder
+  without a workspace file) lists the app packages one and two levels down.
+- `doctor.mjs` compares this copy's version with the copies installed under
+  `~/.claude/skills` and `./.claude/skills` and says when one is behind;
+  `install.sh` prints the version it installed; SKILL.md names its version in
+  its first line. The trial ran on a 0.6.0 copy that the Skill tool had loaded.
+- SKILL.md step 4d: match the tokens, critique the composition — a page type the
+  project does not have yet gets the critic even in an established codebase.
+  Step 4½ gains rows for a splash and for a boot-script theme.
+- `selftest/real-project.html`: the four patterns above, planted; four new checks
+  (15 in all).
 
 ## 0.8.1 — the critique rule, measured
 

@@ -88,6 +88,32 @@ try {
     return `mode=${d.mode}, bg ${v(dk).audit.pageColors.background} → ${d.pageColors.background}`;
   });
 
+  // 2b. patterns met in a real project (see evals/notes/trial-sunnotice.md)
+  const rp = await render(join(pages, 'real-project.html'), join(work, 'real'));
+  await check('boot-script theme gets a dark pass', () => {
+    const d = v(rp).dark;
+    expect(d && d.themeChanged, `dark pass missing or unchanged: ${JSON.stringify(d && { mode: d.mode, themeChanged: d.themeChanged, bg: d.pageColors && d.pageColors.background })}`);
+    expect(d.mode === 'attribute', `expected mode=attribute, got ${d.mode}`);
+    return `mode=${d.mode}, bg ${v(rp).audit.pageColors.background} → ${d.pageColors.background}`;
+  });
+  await check('gradient-filled control is unverifiable', () => {
+    const n = v(rp).audit.nonText;
+    expect(n.failures.length === 0, `gradient button should not FAIL: ${JSON.stringify(n.failures)}`);
+    expect(n.unverifiable === 1, `expected 1 unverifiable boundary, got ${n.unverifiable}`);
+    return `${n.checked} checked · ${n.unverifiable} unverifiable · ${n.failures.length} failures`;
+  });
+  await check('browser default ring is visible, not faint', () => {
+    const f = v(rp).focus, d = v(rp).dark.focus;
+    expect(f.invisible.length === 0, `default ring counted invisible: ${JSON.stringify(f.invisible)}`);
+    expect(f.lowContrastRing.length === 0 && d.lowContrastRing.length === 0, `default ring measured faint: ${JSON.stringify([f.lowContrastRing, d.lowContrastRing])}`);
+    return `${f.tabbed} tabbed, 0 faint (light and dark)`;
+  });
+  await check('pressed segment owes no hover feedback', () => {
+    const h = v(rp).hover;
+    expect(h && h.noHoverFeedback.length === 0, `pressed segment flagged: ${JSON.stringify(h && h.noHoverFeedback)}`);
+    return `${h.checked} hovered, 0 without feedback`;
+  });
+
   // 3. gated page: no auth → sign-in; each auth option → dashboard
   await check('gated: no auth shows sign-in', async () => { const r = await render(`${base}/gated.html`, join(work, 'g0')); expect(h1(r) === 'Sign in', `h1=${h1(r)}`); });
   await check('--cookie', async () => { const r = await render(`${base}/gated.html`, join(work, 'g1'), '--cookie', 'session=ok'); expect(/^Dashboard/.test(h1(r)), `h1=${h1(r)}`); return h1(r); });

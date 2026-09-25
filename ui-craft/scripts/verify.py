@@ -118,8 +118,20 @@ def find_package(name: str, nm_dirs):
 IMPORT_RE = re.compile(r"""import\s+(?P<clause>[^'";]+?)\s+from\s+['"](?P<spec>[^'"]+)['"]|import\s+['"](?P<bare>[^'"]+)['"]|require\(\s*['"](?P<req>[^'"]+)['"]\s*\)|from\s+['"](?P<from>[^'"]+)['"]""")
 
 
+_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
+# A line comment: `//` at the start of a line or after whitespace, `;`, `{`, `}`, `,` or `(`. Not
+# after `:` — that is the `//` inside a URL string, which must stay.
+_LINE_COMMENT = re.compile(r"(^|(?<=[\s;{},(]))//[^\n]*")
+
+
+def strip_comments(text: str) -> str:
+    """Source without its comments, so an `import` mentioned in a JSDoc is not an import."""
+    return _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub("", text))
+
+
 def imports_in(text: str):
     """Yield (spec, named_imports or None) for every import in a source file."""
+    text = strip_comments(text)
     for m in IMPORT_RE.finditer(text):
         spec = m.group("spec") or m.group("bare") or m.group("req") or m.group("from")
         clause = m.group("clause")

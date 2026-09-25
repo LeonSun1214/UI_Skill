@@ -13,16 +13,17 @@ line competing with the pitch, and a 1440 fold that cut the sky tiles mid-row.
 
 What broke or misled, in the order met:
 
-1. **The installed copy was stale.** `~/.claude/skills/ui-craft` was a 0.4-era
-   SKILL.md (no critique, no direction.py); the Skill tool loaded that one. The
-   repo copy at 0.8.1 was followed by hand. `install.sh` needs re-running after
-   every version; the description should say which version loaded.
+1. **The installed copy was stale.** `~/.claude/skills/ui-craft` was 0.6.0 (no
+   critique, no direction.py); the Skill tool loaded that one. The repo copy at
+   0.8.1 was followed by hand. *Fixed in 0.8.2:* SKILL.md names its version in
+   its first line, `install.sh` prints what it installed, `doctor.mjs` warns
+   when an installed copy is behind the one it is run from.
 2. **`inspect.py` on the workspace root** reported "no recognised UI stack" instead
    of listing `frontend/` as the app package (the monorepo table in SKILL.md
-   promises the listing). Running it on `frontend/` worked.
+   promises the listing). Running it on `frontend/` worked. *Fixed in 0.8.2.*
 3. **`verify.py` read imports out of comments**: two FAILs naming packages
    `'what was the newest\n   * event'` and `'missed'`, both words inside JSDoc.
-   Strip comments before scanning.
+   Strip comments before scanning. *Fixed in 0.8.2.*
 4. **The dark pass never reached a boot-script theme.** `emulateMedia` in place is
    invisible to a script that read `matchMedia` once at load and set
    `data-theme`; the "dark" audit measured the light page (the Verified block
@@ -32,24 +33,27 @@ What broke or misled, in the order met:
 5. **Non-text contrast on a gradient-filled control** reported the icon of the
    selected theme segment at 1:1 "against rgb(15,23,41)": the button's fill is a
    gradient, and the measure fell through to the page colour. Text contrast
-   already marks gradient backgrounds unverifiable; non-text should too.
+   already marks gradient backgrounds unverifiable; non-text should too. *Fixed
+   in 0.8.2.*
 6. **Focus rings under `outline-style: auto`** were reported at 1.06:1 in the
    dark theme on every control (the project has no `:focus-visible` rule outside
    its sky mode, so Chromium draws its two-tone default ring). The computed
    `outline-color` is not what is painted. Treat `auto` as a UA ring: visible,
-   not measured.
+   not measured. *Fixed in 0.8.2.*
 7. **A selected segment (`aria-pressed="true"`) counts as "no hover feedback".**
    The probe exempts `aria-current` and disabled controls; it should exempt
-   pressed and checked ones too.
+   pressed and checked ones too. *Fixed in 0.8.2.*
 8. **The critique rule reads "not on match tasks in an established project"**;
    a brand-new landing page in an established project is a match task by the
    inspector's verdict and a taste task by any other reading. Ran it (twice, the
    cap); both verdicts were *would not ship*, each time for a different, valid
    reason. The second round's three changes were applied without a third call.
-   Worth a sentence in 4d: match the tokens, critique the composition.
+   Worth a sentence in 4d: match the tokens, critique the composition. *Written
+   in 0.8.2.*
 9. **The splash.** Nothing in the loop dismisses an intro animation; an
    `--init-script` that dispatches a key event did. A `--dismiss <selector|key>`
-   flag would be cleaner than asking the model to invent that.
+   flag would be cleaner than asking the model to invent that. *0.8.2 documents
+   the init-script way in step 4½; the flag is still open.*
 
 Spend: four renders of the cover page, two of the no-team page, two critiques
 (≈ $0.18), one `npm run build`. Wall clock about 70 minutes including reading

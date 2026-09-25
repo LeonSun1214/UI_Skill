@@ -67,6 +67,10 @@ ok    render loop  test page rendered, 4 FAILs found (expected ≥ 3: the page p
 ready: the render loop works on this machine.
 ```
 
+After pulling a newer version, run the installer again: the skill Claude loads is the
+copy under `~/.claude/skills`, not the repository, and `doctor` warns when that copy
+is older than the one it is run from.
+
 Requirements: Node 18+, Python 3 (standard library only), any Chromium-based browser.
 Nothing is installed into your projects; render output goes to `.ui-craft/` (git-ignore it).
 

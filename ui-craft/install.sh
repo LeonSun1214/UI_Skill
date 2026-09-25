@@ -38,6 +38,7 @@ if ! (cd "$DEST/scripts" && node -e "import('./lib/browser.mjs').then(async (m) 
   (cd "$DEST/scripts" && npx playwright install chromium)
 fi
 echo
+echo "installed ui-craft $(sed -n 's/^  version: //p' "$DEST/SKILL.md" | head -1) at $DEST"
 (cd "$DEST/scripts" && node doctor.mjs) || true
 echo
 echo "done. In Claude Code, the skill loads automatically; say e.g. \"帮我做一个落地页\" or \"check the mobile view\"."

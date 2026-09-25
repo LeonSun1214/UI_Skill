@@ -1,12 +1,15 @@
 ---
 name: ui-craft
 metadata:
-  version: 0.8.1
+  version: 0.8.2
 description: >-
   Build, change, and review UI in React + Tailwind projects (Vite, Next.js) with a render → look → measure → fix loop, so what ships is checked against a real screenshot and real DOM measurements (contrast, tap targets, overflow, keyboard focus, hover, motion, dark mode) instead of guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even when they never say "design" or "UI". Also use it to inspect an existing project's design conventions before adding to it.
 ---
 
 # ui-craft
+
+Version 0.8.2. (An older copy of this file means the installed skill is behind the
+repository: re-run `install.sh`; `doctor.mjs` says when that is the case.)
 
 UI work has a gap that code review can't close: the first draft always has two or
 three things you can only see once it's rendered — a heading that doesn't win the
@@ -246,10 +249,13 @@ the report why not. A *would not ship* verdict, or two or more of hierarchy,
 distinctive, typography, spacing and color at 3 or below, means one more round
 even when the instruments are clean. One 3 under a *would ship* verdict is a note
 for the report, not a round: in the runs measured, that extra round never moved a
-score. Once per round, at most twice per task; not on match tasks in an
-established project — the existing pages already set the look. On a review of an
-existing page ("audit this", "看不清"), once, after the fixes: its three changes
-are findings — fix the ones inside the ask, list the rest.
+score. Once per round, at most twice per task. Match the tokens, critique the
+composition: skip it only when the page copies a sibling's layout (a second
+settings page, another list) — the existing pages set that look. A page type the
+project does not have yet (a cover, a landing, an empty state) gets it even in an
+established codebase. On a review of an existing page ("audit this", "看不清"),
+once, after the fixes: its three changes are findings — fix the ones inside the
+ask, list the rest.
 
 **e. Apply, re-render, stop.** A clean round 1 — zero FAILs, zero WARNs, a
 contact-sheet pass that found nothing you'd be embarrassed to ship, and (where it
@@ -271,6 +277,8 @@ Don't work around these by hand; each has a flag, and the loop stays the same:
 | The page is behind a login | ask the user to run `node <skill-dir>/scripts/login-state.mjs <login-url> --out .ui-craft/state.json` (a window opens, they log in, it saves the session), then render with `--storage-state .ui-craft/state.json`. A token you were given: `--header "Authorization: Bearer …"` or `--cookie session=…`. |
 | The page needs data a backend would provide | `--mock '**/api/items=.ui-craft/items.json'` answers those requests from a file you write; `--init-script .ui-craft/seed.js` runs before the app (localStorage, feature flags). |
 | Content appears after hydration or a fetch | `--wait-for '[data-loaded]'` (any selector that exists only when the real content does). |
+| A splash or intro animation covers the page | `--init-script` a file that does what a person would: `setTimeout(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })), 400)`, or sets the storage key the splash checks; plus `--wait` for the fade. |
+| The theme is set by a script at boot (`data-theme`) | nothing: the dark pass reloads the page under the dark scheme when in-place emulation changes nothing, and the report names the mode (`media`, `class`, `attribute`). |
 | The task is one component, not a page | `node <skill-dir>/scripts/harness.mjs <project> --component src/components/ui/Button.tsx --states '[{"children":"Save"},{"variant":"secondary","children":"Cancel"},{"disabled":true,"children":"Off"}]'` writes `.ui-craft/harness/index.html`; render that URL on the project's own dev server. Vite + React only. |
 | You must prove an existing page did not change | render it before touching anything, then render after with `--compare .ui-craft/<page>-0`: the Verified block reports changed pixels per screenshot and writes `diff-*.png`. |
 | Monorepo | `inspect.py` on the workspace root lists the UI app packages; run it, and the dev server, in the one you are changing. |
@@ -312,7 +320,7 @@ Include the contact-sheet path so the user can look too.
 | Building a landing / dashboard / form / auth / empty state from scratch | that one section of `references/patterns.md` |
 | A rule the loop can't measure (forms, zoom, dragging, flashing) | that section of `references/constraints.md` |
 | The contact sheet raised a doubt | sections 1, 2, 9 of `references/critique-rubric.md`; the rest only for a long greenfield page |
-| The look matters (greenfield, redesign, "make it look better") | run `scripts/critique.mjs` on the contact sheet before delivering |
+| The look matters (greenfield, redesign, a page type the project lacks) | run `scripts/critique.mjs` on the contact sheet before delivering |
 
 ## What this skill doesn't do
 

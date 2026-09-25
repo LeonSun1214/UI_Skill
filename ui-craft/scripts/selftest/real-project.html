@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Real-project patterns</title>
+<!-- The theme is decided once, at boot, from matchMedia, and written to an attribute — the way
+     apps that remember a preference do it. No prefers-color-scheme rule anywhere in the CSS. -->
+<script>
+  document.documentElement.dataset.theme =
+    window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+</script>
+<style>
+  :root { --bg: #ffffff; --ink: #1a1a1a; --line: #6b6b6b; }
+  :root[data-theme="dark"] { --bg: #101214; --ink: #f1f1f1; --line: #9a9a9a; }
+  body { margin: 0; padding: 32px; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, sans-serif; }
+  /* An icon button filled with a gradient: nothing to measure a boundary against. */
+  .grad { min-width: 44px; min-height: 44px; border: 0; border-radius: 22px; cursor: pointer;
+          background: linear-gradient(90deg, #f59e0b, #fb7185); color: #1a1a1a; }
+  .grad:hover { filter: brightness(1.1); }
+  /* Relies on the browser's default focus ring (outline: auto) — no :focus-visible rule. */
+  .plain { min-height: 44px; padding: 0 20px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); cursor: pointer; }
+  .plain:hover { border-color: var(--ink); }
+  /* A segmented control: the pressed segment does not change on hover, by convention. */
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 2px; }
+  .seg button { min-height: 40px; min-width: 44px; padding: 0 14px; border: 0; border-radius: 999px; background: transparent; color: var(--ink); cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+  .seg button:not([aria-pressed="true"]):hover { text-decoration: underline; }
+  .seg button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+</style>
+</head>
+<body>
+  <h1>Real-project patterns</h1>
+  <p>A boot-script theme, a gradient-filled icon button, a default focus ring, a pressed segment.</p>
+  <p>
+    <button class="grad" type="button" aria-label="Add">
+      <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="2"/></svg>
+    </button>
+    <button class="plain" type="button">Plain button</button>
+  </p>
+  <div class="seg" role="group" aria-label="Language">
+    <button type="button" aria-pressed="true">中</button>
+    <button type="button" aria-pressed="false">EN</button>
+  </div>
+</body>
+</html>

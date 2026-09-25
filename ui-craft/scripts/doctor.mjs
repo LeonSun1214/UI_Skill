@@ -6,8 +6,8 @@
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -39,6 +39,18 @@ if (pw) {
     bad('chromium', String(e.message).split('\n')[0], `cd ${here} && npx playwright install chromium, or set UI_CRAFT_CHROME=/path/to/chrome`);
   }
 }
+
+// version: is the copy Claude loads the copy this is run from?
+const versionOf = (dir) => {
+  try { const m = /^\s*version:\s*([\d.]+)/m.exec(readFileSync(join(dir, 'SKILL.md'), 'utf8')); return m ? m[1] : null; } catch { return null; }
+};
+const newer = (a, b) => { const pa = a.split('.').map(Number), pb = b.split('.').map(Number); for (let i = 0; i < 3; i++) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0); } return false; };
+const mine = versionOf(join(here, '..'));
+const installs = [join(homedir(), '.claude', 'skills', 'ui-craft'), join(process.cwd(), '.claude', 'skills', 'ui-craft')]
+  .filter((d) => existsSync(join(d, 'SKILL.md')) && resolve(d) !== resolve(join(here, '..')));
+const behind = installs.map((d) => [d, versionOf(d)]).filter(([, v]) => mine && v && newer(mine, v));
+if (behind.length) warn('version', `${mine} here, but ${behind.map(([d, v]) => `${v} installed at ${d}`).join(' and ')} — that copy is what Claude loads; re-run install.sh`);
+else ok('version', `${mine || '?'}${installs.length ? ` (installed: ${installs.map(([d]) => d ? d : d).join(', ')})` : ''}`);
 
 // python
 const py = spawnSync('python3', ['--version'], { encoding: 'utf8' });

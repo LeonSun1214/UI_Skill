@@ -172,7 +172,29 @@ def detect_stack(root: Path) -> dict:
             if any(key in ddeps for key, _ in KNOWN_FRAMEWORKS) or "tailwindcss" in ddeps:
                 workspace_apps.append(os.path.relpath(d, root))
 
+    # No package.json here, or one with no UI stack in it (a repo laid out as frontend/ +
+    # backend/, an apps/ folder without a workspace file): look one and two levels down for
+    # the packages that are apps, so the verdict can say where to run this instead.
     framework = next((label for key, label in KNOWN_FRAMEWORKS if key in deps), None)
+    if not workspace_apps and framework is None and "tailwindcss" not in deps:
+        skip = {"node_modules", "dist", "build", "out", "coverage", "target", "vendor", ".venv", "venv"}
+        candidates: list[Path] = []
+        for d in sorted(root.iterdir()) if root.is_dir() else []:
+            if not d.is_dir() or d.name.startswith(".") or d.name in skip:
+                continue
+            candidates.append(d)
+            candidates += [e for e in sorted(d.iterdir()) if e.is_dir() and not e.name.startswith(".") and e.name not in skip]
+        for d in candidates:
+            pj = d / "package.json"
+            if not pj.exists():
+                continue
+            try:
+                dd = json.loads(read(pj))
+                ddeps = {**dd.get("dependencies", {}), **dd.get("devDependencies", {})}
+            except (json.JSONDecodeError, AttributeError):
+                continue
+            if any(key in ddeps for key, _ in KNOWN_FRAMEWORKS) or "tailwindcss" in ddeps:
+                workspace_apps.append(os.path.relpath(d, root))
     router = None
     if framework == "Next.js":
         if (root / "app").is_dir() or (root / "src" / "app").is_dir():
@@ -440,7 +462,7 @@ def md(data: dict) -> str:
         bits.append("Motion: " + ", ".join(s["motion"]))
     out += ["## Stack", "- " + (" · ".join(bits) if bits else "no package.json or no recognised UI stack")]
     if s.get("workspaceApps"):
-        out.append("- workspace root; the UI apps are: " + ", ".join(f"`{a}`" for a in s["workspaceApps"]) + " — run inspect.py on the one you are changing")
+        out.append("- not an app itself; the UI apps are: " + ", ".join(f"`{a}`" for a in s["workspaceApps"]) + " — run inspect.py (and the dev server) in the one you are changing")
     if s.get("depsSource") and s["depsSource"] != "package.json":
         out.append(f"- dependencies read from `{s['depsSource']}` (workspace root)")
     out.append("")

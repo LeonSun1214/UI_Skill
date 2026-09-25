@@ -260,7 +260,7 @@ function domAudit(INTERACTIVE) {
   //   - buttons with a visible text label: the text identifies them, so WCAG does not require the
   //     boundary — but a 1.2:1 surface still reads as unfinished → WARN (`weak`)
   // A boundary passes if EITHER its border or its opaque fill reaches 3:1 against what surrounds it.
-  const nonText = { checked: 0, skipped: 0, failures: [], weak: [] };
+  const nonText = { checked: 0, skipped: 0, unverifiable: 0, failures: [], weak: [] };
   const TEXT_LIKE_INPUT = /^(text|email|password|search|tel|url|number|date|datetime-local|month|week|time)$/;
   const boundaryOf = (el, outside) => {
     const cs = getComputedStyle(el);
@@ -288,6 +288,9 @@ function domAudit(INTERACTIVE) {
     const outside = effectiveBackground(el.parentElement);
     if (!outside || outside.unverifiable) { nonText.skipped++; continue; }
     const labelText = isButtonLike ? (el.innerText || el.value || '').trim() : '';
+    // A gradient or image fill: the boundary is whatever the paint does at its edge, and the icon
+    // sits on a colour that changes across the control. Reported, not judged.
+    if (getComputedStyle(el).backgroundImage !== 'none') { nonText.unverifiable++; continue; }
     let found = boundaryOf(el, outside);
     // A transparent wrapper (e.g. a 44px hit area around a 24px switch track): use the first
     // descendant that draws a boundary, measured against the same surroundings.
@@ -332,7 +335,7 @@ function domAudit(INTERACTIVE) {
   }
 
   // --- stylesheet scan: reduced-motion rule, dark-mode support
-  let reducedMotionRule = false, darkMedia = false, darkClass = false;
+  let reducedMotionRule = false, darkMedia = false, darkClass = false, darkAttr = false;
   const scan = (rules) => {
     for (const rule of rules) {
       if (rule.media) {
@@ -341,6 +344,10 @@ function domAudit(INTERACTIVE) {
         if (/prefers-color-scheme\s*:\s*dark/i.test(mt)) darkMedia = true;
       }
       if (rule.selectorText && /(^|[\s,>+~(])\.dark(\b|\\:)/.test(rule.selectorText)) darkClass = true;
+      // A theme chosen by a script at boot and written to an attribute: the rule names one theme
+      // (either one — some key the light theme and default to dark), so the pass has to be
+      // tried and its effect measured rather than assumed.
+      if (rule.selectorText && /\[data-(theme|mode|color-scheme|appearance)\s*[=~|^$*]?=?\s*["']?(dark|light)/i.test(rule.selectorText)) darkAttr = true;
       if (rule.cssRules && rule.cssRules.length) scan(rule.cssRules);
     }
   };
@@ -348,7 +355,7 @@ function domAudit(INTERACTIVE) {
   let animatedElements = 0;
   for (const el of all) { const cs = getComputedStyle(el); if (cs.animationName && cs.animationName !== 'none') animatedElements++; }
   const motion = { reducedMotionRule, animatedElements };
-  const darkSupport = { media: darkMedia, class: darkClass, any: darkMedia || darkClass };
+  const darkSupport = { media: darkMedia, class: darkClass, attr: darkAttr, any: darkMedia || darkClass || darkAttr };
 
   // --- fonts
   // One entry per family, best status wins (a family has one face per weight/style; "loaded"
@@ -447,7 +454,10 @@ async function focusAudit(page, max = 30) {
         let bg = opaque || { r: 255, g: 255, b: 255, a: 1 }; for (let k = layers.length - 1; k >= 0; k--) bg = over(layers[k], bg); return bg;
       })();
       let ringColor = null, ringVia = null;
-      if (!/^none/.test(cs.outlineStyle) && parseFloat(cs.outlineWidth) > 0) { ringColor = toRGBA(cs.outlineColor); ringVia = 'outline'; }
+      // `outline-style: auto` is the browser's own ring — two-tone in Chromium, drawn in colours
+      // that are not the computed outline-color. Visible by construction; nothing to measure.
+      if (cs.outlineStyle === 'auto' && parseFloat(cs.outlineWidth) > 0) { ringVia = 'outline (browser default)'; }
+      else if (!/^none/.test(cs.outlineStyle) && parseFloat(cs.outlineWidth) > 0) { ringColor = toRGBA(cs.outlineColor); ringVia = 'outline'; }
       else if (cs.boxShadow && cs.boxShadow !== 'none') { const m = /rgba?\([^)]+\)|#[0-9a-f]{3,8}|[a-z]+\(/i.exec(cs.boxShadow); ringColor = m ? toRGBA(m[0]) : null; ringVia = 'box-shadow'; }
       let ringContrast = null;
       if (ringColor && ringColor.a > 0 && behind) ringContrast = +ratio(ringColor.a < 1 ? over(ringColor, behind) : ringColor, behind).toFixed(2);
@@ -498,6 +508,7 @@ async function hoverAudit(page, max = 20) {
       const inlineText = cs.display === 'inline' && !!el.closest('p,li,dd,td,th,blockquote,figcaption,small');
       if (!isButton && (tag !== 'A' || inlineText)) return null; // only buttons and standalone links
       if (el.hasAttribute('aria-current')) return null; // "you are here" — inert by convention
+      if (['aria-pressed', 'aria-checked', 'aria-selected'].some((a) => el.getAttribute(a) === 'true')) return null; // the chosen segment / tab / option
       const sig = (node) => { const s = getComputedStyle(node); return [s.backgroundColor, s.color, s.borderColor, s.boxShadow, s.textDecorationLine, s.transform, s.opacity, s.outlineStyle, s.filter, s.backgroundImage].join('|'); };
       const nodes = [el, ...[...el.querySelectorAll('*')].slice(0, 6)];
       let s = el.tagName.toLowerCase(); if (el.id) s += '#' + el.id; const t = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 28); if (t) s += ` "${t}"`;
@@ -711,7 +722,8 @@ for (const width of opt.viewports) {
     }
     const changed = !!(audit && dAudit.pageColors.background && audit.pageColors.background !== dAudit.pageColors.background);
     dark = {
-      mode: audit && audit.darkSupport.class && !audit.darkSupport.media ? 'class' : 'media',
+      mode: audit && audit.darkSupport.class && !audit.darkSupport.media ? 'class'
+        : audit && audit.darkSupport.attr && !audit.darkSupport.media && !audit.darkSupport.class ? 'attribute' : 'media',
       forced: opt.dark === 'force',
       themeChanged: changed,
       pageColors: dAudit.pageColors,
@@ -805,7 +817,7 @@ if (first) {
   const fam = first.audit.fonts.declared;
   const line = fam.length ? fam.map((f) => `${f.family} (${f.status})`).join(', ') : 'none declared';
   console.log(`  fonts: ${line}; used: ${first.audit.fonts.used.join(', ')}`);
-  console.log(`  dark mode: ${first.audit.darkSupport.any ? `supported (${first.audit.darkSupport.media ? 'media' : ''}${first.audit.darkSupport.media && first.audit.darkSupport.class ? '+' : ''}${first.audit.darkSupport.class ? 'class' : ''})` : 'not implemented'}${report.summary.darkRendered ? ' — rendered and audited' : ''}`);
+  console.log(`  dark mode: ${first.audit.darkSupport.any ? `supported (${['media', 'class', 'attr'].filter((k) => first.audit.darkSupport[k]).map((k) => k === 'attr' ? 'attribute' : k).join('+')})` : 'not implemented'}${report.summary.darkRendered ? ' — rendered and audited' : ''}`);
 }
 const top = (arr, n, fmt) => arr.slice(0, n).map(fmt).map((s) => `      ${s}`).join('\n');
 for (const [k, v] of Object.entries(report.viewports)) {
@@ -838,7 +850,8 @@ for (const [k, v] of Object.entries(report.viewports)) {
     const L = [];
     const cf = worst((v) => v.audit.contrast.failures.length), bf = worst((v) => v.audit.nonText.failures.length);
     const unv = widest.audit.contrast.unverifiable || 0;
-    L.push(`- Contrast: ${widest.audit.contrast.checked} text elements, ${cf.n} below threshold${at(cf)} · ${widest.audit.nonText.checked} control boundaries, ${bf.n} below 3:1${at(bf)}${unv ? ` · ${unv} unverifiable (image or gradient backgrounds)` : ''}`);
+    const bunv = widest.audit.nonText.unverifiable || 0;
+    L.push(`- Contrast: ${widest.audit.contrast.checked} text elements, ${cf.n} below threshold${at(cf)} · ${widest.audit.nonText.checked} control boundaries, ${bf.n} below 3:1${at(bf)}${bunv ? ` (${bunv} on a gradient or image, unverifiable)` : ''}${unv ? ` · ${unv} unverifiable (image or gradient backgrounds)` : ''}`);
     const darks = vps.filter((v) => v.dark);
     if (darks.length) {
       const dw = darks.reduce((a, b) => (a.width > b.width ? a : b));
