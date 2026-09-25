@@ -403,7 +403,8 @@ function domAudit(INTERACTIVE) {
   // A sample of the visible text, for assertions about content (statuses written out, prices present …).
   const bodyText = (document.body.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 6000);
 
-  return { pageColors, contrast, nonText, targets, unnamedControls, overflow, motion, darkSupport, fonts, imagesMissingAlt, structure, viewportMeta, bodyText };
+  const pageTitle = (document.title || '').trim().slice(0, 80);
+  return { pageColors, contrast, nonText, targets, unnamedControls, overflow, motion, darkSupport, fonts, imagesMissingAlt, structure, viewportMeta, bodyText, pageTitle };
 }
 
 // ------------------------------------------------- keyboard focus (real Tabs)
@@ -817,6 +818,10 @@ if (first) {
   const fam = first.audit.fonts.declared;
   const line = fam.length ? fam.map((f) => `${f.family} (${f.status})`).join(', ') : 'none declared';
   console.log(`  fonts: ${line}; used: ${first.audit.fonts.used.join(', ')}`);
+  // Which page this was: a session that did not stick lands on the sign-in page, and every number
+  // below would then describe that page. Say so where it cannot be missed.
+  const h1s = (first.audit.structure && first.audit.structure.headings || []).filter((h) => h.level === 1).map((h) => h.text);
+  console.log(`  page: ${JSON.stringify(first.audit.pageTitle || '(no title)')}${h1s.length ? ` · h1 ${h1s.map((t) => JSON.stringify(t.slice(0, 40))).join(', ')}` : ' · no h1'}${/sign in|log in|login|登录/i.test((first.audit.pageTitle || '') + ' ' + h1s.join(' ') + ' ' + (first.audit.bodyText || '').slice(0, 200)) ? '  ← looks like a sign-in page: was the session passed? (--cookie / --storage-state)' : ''}`);
   console.log(`  dark mode: ${first.audit.darkSupport.any ? `supported (${['media', 'class', 'attr'].filter((k) => first.audit.darkSupport[k]).map((k) => k === 'attr' ? 'attribute' : k).join('+')})` : 'not implemented'}${report.summary.darkRendered ? ' — rendered and audited' : ''}`);
 }
 const top = (arr, n, fmt) => arr.slice(0, n).map(fmt).map((s) => `      ${s}`).join('\n');

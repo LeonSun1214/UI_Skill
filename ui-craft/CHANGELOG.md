@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.3 — the review path on a real page
+
+- `render.mjs` names the page that rendered (`page: "…" · h1 …`) in its first
+  lines and flags a sign-in title: a session that did not stick had measured the
+  login page with full confidence (`evals/notes/trial-sunnotice-2.md`).
+- SKILL.md step 4d: on an established project, the critique's `--brief` carries
+  the project's own stated rules, one line each, so the critic argues with the
+  composition rather than with decisions the project has already made.
+
 ## 0.8.2 — what the first real repository taught the instruments
 
 Nine findings from a trial on a Vite + Tailwind 3 app with a FastAPI backend, a

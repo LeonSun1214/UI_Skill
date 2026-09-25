@@ -1,14 +1,14 @@
 ---
 name: ui-craft
 metadata:
-  version: 0.8.2
+  version: 0.8.3
 description: >-
   Build, change, and review UI in React + Tailwind projects (Vite, Next.js) with a render → look → measure → fix loop, so what ships is checked against a real screenshot and real DOM measurements (contrast, tap targets, overflow, keyboard focus, hover, motion, dark mode) instead of guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even when they never say "design" or "UI". Also use it to inspect an existing project's design conventions before adding to it.
 ---
 
 # ui-craft
 
-Version 0.8.2. (An older copy of this file means the installed skill is behind the
+Version 0.8.3. (An older copy of this file means the installed skill is behind the
 repository: re-run `install.sh`; `doctor.mjs` says when that is the case.)
 
 UI work has a gap that code review can't close: the first draft always has two or
@@ -255,7 +255,12 @@ settings page, another list) — the existing pages set that look. A page type t
 project does not have yet (a cover, a landing, an empty state) gets it even in an
 established codebase. On a review of an existing page ("audit this", "看不清"),
 once, after the fixes: its three changes are findings — fix the ones inside the
-ask, list the rest.
+ask, list the rest. On an established project, put the project's own stated
+rules into `--brief`, one line each, taken from its README, DIRECTION.md or the
+comments in its CSS ("glass is 94 % opaque by a measured contrast proof", "the
+brand gradient is the primary button") — otherwise the critic spends its three
+changes undoing decisions the project has already argued for, and you learn
+nothing about the composition.
 
 **e. Apply, re-render, stop.** A clean round 1 — zero FAILs, zero WARNs, a
 contact-sheet pass that found nothing you'd be embarrassed to ship, and (where it
@@ -274,7 +279,7 @@ Don't work around these by hand; each has a flag, and the loop stays the same:
 
 | Situation | Do this |
 |---|---|
-| The page is behind a login | ask the user to run `node <skill-dir>/scripts/login-state.mjs <login-url> --out .ui-craft/state.json` (a window opens, they log in, it saves the session), then render with `--storage-state .ui-craft/state.json`. A token you were given: `--header "Authorization: Bearer …"` or `--cookie session=…`. |
+| The page is behind a login | the render output's first lines name the page that rendered (`page: "…" · h1 …`); a sign-in title there means the session did not stick. Then: ask the user to run `node <skill-dir>/scripts/login-state.mjs <login-url> --out .ui-craft/state.json` (a window opens, they log in, it saves the session), then render with `--storage-state .ui-craft/state.json`. A token you were given: `--header "Authorization: Bearer …"` or `--cookie session=…`. |
 | The page needs data a backend would provide | `--mock '**/api/items=.ui-craft/items.json'` answers those requests from a file you write; `--init-script .ui-craft/seed.js` runs before the app (localStorage, feature flags). |
 | Content appears after hydration or a fetch | `--wait-for '[data-loaded]'` (any selector that exists only when the real content does). |
 | A splash or intro animation covers the page | `--init-script` a file that does what a person would: `setTimeout(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })), 400)`, or sets the storage key the splash checks; plus `--wait` for the fade. |
