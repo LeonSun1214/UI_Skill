@@ -33,8 +33,8 @@ HERE = Path(__file__).resolve().parent          # <skill>/evals
 SKILL = HERE.parent                                 # <skill>
 RENDER = SKILL / "scripts" / "render.mjs"
 FIXTURES = SKILL / "evals" / "fixtures"
-ROUTES = {1: ["/"], 2: ["/settings/notifications"], 3: ["/"], 4: ["/", "/settings/profile"]}  # every route is graded
-FIXTURE_FOR = {1: "greenfield", 2: "established", 3: "generic", 4: "established"}
+ROUTES = {1: ["/"], 2: ["/settings/notifications"], 3: ["/"], 4: ["/", "/settings/profile"], 5: ["/"]}  # every route is graded
+FIXTURE_FOR = {1: "greenfield", 2: "established", 3: "generic", 4: "established", 5: "review"}
 FIXTURE_LIGHT_BG = {4: "rgb(251, 248, 243)"}  # Maple Books paper — must survive a dark-mode addition
 # Maple Books ships `--color-line: #e5ddd3` (1.35:1 on white) on its Field border and Switch track. The
 # established-project evals forbid touching shared tokens/primitives, so boundaries drawn in that token
@@ -50,12 +50,26 @@ RAW_PALETTE = re.compile(rf"(?<![\w-]){PREFIX}-(?:{TW})-\d{{2,3}}(?:/\d+)?(?![\w
 INDIGO = re.compile(rf"(?<![\w-]){PREFIX}-(?:indigo|violet|purple)-\d{{2,3}}(?:/\d+)?(?![\w-])")
 ICON_BADGE = re.compile(r"rounded-full[^\"'\n]*bg-[a-z]+-100|bg-[a-z]+-100[^\"'\n]*rounded-full")
 COPY_ANCHORS = ["智能排队", "实时通知", "数据分析", "王经理", "李女士", "张总", "基础版", "专业版", "准备好开始了吗"]
+# eval-5: the nine planted defects, each as the words a report would use for it (zh or en)
+PLANTED_ISSUES = {
+    "contrast": r"对比度|contrast|4\.5",
+    "targets": r"点击目标|触控|target|24 ?px|44 ?px|太小|hit area",
+    "unnamed": r"aria-label|无障碍名称|accessible name|没有名称|unnamed|屏幕阅读|screen reader",
+    "focus": r"焦点|focus|outline|键盘|keyboard|tab",
+    "overflow": r"溢出|横向滚动|overflow|横向|scroll",
+    "zoom": r"缩放|zoom|user-scalable|maximum-scale",
+    "motion": r"动画|motion|reduced|减少动态|animation",
+    "headings": r"标题层级|heading|h2|h3|层级",
+    "alt": r"\balt\b|替代文本|图片描述",
+    "color-only": r"只靠颜色|仅靠颜色|颜色区分|color alone|colour alone|use of color|文字标签|状态文字",
+}
 TELL_GROUPS = [
     r"indigo|靛|紫|violet|purple", r"渐变|gradient", r"图标|圆形|圆圈|circle|icon",
     r"\bInter\b|字体|font|typeface|serif", r"模板|template|generic|AI ?味|同质|千篇一律",
 ]
 NEEDS_RENDER = {"renders", "contrast", "overflow", "targets", "focus", "labels", "motion",
-                "hover-feedback", "non-text-contrast", "dark-support", "dark-contrast", "light-unchanged"}
+                "hover-feedback", "non-text-contrast", "dark-support", "dark-contrast", "light-unchanged",
+                "zoom-allowed", "headings", "status-text"}
 
 
 # ------------------------------------------------------------------ helpers
@@ -431,6 +445,38 @@ def c_facts(ctx):
     return True, facts[7:] if facts else "verify.py ran, no FAIL lines"
 
 
+def c_zoom_allowed(ctx):
+    vm = A(ctx, "375")["viewportMeta"]
+    if vm.get("blocksZoom"):
+        return False, f"viewport meta still blocks zoom: {vm.get('content')!r}"
+    return True, f"viewport meta allows zoom: {vm.get('content')!r}"
+
+
+def c_headings(ctx):
+    st = A(ctx, "1440")["structure"]
+    if st["h1Count"] != 1 or st["skippedLevels"]:
+        return False, f"h1Count={st['h1Count']}, skipped={st['skippedLevels'][:3]}"
+    return True, f"one h1, no skipped levels across {len(st['headings'])} headings"
+
+
+def c_status_text(ctx):
+    """The queue statuses are written out on the page, not conveyed by a coloured dot alone."""
+    text = A(ctx, "1440").get("bodyText", "")
+    words = [w for w in ("等位中", "已叫号", "已入座", "已取消") if w in text]
+    if len(words) >= 2:
+        return True, f"status words on the page: {words}"
+    return False, f"statuses not written out (found {words}); a colour dot alone fails WCAG 1.4.1"
+
+
+def c_found_issues(ctx):
+    s = ctx["summary"]
+    if not s:
+        return False, "no SUMMARY.md"
+    found = [k for k, rx in PLANTED_ISSUES.items() if re.search(rx, s, re.I)]
+    need = 6
+    return (len(found) >= need), f"{len(found)}/{len(PLANTED_ISSUES)} planted issues named in the report (need {need}): {found}"
+
+
 def c_summary_dark_numbers(ctx):
     s = ctx["summary"]
     if not s:
@@ -457,6 +503,10 @@ CHECKERS = {
     "dark-support": c_dark_support, "dark-contrast": c_dark_contrast, "light-unchanged": c_light_unchanged,
     "summary-dark-numbers": c_summary_dark_numbers,
     "facts": c_facts,
+    "zoom-allowed": c_zoom_allowed,
+    "headings": c_headings,
+    "status-text": c_status_text,
+    "found-issues": c_found_issues,
 }
 
 

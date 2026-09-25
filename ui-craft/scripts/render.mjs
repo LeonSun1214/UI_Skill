@@ -393,7 +393,10 @@ function domAudit(INTERACTIVE) {
     content,
   };
 
-  return { pageColors, contrast, nonText, targets, unnamedControls, overflow, motion, darkSupport, fonts, imagesMissingAlt, structure, viewportMeta };
+  // A sample of the visible text, for assertions about content (statuses written out, prices present …).
+  const bodyText = (document.body.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 6000);
+
+  return { pageColors, contrast, nonText, targets, unnamedControls, overflow, motion, darkSupport, fonts, imagesMissingAlt, structure, viewportMeta, bodyText };
 }
 
 // ------------------------------------------------- keyboard focus (real Tabs)

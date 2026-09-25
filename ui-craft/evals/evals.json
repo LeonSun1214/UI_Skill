@@ -96,6 +96,32 @@
         "summary-dark-numbers: SUMMARY.md reports measured dark-mode numbers (contrast checked / failures), not just 'supports dark mode'",
         "facts: verify.py finds no invented facts in the project — every imported package is installed, every icon name is exported by its package, every Google Fonts family and weight exists and @font-face files are present"
       ]
+    },
+    {
+      "id": 5,
+      "name": "review-and-fix",
+      "prompt": "运营同事说商家后台的「今日排队」页在手机上不好用，也有人反映用键盘操作不了、看不清。帮我把这页审一遍，能修的都修掉；改完告诉我修了什么、还剩什么没法验证。功能和数据别动。",
+      "expected_output": "The page audited with render.mjs first (the before run kept), every measurable defect fixed without touching data or behaviour, statuses written out next to the dots, a summary that names what was found, what was fixed with numbers, and what could not be verified.",
+      "files": [
+        "evals/fixtures/review"
+      ],
+      "expectations": [
+        "renders: GET / loads without error and the page has exactly one h1",
+        "found-issues: SUMMARY.md names at least 6 of the 9 planted problems (contrast, tiny targets, unnamed icon buttons, invisible focus, horizontal overflow, blocked zoom, animation without reduced-motion, skipped heading level, image without alt, colour-only status)",
+        "contrast: zero text-contrast failures at 375, 768 and 1440 (the fixture started with the gray-400 timestamps, phones and helper text below 4.5:1)",
+        "targets: no non-inline interactive element smaller than 24×24 CSS px (the icon buttons started at 20×20)",
+        "labels: every control has an accessible name and every <img> has alt (the icon buttons and the avatar started without)",
+        "focus: every Tab-reachable element shows a visible focus change, is not obscured, and its ring reaches 3:1 (the nav and icon buttons started with focus:outline-none)",
+        "overflow: no horizontal scroll at 375 (the nine-column table started overflowing)",
+        "zoom-allowed: the viewport meta no longer blocks pinch zoom (it started with maximum-scale=1, user-scalable=no)",
+        "motion: either no CSS animations run, or a prefers-reduced-motion rule exists (the live dot pulses)",
+        "headings: one h1 and no skipped heading levels (the sections started at h3 under an h1)",
+        "status-text: the queue status is written out on the page, not conveyed by a coloured dot alone (WCAG 1.4.1)",
+        "hover-feedback: every button and standalone link changes at least one visible property on hover",
+        "non-text-contrast: every control that is identified by its boundary — form fields, icon-only buttons, switches — reaches 3:1 against its surroundings in the light rendering (WCAG 1.4.11); a text-labelled button with a <3:1 surface is warned, not failed",
+        "facts: verify.py finds no invented facts in the project — every imported package is installed, every icon name is exported by its package, every Google Fonts family and weight exists and @font-face files are present",
+        "report-numbers: SUMMARY.md reports measured numbers for contrast and tap targets, not just adjectives"
+      ]
     }
   ]
 }

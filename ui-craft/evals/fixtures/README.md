@@ -22,3 +22,4 @@ cd /path/to/work/project && npm run dev -- --port 5173
 
 Install the shared dependencies once: `cd evals/fixtures && npm install`.
 | `nextjs/` | Next.js App Router smoke test for `render.mjs` + `inspect.py` (`npm install` inside it; not part of the graded evals) | same Maple Books tokens in `app/globals.css`, `next/font` faces |
+| `review/` | the review/fix path (eval-5): a working 等位通 admin queue page with nine planted defects — gray-400 text, 20px unnamed icon buttons, `focus:outline-none` nav, a nine-column table that overflows at 375, zoom blocked, a pulsing dot without a reduced-motion rule, h1→h3, an avatar without alt, status by colour alone | Tailwind utilities only, no tokens |

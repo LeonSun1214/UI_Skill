@@ -1,7 +1,7 @@
 ---
 name: ui-craft
 metadata:
-  version: 0.7.0
+  version: 0.8.0
 description: >-
   Build, change, and review UI in React + Tailwind projects (Vite, Next.js) with a render → look → measure → fix loop, so what ships is checked against a real screenshot and real DOM measurements (contrast, tap targets, overflow, keyboard focus, hover, motion, dark mode) instead of guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even when they never say "design" or "UI". Also use it to inspect an existing project's design conventions before adding to it.
 ---
@@ -37,6 +37,7 @@ real leak in past runs:
    report instead of building a script.
 4. **Images have a budget.** One contact sheet per round. At most one full-page
    screenshot per round, and only for a question you can name before opening it.
+   The critique (`critique.mjs`) is one call per round, two per task.
 5. **Don't audit the environment.** No checks of installed fonts, proxies, git-ignore
    state or Chromium versions. Start the server, render, read the verdict. If a web
    font failed to load, the `Verified` block says so — report that and move on.
@@ -223,17 +224,32 @@ A FAIL that comes from a shared primitive or token the user told you not to touc
 (a 1.3:1 hairline on the project's own `Input`) is *inherited*: leave it, and name it
 in the report with the one-line fix the owner could make.
 
-**d. Look — cheaply.** Read `contact.png` (and `contact-dark.png` if it exists): one
-image, three viewports, the first impression at every width. Go through sections
-1, 2 and 9 of `references/critique-rubric.md` on it — for a match task, just those
-three sections, and only if the sheet raised a doubt. Open one full-page
-screenshot only for a question the contact sheet raised, and name the question
-first. Write down the concrete changes the rubric produces; "looks fine" is not an
-answer on the first round of a greenfield page.
+**d. Look — cheaply, then get a second opinion.** Read `contact.png` (and
+`contact-dark.png` if it exists): one image, three viewports, the first impression
+at every width. Go through sections 1, 2 and 9 of `references/critique-rubric.md`
+on it — for a match task, just those three sections, and only if the sheet raised
+a doubt. Open one full-page screenshot only for a question the contact sheet
+raised, and name the question first.
 
-**e. Apply, re-render, stop.** A clean round 1 — zero FAILs, zero WARNs, and a
-contact-sheet pass that found nothing you'd be embarrassed to ship — is done:
-deliver. Otherwise fix and render once more. A third round only if round 2 still
+Your own look is anchored on what you just decided, so on any page whose *look*
+matters (greenfield, a redesign, "make it look better") ask someone who wasn't
+there:
+
+```bash
+node <skill-dir>/scripts/critique.mjs .ui-craft/pricing-1/contact.png --brief "<the six lines in one>"
+```
+
+It shows the sheet to a fresh session that sees only the pixels and the brief and
+returns six scores, a ship / don't-ship verdict and the three changes that would
+most improve the page. Treat the three changes like FAILs: apply them, or say in
+the report why not. Any of hierarchy, distinctive, typography, spacing or color at
+3 or below means one more round even when the instruments are clean. Once per
+round, at most twice per task; not on match tasks in an established project — the
+existing pages already set the look.
+
+**e. Apply, re-render, stop.** A clean round 1 — zero FAILs, zero WARNs, a
+contact-sheet pass that found nothing you'd be embarrassed to ship, and (where it
+ran) a critique with nothing at 3 or below — is done: deliver. Otherwise fix and render once more. A third round only if round 2 still
 has a FAIL. Never render "to confirm": if the last round measured clean and your
 fixes since then were only the ones it asked for, that report *is* the final
 report — say so and deliver. If you're still finding things after round 3, the
@@ -274,6 +290,7 @@ Verified (render.mjs · .ui-craft/pricing-2):
 Facts: 9 imports across 4 packages, 0 missing · 6 icon names checked, 0 wrong · 2 web fonts checked against Google Fonts, 0 missing · page language zh-cn · 0 warnings
 Not verifiable here: Fraunces didn't load (offline) — rendered with the fallback
 Inherited, not changed: the project's Input border is 1.34:1 on white; set --color-line to #948980 to fix
+Critique: hierarchy 4 · distinctive 4 · typography 4 · spacing 4 · color 4 — applied 2 of 3 changes; kept the 3-up testimonials (see below)
 Judgment calls: testimonials are 3-up at 1440; 2-up would breathe more
 ```
 
@@ -291,6 +308,7 @@ Include the contact-sheet path so the user can look too.
 | Building a landing / dashboard / form / auth / empty state from scratch | that one section of `references/patterns.md` |
 | A rule the loop can't measure (forms, zoom, dragging, flashing) | that section of `references/constraints.md` |
 | The contact sheet raised a doubt | sections 1, 2, 9 of `references/critique-rubric.md`; the rest only for a long greenfield page |
+| The look matters (greenfield, redesign, "make it look better") | run `scripts/critique.mjs` on the contact sheet before delivering |
 
 ## What this skill doesn't do
 
