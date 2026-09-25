@@ -685,8 +685,14 @@ async function hoverAudit(page, max = 20) {
 // every width in a single image, so the model can judge hierarchy and stacking without
 // paying for three or six full-page screenshots.
 /** Pixel-diff every PNG in `outDir` against the same-named PNG in `baseDir`; writes diff-<name>.png. */
-async function compareRuns(browser, outDir, baseDir) {
-  const result = { baseline: baseDir, files: {} };
+async function compareRuns(browser, outDir, baseDir, viewports) {
+  const result = { baseline: baseDir, files: {}, errors: null };
+  try {
+    const base = JSON.parse(readFileSync(join(baseDir, 'report.json'), 'utf8'));
+    const lines = (vps) => new Set(Object.values(vps || {}).flatMap((v) => [...(v.console || []), ...(v.httpErrors || []), ...(v.failedRequests || [])].map((l) => l.replace(/\?[^ ]*$/, ''))));
+    const before = lines(base.viewports), now = lines(viewports);
+    result.errors = { baseline: before.size, now: now.size, new: [...now].filter((l) => !before.has(l)).slice(0, 6), gone: [...before].filter((l) => !now.has(l)).length };
+  } catch { /* no baseline report: screenshots only */ }
   let names = [];
   try { names = readdirSync(outDir).filter((n) => /\.png$/.test(n) && !/^(diff-|contact)/.test(n)); } catch { return result; }
   const page = await browser.newPage({ viewport: { width: 200, height: 200 }, deviceScaleFactor: 1 });
@@ -984,7 +990,7 @@ for (const width of opt.viewports) {
   await context.close();
 }
 if (folds.length) await contactSheet(browser, opt.out, folds);
-if (opt.compare) report.compare = await compareRuns(browser, opt.out, opt.compare);
+if (opt.compare) report.compare = await compareRuns(browser, opt.out, opt.compare, report.viewports);
 if (darkFolds.length) await contactSheet(browser, opt.out, darkFolds, 'contact-dark.png');
 await browser.close();
 
@@ -1124,7 +1130,9 @@ const specs = [
     if (report.compare) {
       const fs_ = Object.entries(report.compare.files);
       const changed = fs_.filter(([, f]) => f.status === 'changed');
-      L.push(`- Compared with ${report.compare.baseline}: ${changed.length ? changed.map(([n, f]) => `${n.replace('.png', '')} ${describeChange(f)}`).join(' · ') : `all ${fs_.length} screenshots identical`}`);
+      const er = report.compare.errors;
+      const errLine = !er ? '' : er.new.length ? ` · errors: ${er.new.length} new (${er.new.map((l) => l.slice(0, 70)).join('; ')})${er.gone ? `, ${er.gone} gone` : ''}` : er.now ? ` · errors: the same ${er.now} as the baseline (console, http, failed requests)${er.gone ? `, ${er.gone} gone` : ''}` : er.baseline ? ` · errors: none now, ${er.baseline} on the baseline` : ' · errors: none, as on the baseline';
+      L.push(`- Compared with ${report.compare.baseline}: ${changed.length ? changed.map(([n, f]) => `${n.replace('.png', '')} ${describeChange(f)}`).join(' · ') : `all ${fs_.length} screenshots identical`}${errLine}`);
     }
     console.log(`\nVerified (render.mjs · ${opt.out}):\n${L.join('\n')}`);
   }

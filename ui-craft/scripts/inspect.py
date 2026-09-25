@@ -838,6 +838,14 @@ def dev_setup(root: Path) -> dict:
         for pat in ("dev.sh", "dev.*", "run.sh", "start.sh", "Makefile", "justfile", "docker-compose*.yml", "docker-compose*.yaml", "compose*.yml", "compose*.yaml", "Procfile"):
             for p in base_dir.glob(pat):
                 helpers.add(os.path.relpath(p, root))
+    next_cfg = {}
+    for cfg in root.glob("next.config.*"):
+        t = read(cfg)
+        if re.search(r"trailingSlash\s*:\s*true", t):
+            next_cfg["trailingSlash"] = True
+        m = re.search(r"basePath\s*:\s*['\"]([^'\"]+)['\"]", t)
+        if m:
+            next_cfg["basePath"] = m.group(1)
     scripts = {}
     pj = root / "package.json"
     if pj.exists():
@@ -845,7 +853,7 @@ def dev_setup(root: Path) -> dict:
             scripts = {k: v for k, v in json.loads(read(pj)).get("scripts", {}).items() if k in {"dev", "start", "preview"} or k.startswith("dev:")}
         except (json.JSONDecodeError, AttributeError):
             pass
-    return {"proxies": proxies[:6], "helpers": sorted(helpers), "scripts": scripts}
+    return {"proxies": proxies[:6], "helpers": sorted(helpers), "scripts": scripts, "next": next_cfg}
 
 
 def storage_keys(root: Path, src_files: list[Path]) -> list[str]:
@@ -995,6 +1003,10 @@ def md_start_here(sh: dict) -> list[str]:
         if sh.get("next"):
             dev = d["scripts"].get("dev", "")
             line += " — Next.js listens on :3000 unless `-p` says otherwise"
+            if d.get("next", {}).get("trailingSlash"):
+                line += "; routes end with `/` (`trailingSlash`), a request without it is redirected"
+            if d.get("next", {}).get("basePath"):
+                line += f"; every route sits under `{d['next']['basePath']}` (`basePath`)"
             if re.search(r"run-p|concurrently|npm-run-all|&&|\s&\s", dev):
                 line += "; `dev` starts more than Next (a database, a worker): run it as it is"
             if sh.get("contentlayer"):

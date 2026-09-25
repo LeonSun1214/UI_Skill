@@ -8,7 +8,7 @@ description: >-
 
 # ui-craft
 
-Version 0.11.0. (An older copy of this file means the installed skill is behind the
+Version 0.11.1. (An older copy of this file means the installed skill is behind the
 repository: re-run `install.sh`; `doctor.mjs` says when that is the case.)
 
 UI work has a gap that code review can't close: the first draft always has two or
@@ -47,8 +47,13 @@ real leak in past runs:
 6. **Match tasks read nothing extra.** Adding to an established project means
    `inspect.py`, the one sibling page its *Start here* section points at, build,
    one render. Not the CSS file (the vocabulary is in the report), not the store
-   (its calls are in the report). The references are for greenfield work and for
-   questions the contact sheet raises.
+   (its calls are in the report), not `package.json`, `tsconfig` or `next.config`
+   (the stack, scripts and dev lines carry what matters). The references are for
+   greenfield work and for questions the contact sheet raises.
+9. **Don't diff by hand what `--compare` diffs.** A render with `--compare <baseline>`
+   also compares the console, http and failed-request lines with the baseline's:
+   "the same 1 as the baseline" means the error was there before you. Reading
+   two reports to say the same thing costs a turn.
 7. **The report is short.** Twenty lines unless the user asked for detail: what
    changed, the pasted `Verified` block, the decisions you made, what couldn't be
    verified.

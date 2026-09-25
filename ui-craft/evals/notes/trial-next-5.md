@@ -67,3 +67,20 @@ Open: a match task whose sibling *is* a thin page (the blog's `/about` renders
 `AuthorLayout` from MDX), to measure the `renders` line; and the judge on this
 output against a without-skill run of the same task, which no trial has done on a
 real repository yet.
+
+## Where the tokens went (transcript profile, added after 0.11.0)
+
+19 assistant turns. Billed 207k: 40.6k on the first turn (the cache write of the
+system prompt, the task and SKILL.md — SKILL.md is 25k characters, about 6.5k of
+it), 59.8k of output, 146.8k of cache writes. The output is the largest lever:
+the code (≈130 lines), the summary and the commands come to roughly a quarter of
+it; the rest is deliberation, and every output token is written back into the
+cache as context the next turn. Fewer turns is the only way down.
+
+Turns the tools could have saved, now saved: one chasing the `308` on `/projects`
+(`trailingSlash: true`, which the reading list now states); two comparing the
+console errors of the baseline and the new page by hand (`--compare` now does
+it and says "the same 1 as the baseline"); one re-render after `tsc` restarted
+the dev server (the 0.10.1 rule). One `cat package.json` of 77 lines the reading
+list had already summarised (rule 6 now names it). Together about four of
+nineteen turns, and the deliberation that came with them.

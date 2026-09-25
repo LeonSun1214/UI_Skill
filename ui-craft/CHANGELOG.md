@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.11.1 — where the fifth trial's tokens went
+
+The transcript profile of the fifth trial (19 turns, 207k billed: 40k for the
+first turn's cache write, 60k of output of which the code and the summary are a
+quarter and deliberation the rest, 147k of cache writes that include that output
+read back): three of the turns were spent on things the tools could have said.
+
+- `--compare` compares the console, http and failed-request lines with the
+  baseline's, and the Verified line says "the same 1 as the baseline" or names
+  the new ones. The agent had spent two turns proving a hydration error
+  pre-existed.
+- `inspect.py` says when `next.config` sets `trailingSlash` (a request without
+  the slash is redirected; the agent chased a 308) or `basePath`.
+- SKILL.md: rule 6 adds `package.json`, `tsconfig` and `next.config` to what a
+  match task does not read; rule 9: don't diff by hand what `--compare` diffs.
+
 ## 0.11.0 — the states a page is in after someone does something
 
 - `render.mjs --act STEP` (repeatable) puts the page in the state to measure
