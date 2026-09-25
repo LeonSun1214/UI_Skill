@@ -16,7 +16,9 @@
   carry their prop names, so a primitive can be used without opening it.
 - Measured on eval-2 (a two-page fixture): reads and tokens inside the spread of
   the earlier runs — the fixture is too small for finding files to cost anything.
-  The number to watch is the next real-repository task (`evals/notes/notes-sprint-9.md`).
+  On a real repository (Sunnote, `evals/notes/trial-sunnote-3.md`): 9 read
+  commands before the first render against 29 in the first trial, first render at
+  tool call 16 against 38, and every read a file the task had to change.
 - SKILL.md: step 1 and cost rule 6 read that section and one sibling page,
   nothing else; step 4½ starts the backend the section names before mocking.
 
