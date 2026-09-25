@@ -46,4 +46,7 @@ jobs:
         run: |
           python3 ui-craft/scripts/contrast.py '#6b615b' '#fbf8f3'
           python3 ui-craft/scripts/contrast.py --css ui-craft/evals/fixtures/established/src/index.css --text ink,muted,brand --on surface,panel
-          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/established | head -20
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/established | tee /tmp/inspect.txt | head -20
+          grep -q "## Start here" /tmp/inspect.txt
+          grep -q "settings/profile" /tmp/inspect.txt   # the route table found the nested Route
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/nextjs | grep -q "app/page.tsx"

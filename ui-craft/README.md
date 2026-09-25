@@ -115,7 +115,7 @@ All standard tools; the skill calls them, and so can you.
 | Script | Purpose |
 |---|---|
 | `scripts/render.mjs <url\|file>` | screenshots + audits at 375/768/1440, dark pass when the page has a dark rule, `contact.png`, `report.json`, the `Verified` block |
-| `scripts/inspect.py <project>` | stack, declared tokens, fonts, primitives, and the classes the code actually uses; verdict *match* or *establish* |
+| `scripts/inspect.py <project>` | a *Start here* reading list (the CSS vocabulary with declarations, what every page imports, one line per page, routes, where the strings live, what runs before a page renders), then stack, declared tokens, fonts, primitives and the classes the code actually uses; verdict *match* or *establish* |
 | `scripts/contrast.py fg bg …` / `--css tokens.css` | WCAG ratios for pairs or a token file, light and dark side by side |
 | `scripts/verify.py <project>` | the facts a model invents: imported packages installed, icon names exported, Google Fonts families/weights real and carrying the page's language subset, `@font-face` files present |
 | `scripts/direction.py init / check --fix / write / from-css` | the brief as `brief.json`: every colour role measured light and dark, failing tokens nudged, the `@theme` block written into the CSS and `DIRECTION.md` generated so the next session inherits the decisions |

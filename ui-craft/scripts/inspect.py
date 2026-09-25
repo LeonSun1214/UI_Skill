@@ -240,6 +240,7 @@ def detect_stack(root: Path) -> dict:
         "motion": sorted({label for key, label in KNOWN_MOTION.items() if key in deps}),
         "shadcn": shadcn,
         "typescript": "typescript" in deps,
+        "deps": deps,
     }
 
 
@@ -437,6 +438,309 @@ def verdict(stack: dict, tokens: dict, fonts: dict, comps: dict, usage: dict, do
     return {"established": established, "lines": lines}
 
 
+# ---------------------------------------------------------------- start here
+# The reading list for a match task. Two real-repository trials put two thirds of the
+# wall clock into reading files to learn what this section now says outright: the
+# vocabulary the CSS defines, what every page imports, one line per page, where the
+# strings live, and what stands between a fresh browser and the page.
+PAGE_DIR_NAMES = {"pages", "views", "screens", "routes", "app"}
+BOOT_STEM = re.compile(r"^(store|stores|provider|providers|context|app|_app|main|layout|root|bootstrap|session|auth)$", re.I)
+SPLASH_STEM = re.compile(r"^(splash|intro|boot|onboarding|welcome|preloader|loader)$", re.I)
+I18N_DIRS = {"i18n", "locales", "locale", "lang", "langs", "translations", "messages", "intl"}
+I18N_LIBS = {
+    "react-i18next": "react-i18next", "i18next": "i18next", "next-intl": "next-intl", "vue-i18n": "vue-i18n",
+    "@lingui/react": "Lingui", "react-intl": "react-intl", "@formatjs/intl": "FormatJS", "svelte-i18n": "svelte-i18n",
+}
+CLASS_USE = r"(?<=[\"'`\s])%s(?=[\"'`\s])"   # the class as a token inside a class string
+
+
+def _cls_uses(name: str, texts: list[str]) -> int:
+    pat = re.compile(CLASS_USE % re.escape(name))
+    return sum(len(pat.findall(t)) for t in texts)
+
+
+def css_vocabulary(root: Path, css_files: list[Path], src_texts: list[str]) -> list[dict]:
+    """Single-class rules (`.card {`, `.btn-primary {`) with their first declarations, by use."""
+    vocab: dict[str, dict] = {}
+    for p in css_files:
+        text = read(p)
+        for m in re.finditer(r"(?m)^[ \t]*\.([a-zA-Z][\w-]*)\s*\{", text):
+            name = m.group(1)
+            if name in vocab:
+                continue
+            decl = re.sub(r"/\*.*?\*/", "", block_after(text, m.start()), flags=re.S)
+            decl = " ".join(decl.split()).strip()
+            if not decl:
+                continue
+            vocab[name] = {
+                "name": name, "file": rel(root, p), "line": text.count("\n", 0, m.start()) + 1,
+                "decl": decl[:110] + ("…" if len(decl) > 110 else ""),
+            }
+    for entry in vocab.values():
+        entry["uses"] = _cls_uses(entry["name"], src_texts)
+    items = sorted((v for v in vocab.values() if v["uses"] >= 2), key=lambda v: -v["uses"])
+    return items[:16]
+
+
+def import_fanin(root: Path, src_files: list[Path]) -> list[dict]:
+    """Local modules by how many files import them: the chrome, the store, the strings."""
+    counts: collections.Counter = collections.Counter()
+    src_dir = root / "src" if (root / "src").is_dir() else root
+    for p in src_files:
+        if p.suffix not in {".tsx", ".jsx", ".ts", ".js", ".vue", ".svelte", ".astro"}:
+            continue
+        text = read(p, 200_000)
+        seen = set()
+        for spec in re.findall(r"""from\s+['"]([^'"]+)['"]""", text):
+            if spec.startswith("."):
+                target = (p.parent / spec).resolve()
+            elif spec.startswith(("@/", "~/")):
+                target = (src_dir / spec[2:]).resolve()
+            else:
+                continue
+            if target in seen:
+                continue
+            seen.add(target)
+            counts[target] += 1
+    out = []
+    for target, n in counts.most_common(80):
+        found = None
+        for suffix in ("", ".tsx", ".ts", ".jsx", ".js", ".vue", ".svelte", "/index.tsx", "/index.ts", "/index.js"):
+            c = Path(str(target) + suffix)
+            if c.is_file():
+                found = c
+                break
+        if not found:
+            continue
+        parts = {x.lower() for x in found.parts}
+        is_component = bool(parts & COMPONENT_DIR_NAMES)
+        if n >= 3 or (is_component and n >= 2):
+            out.append({"file": rel(root, found), "importers": n, "component": is_component})
+    return out[:12]
+
+
+def page_signatures(root: Path, src_files: list[Path], vocab_names: list[str]) -> dict:
+    pages, routes = [], []
+    for p in src_files:
+        if p.suffix not in {".tsx", ".jsx", ".vue", ".svelte", ".astro"}:
+            continue
+        rp = p.relative_to(root)
+        dirs = [x.lower() for x in rp.parts[:-1]]
+        if not (set(dirs) & PAGE_DIR_NAMES) or re.search(r"\.(test|spec|stories)$", p.stem):
+            continue
+        if "app" in dirs and p.stem != "page":          # Next.js App Router: page files only
+            continue
+        if p.stem in {"layout", "template", "loading", "error", "not-found", "index"} and "app" not in dirs and p.stem != "index":
+            continue
+        text = read(p, 200_000)
+        signals = []
+        if "<form" in text:
+            signals.append("form")
+        n_fields = len(re.findall(r"<(?:input|select|textarea)\b", text))
+        if n_fields:
+            signals.append(f"{n_fields} field{'s' if n_fields > 1 else ''}")
+        if "<table" in text:
+            signals.append("table")
+        elif ".map(" in text and re.search(r"<(?:li|article|tr)\b", text):
+            signals.append("list")
+        if re.search(r'role="dialog"|<dialog\b|<Dialog\b', text):
+            signals.append("dialog")
+        used = sorted(((n, _cls_uses(n, [text])) for n in vocab_names), key=lambda x: -x[1])
+        comps: list[str] = []
+        for names in re.findall(r"import\s*\{([^}]+)\}\s*from\s*['\"][^'\"]*components/[^'\"]+['\"]", text):
+            comps += [x.strip().split(" as ")[0] for x in names.split(",") if x.strip() and not x.strip().startswith("type ")]
+        pages.append({
+            "file": str(rp), "lines": text.count("\n") + 1, "signals": signals,
+            "classes": [f"{n} ×{c}" for n, c in used if c][:3], "components": comps[:6],
+        })
+    pages.sort(key=lambda x: x["file"])
+    for p in src_files:
+        if p.suffix in {".tsx", ".jsx"}:
+            text = read(p, 200_000)
+            if "<Route" in text:
+                routes += re.findall(r"<Route\s+[^>]*?path=\{?['\"]([^'\"]+)['\"]\}?[^>]*?element=\{<(\w+)", text)
+    app_dir = next((d for d in (root / "app", root / "src" / "app") if d.is_dir()), None)
+    if app_dir:
+        for pg in sorted(app_dir.rglob("page.*")):
+            if set(pg.parts) & SKIP_DIRS:
+                continue
+            segs = [x for x in pg.relative_to(app_dir).parent.parts if not (x.startswith("(") and x.endswith(")"))]
+            routes.append(("/" + "/".join(segs), rel(root, pg)))
+    return {"pages": pages[:24], "routes": routes[:30]}
+
+
+def copy_mechanism(root: Path, src_files: list[Path], deps: dict) -> dict:
+    libs = [label for key, label in I18N_LIBS.items() if key in deps]
+    dirs = sorted({rel(root, p.parent) for p in src_files if p.parent.name.lower() in I18N_DIRS})
+    hook = None
+    for p in src_files[:MAX_SRC_FILES]:
+        m = re.search(r"\b(useI18n|useTranslation|useTranslations|useIntl|useLingui)\b", read(p, 100_000))
+        if m:
+            hook = m.group(1)
+            break
+    dictionaries, typed = [], None
+    for d in dirs:
+        for f in sorted((root / d).glob("*")):
+            if f.is_file() and f.suffix in {".ts", ".js", ".json", ".tsx"}:
+                t = read(f, 400_000)
+                keys = len(re.findall(r'^\s*"[^"\n]+"\s*:', t, re.M))
+                if keys:
+                    dictionaries.append((rel(root, f), keys))
+                code = re.sub(r"//[^\n]*", "", re.sub(r"/\*.*?\*/", "", t, flags=re.S))
+                # The dictionary that is typed against another (en.ts: Record<TranslationKey, string>),
+                # not the provider that merely maps locales to dictionaries.
+                if keys and typed is None and re.search(r"Record<\s*TranslationKey|Record<\s*keyof typeof|satisfies\s+Record", code):
+                    typed = rel(root, f)
+    return {"libs": libs, "dirs": dirs, "hook": hook, "dictionaries": dictionaries[:6], "typed": typed}
+
+
+def boot_requests(root: Path, src_files: list[Path]) -> dict:
+    api_map: dict[str, str] = {}
+    base, api_file = None, None
+    for p in src_files:
+        if p.stem.lower() in {"api", "client", "http", "request", "fetcher"} and p.suffix in {".ts", ".js", ".tsx"}:
+            t = read(p, 300_000)
+            m = re.search(r"fetch\(\s*`([^`$]*)\$\{", t)
+            if m:
+                base = m.group(1)
+            for name, path in re.findall(r"(\w+)\s*:\s*\([^)]*\)\s*=>\s*\w+(?:<[^>]*>)?\(\s*[`'\"]([^`'\"]+)", t):
+                api_map.setdefault(name, path)
+            if api_map:
+                api_file = rel(root, p)
+                break
+    files = []
+    for p in src_files:
+        if not BOOT_STEM.match(p.stem) or p.suffix not in {".ts", ".tsx", ".js", ".jsx", ".vue"}:
+            continue
+        t = read(p, 300_000)
+        found = [api_map[m.group(1)] for m in re.finditer(r"\bapi\.(\w+)\(", t) if m.group(1) in api_map]
+        found += re.findall(r"fetch\(\s*[`'\"]([^`'\"$]+)", t)
+        found += re.findall(r"axios\.\w+\(\s*[`'\"]([^`'\"$]+)", t)
+        if found:
+            files.append({"file": rel(root, p), "requests": list(dict.fromkeys(found))[:8]})
+    return {"apiModule": api_file, "base": base, "files": files[:5]}
+
+
+def dev_setup(root: Path) -> dict:
+    proxies = []
+    for cfg in [*root.glob("vite.config.*"), *root.glob("next.config.*"), *root.glob("nuxt.config.*")]:
+        t = read(cfg)
+        for path, target in re.findall(r"['\"]([^'\"]+)['\"]\s*:\s*\{[^}]*?target\s*:\s*['\"]([^'\"]+)['\"]", t, re.S):
+            proxies.append((path, target, rel(root, cfg)))
+        for src, dest in re.findall(r"source\s*:\s*['\"]([^'\"]+)['\"][^}]*?destination\s*:\s*['\"]([^'\"]+)['\"]", t, re.S):
+            proxies.append((src, dest, rel(root, cfg)))
+    helpers = set()
+    for base_dir in (root, root.parent):
+        for pat in ("dev.sh", "dev.*", "run.sh", "start.sh", "Makefile", "justfile", "docker-compose*.yml", "docker-compose*.yaml", "compose*.yml", "compose*.yaml", "Procfile"):
+            for p in base_dir.glob(pat):
+                helpers.add(os.path.relpath(p, root))
+    scripts = {}
+    pj = root / "package.json"
+    if pj.exists():
+        try:
+            scripts = {k: v for k, v in json.loads(read(pj)).get("scripts", {}).items() if k in {"dev", "start", "preview"} or k.startswith("dev:")}
+        except (json.JSONDecodeError, AttributeError):
+            pass
+    return {"proxies": proxies[:6], "helpers": sorted(helpers), "scripts": scripts}
+
+
+def gates(root: Path, src_files: list[Path]) -> list[str]:
+    out = []
+    idx = root / "index.html"
+    if idx.exists() and re.search(r"<script>(?:(?!</script>).)*?(matchMedia|localStorage|data-?theme|dataset\.theme)", read(idx), re.S):
+        out.append("`index.html` decides the theme in an inline script at boot (`data-theme`); the dark pass reloads for it")
+    for p in src_files:
+        if SPLASH_STEM.match(p.stem) and p.suffix in {".tsx", ".jsx", ".vue", ".svelte"}:
+            t = read(p, 100_000)
+            key = None
+            for name, value in re.findall(r"const\s+(\w+)\s*=\s*['\"]([\w.:-]+)['\"]", t):
+                if re.search(r"(?:sessionStorage|localStorage)\.(?:getItem|setItem)\(\s*" + re.escape(name), t):
+                    key = value
+                    break
+            key = key or next(iter(re.findall(r"(?:sessionStorage|localStorage)\.(?:getItem|setItem)\(\s*['\"]([^'\"]+)", t)), None)
+            lifts = "any key or tap lifts it" if re.search(r"keydown|pointerdown|click", t) else "waits it out"
+            out.append(f"`{rel(root, p)}` covers the first paint ({lifts}" + (f"; storage key `{key}`" if key else "") + ")")
+    for p in src_files:
+        if p.stem in {"App", "app", "layout", "_app", "Root", "root"} and p.suffix in {".tsx", ".jsx"}:
+            conds = re.findall(r"\n[ \t]*if\s*\(([^)\n]{1,80})\)\s*\{\s*\n[ \t]*return\b", read(p, 200_000))
+            if conds:
+                out.append(f"`{rel(root, p)}` returns early on, in order: " + " → ".join(f"`{c.strip()}`" for c in conds[:6]))
+    return out[:6]
+
+
+def start_here(root: Path, src_files: list[Path], css_files: list[Path], stack: dict, deps: dict) -> dict:
+    ui_files = [p for p in src_files if p.suffix in {".tsx", ".jsx", ".vue", ".svelte", ".astro", ".html", ".mdx"}]
+    texts = [read(p, 200_000) for p in ui_files[:MAX_SRC_FILES]]
+    vocab = css_vocabulary(root, css_files, texts)
+    return {
+        "vocabulary": vocab,
+        "imported": import_fanin(root, src_files),
+        **page_signatures(root, src_files, [v["name"] for v in vocab]),
+        "copy": copy_mechanism(root, src_files, deps),
+        "boot": boot_requests(root, src_files),
+        "dev": dev_setup(root),
+        "gates": gates(root, src_files),
+    }
+
+
+def md_start_here(sh: dict) -> list[str]:
+    out = ["## Start here (a match task reads these, not the tree)"]
+    if sh["vocabulary"]:
+        out.append("- Vocabulary — the classes the CSS defines, by use:")
+        for v in sh["vocabulary"]:
+            out.append(f"  - `.{v['name']}` ×{v['uses']} — {v['file']}:{v['line']} — {v['decl']}")
+    if sh["imported"]:
+        out.append("- Imported most: " + " · ".join(f"`{m['file']}` ({m['importers']})" for m in sh["imported"]))
+    if sh["pages"]:
+        out.append("- Pages, one line each:")
+        for pg in sh["pages"]:
+            bits = [f"{pg['lines']} lines"]
+            if pg["signals"]:
+                bits.append(", ".join(pg["signals"]))
+            if pg["classes"]:
+                bits.append(", ".join(pg["classes"]))
+            if pg["components"]:
+                bits.append("imports " + ", ".join(pg["components"]))
+            out.append(f"  - `{pg['file']}` · " + " · ".join(bits))
+    if sh["routes"]:
+        out.append("- Routes: " + " · ".join(f"`{path}` → {comp}" for path, comp in sh["routes"][:20]))
+    c = sh["copy"]
+    if c["dictionaries"] or c["libs"] or c["hook"]:
+        parts = []
+        if c["dictionaries"]:
+            parts.append("dictionaries " + ", ".join(f"`{f}` ({n} keys)" for f, n in c["dictionaries"]))
+        if c["typed"]:
+            parts.append(f"`{c['typed']}` is typed against the other — a key missing there fails the build")
+        if c["libs"]:
+            parts.append("library " + ", ".join(c["libs"]))
+        if c["hook"]:
+            parts.append(f"components call `{c['hook']}()`")
+        out.append("- Strings: " + "; ".join(parts) + ". New copy goes into every dictionary.")
+    before = list(sh["gates"])
+    b = sh["boot"]
+    for f in b["files"]:
+        via = f" through `{b['apiModule']}`" + (f" (base `{b['base']}`)" if b["base"] else "") if b["apiModule"] else ""
+        before.append(f"`{f['file']}` calls " + ", ".join(f"`{r}`" for r in f["requests"]) + via + " — mock what the page needs, or start the backend")
+    d = sh["dev"]
+    for path, target, cfg in d["proxies"]:
+        before.append(f"`{cfg}` proxies `{path}` → `{target}`")
+    if d["helpers"]:
+        before.append("starts everything: " + ", ".join(f"`{h}`" for h in d["helpers"]))
+    if d["scripts"]:
+        before.append("scripts: " + ", ".join(f"`{k}` = `{v}`" for k, v in list(d["scripts"].items())[:3]))
+    if before:
+        out.append("- Before a page renders:")
+        out += [f"  - {ln}" for ln in before]
+    if sh["pages"] or sh["vocabulary"]:
+        out.append("- Read next: " + (("the page above whose signals match yours" if sh["pages"] else "the vocabulary lines")
+                   + (" and the vocabulary lines" if sh["pages"] and sh["vocabulary"] else ""))
+                   + ". Not the CSS file, not the store.")
+    else:
+        out.append("- Nothing to read first: no pages or component classes yet — see the verdict below.")
+    out.append("")
+    return out
+
+
 # ------------------------------------------------------------------ rendering
 def md(data: dict) -> str:
     s, t, f, c, u, v = data["stack"], data["tokens"], data["fonts"], data["components"], data["usage"], data["verdict"]
@@ -466,6 +770,8 @@ def md(data: dict) -> str:
     if s.get("depsSource") and s["depsSource"] != "package.json":
         out.append(f"- dependencies read from `{s['depsSource']}` (workspace root)")
     out.append("")
+    if data.get("startHere"):
+        out += md_start_here(data["startHere"])
 
     # Tokens
     out.append("## Declared tokens")
@@ -577,6 +883,7 @@ def main() -> int:
         "root": str(root), "stack": stack, "tokens": tokens, "fonts": fonts,
         "components": comps, "usage": usage, "docs": docs,
         "verdict": verdict(stack, tokens, fonts, comps, usage, docs),
+        "startHere": start_here(root, src_files, css_files, stack, stack.get("deps") or {}) if not stack.get("workspaceApps") else None,
     }
     if as_json:
         print(json.dumps(data, ensure_ascii=False, indent=2))

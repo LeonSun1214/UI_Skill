@@ -1,14 +1,14 @@
 ---
 name: ui-craft
 metadata:
-  version: 0.8.3
+  version: 0.9.0
 description: >-
   Build, change, and review UI in React + Tailwind projects (Vite, Next.js) with a render → look → measure → fix loop, so what ships is checked against a real screenshot and real DOM measurements (contrast, tap targets, overflow, keyboard focus, hover, motion, dark mode) instead of guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even when they never say "design" or "UI". Also use it to inspect an existing project's design conventions before adding to it.
 ---
 
 # ui-craft
 
-Version 0.8.3. (An older copy of this file means the installed skill is behind the
+Version 0.9.0. (An older copy of this file means the installed skill is behind the
 repository: re-run `install.sh`; `doctor.mjs` says when that is the case.)
 
 UI work has a gap that code review can't close: the first draft always has two or
@@ -45,8 +45,10 @@ real leak in past runs:
    state or Chromium versions. Start the server, render, read the verdict. If a web
    font failed to load, the `Verified` block says so — report that and move on.
 6. **Match tasks read nothing extra.** Adding to an established project means
-   `inspect.py`, the sibling pages' source, build, one render. The references are
-   for greenfield work and for questions the contact sheet raises.
+   `inspect.py`, the one sibling page its *Start here* section points at, build,
+   one render. Not the CSS file (the vocabulary is in the report), not the store
+   (its calls are in the report). The references are for greenfield work and for
+   questions the contact sheet raises.
 7. **The report is short.** Twenty lines unless the user asked for detail: what
    changed, the pasted `Verified` block, the decisions you made, what couldn't be
    verified.
@@ -88,10 +90,18 @@ and the Tailwind major (v4 is CSS-first with `@theme`; v3 uses `tailwind.config.
 python3 <skill-dir>/scripts/inspect.py <project-root>
 ```
 
-Read the whole output. It reports the tokens the project *declares* and — more
-useful — the classes the code *actually uses*: dominant color families, radius,
-shadow, text sizes, whether it uses semantic tokens (`bg-primary`) or raw palette
-(`bg-indigo-600`), and which primitives already exist (`components/ui/button.tsx`).
+Read the whole output. Its **Start here** section is the reading list: the classes
+the CSS defines with their declarations (the vocabulary — you do not need the CSS
+file), the modules every page imports (the chrome, the store, the strings), one
+line per page with its signals (form, list, table, which classes and components),
+the routes, where the strings live and whether a dictionary is typed, and what
+stands between a fresh browser and the page — the theme script, a splash, the
+early returns in `App`, the requests the store makes, the dev proxy. Read the one
+page whose signals match yours and the vocabulary lines; that is the whole of the
+reading for a match task. Below it the report has the tokens the project
+*declares* and the classes the code *actually uses*: dominant color families,
+radius, shadow, text sizes, semantic tokens (`bg-primary`) versus raw palette
+(`bg-indigo-600`), and which primitives already exist.
 
 Then decide explicitly, in one line, **match** or **establish**:
 
@@ -280,7 +290,7 @@ Don't work around these by hand; each has a flag, and the loop stays the same:
 | Situation | Do this |
 |---|---|
 | The page is behind a login | the render output's first lines name the page that rendered (`page: "…" · h1 …`); a sign-in title there means the session did not stick. Then: ask the user to run `node <skill-dir>/scripts/login-state.mjs <login-url> --out .ui-craft/state.json` (a window opens, they log in, it saves the session), then render with `--storage-state .ui-craft/state.json`. A token you were given: `--header "Authorization: Bearer …"` or `--cookie session=…`. |
-| The page needs data a backend would provide | `--mock '**/api/items=.ui-craft/items.json'` answers those requests from a file you write; `--init-script .ui-craft/seed.js` runs before the app (localStorage, feature flags). |
+| The page needs data a backend would provide | the inspector's *Start here* section names the calls the store makes and the dev proxy's target: start that backend if a script does it (`dev.sh`, `compose.yaml`), else `--mock '**/api/items=.ui-craft/items.json'` answers those requests from a file you write; `--init-script .ui-craft/seed.js` runs before the app (localStorage, feature flags). |
 | Content appears after hydration or a fetch | `--wait-for '[data-loaded]'` (any selector that exists only when the real content does). |
 | A splash or intro animation covers the page | `--init-script` a file that does what a person would: `setTimeout(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })), 400)`, or sets the storage key the splash checks; plus `--wait` for the fade. |
 | The theme is set by a script at boot (`data-theme`) | nothing: the dark pass reloads the page under the dark scheme when in-place emulation changes nothing, and the report names the mode (`media`, `class`, `attribute`). |

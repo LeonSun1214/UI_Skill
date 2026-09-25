@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.9.0 — the reading list
+
+- `inspect.py` opens with **Start here**: the classes the CSS defines with their
+  declarations, by use (the vocabulary — the CSS file need not be read); the
+  local modules imported by most files (the chrome, the store, the strings); one
+  line per page with its signals (form, fields, list, table, dialog), the classes
+  and components it uses; the route table (react-router and the Next.js App
+  Router); where the strings live and which dictionary is typed; and what stands
+  between a fresh browser and the page — the theme script in `index.html`, a
+  splash and its storage key, the early returns in `App`, the calls the store
+  makes through the API module and its base path, the dev proxy's target, the
+  scripts that start a backend. Two real-repository trials had put two thirds of
+  their wall clock into reading files to learn exactly this.
+- SKILL.md: step 1 and cost rule 6 read that section and one sibling page,
+  nothing else; step 4½ starts the backend the section names before mocking.
+
 ## 0.8.3 — the review path on a real page
 
 - `render.mjs` names the page that rendered (`page: "…" · h1 …`) in its first
