@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.11.0 — the states a page is in after someone does something
+
+- `render.mjs --act STEP` (repeatable) puts the page in the state to measure
+  before the screenshots and audits: `click:SEL`, `type:SEL=TEXT`, `press:KEY`,
+  `hover:SEL`, `focus:SEL`, `select:SEL=VALUE`, `wait:MS|SEL`, with any Playwright
+  selector. The steps run again when the dark pass reloads. A step that finds
+  nothing is a warning with the step named, and the run still measures.
+- A dialog open in that state gets the dialog pattern measured: focus moved into it
+  on open, Tab stays inside (a trap or a native modal), it has a name, the page
+  behind it is inert, it fits the viewport or scrolls, there is a close control,
+  Escape closes it (pressed last, from inside). A dialog that says `aria-modal` and
+  lets Tab out fails; one that never claimed to be modal gets a warning that says
+  what modal would take. A modal dialog the app opened on its own is audited too;
+  a non-modal one that was simply there (a cookie bar, a widget) is left alone.
+  On Sunnotice's team page the due-reminder alert turned out to claim modal and let
+  Tab walk to the page behind it — the first finding of this kind.
+- `alerts:` line — what the live regions say and how many fields carry
+  `aria-invalid`, so a form's error state is read from the report, not guessed.
+- Self-test: `dialog.html` (a dialog that follows the pattern, one that does not,
+  a form, a step that finds nothing) and four checks (24 in all).
+
 ## 0.10.1 — the fifth trial, a fresh agent on Next.js
 
 A fresh agent built a `/uses` page on the Tailwind Next.js starter blog with

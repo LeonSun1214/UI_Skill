@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dialog test</title>
+<style>
+  body { margin: 0; padding: 32px; font: 16px/1.5 system-ui, sans-serif; color: #1a1a1a; background: #fff; }
+  button { min-height: 44px; padding: 0 20px; background: #1d4ed8; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
+  button:hover { background: #1e40af; }
+  button:focus-visible { outline: 3px solid #1a1a1a; outline-offset: 2px; }
+  input { min-height: 44px; padding: 0 12px; border: 2px solid #6b7280; border-radius: 6px; font: inherit; }
+  .row { display: flex; gap: 12px; margin-top: 16px; }
+  .backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, .5); }
+  .dialog { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); box-sizing: border-box; width: min(90vw, 420px); background: #fff; color: #1a1a1a; padding: 24px; border-radius: 12px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main id="page">
+  <h1>Projects</h1>
+  <p>Two dialogs and a form: one dialog follows the pattern, the other does not.</p>
+  <div class="row">
+    <button type="button" id="open-good">Delete project</button>
+    <button type="button" id="open-bad">Rename</button>
+  </div>
+  <form id="f" novalidate style="margin-top: 24px">
+    <label>Email <input name="email" type="email" required></label>
+    <button type="submit">Save</button>
+    <p id="err" role="alert"></p>
+  </form>
+</main>
+<!-- the good one: labelled, aria-modal, focus moves in, Tab is trapped, Escape closes, the page goes inert -->
+<div id="good-wrap" hidden>
+  <div class="backdrop"></div>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="good-title">
+    <h2 id="good-title">Delete project?</h2>
+    <p>This cannot be undone.</p>
+    <div class="row"><button type="button" id="cancel">Cancel</button><button type="button" id="confirm">Delete</button></div>
+  </div>
+</div>
+<!-- the bad one: no name, not modal, focus stays on the opener, Tab walks out, Escape is ignored, no way out -->
+<div id="bad-wrap" hidden>
+  <div class="backdrop"></div>
+  <div class="dialog" role="dialog">
+    <p>New name</p>
+    <div class="row"><input aria-label="New name"><button type="button">OK</button></div>
+  </div>
+</div>
+<script>
+  const page = document.getElementById('page');
+  const good = document.getElementById('good-wrap'), bad = document.getElementById('bad-wrap');
+  const focusables = (root) => [...root.querySelectorAll('button, input, a[href]')];
+  const closeGood = () => { good.hidden = true; page.inert = false; document.getElementById('open-good').focus(); };
+  document.getElementById('open-good').addEventListener('click', () => { good.hidden = false; page.inert = true; document.getElementById('cancel').focus(); });
+  good.addEventListener('keydown', (e) => {
+    const f = focusables(good), first = f[0], last = f[f.length - 1];
+    if (e.key === 'Tab') {
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+    if (e.key === 'Escape') closeGood();
+  });
+  document.getElementById('cancel').addEventListener('click', closeGood);
+  document.getElementById('open-bad').addEventListener('click', () => { bad.hidden = false; });
+  document.getElementById('f').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const input = e.target.elements.email;
+    if (!/^[^@\s]+@[^@\s]+$/.test(input.value)) { input.setAttribute('aria-invalid', 'true'); document.getElementById('err').textContent = 'Email is required: enter a full address.'; }
+  });
+</script>
+</body>
+</html>

@@ -50,6 +50,10 @@ const USAGE = `usage: node render.mjs <url | path/to/page.html> [options]
   --mock PATTERN=X     answer requests whose URL matches PATTERN (glob or /regex/) with X: a file, an inline body
                        ('**/api/teams=[]', '**/api/config={"demo":false}') or a bare status ('**/api/auth/me=401') (repeatable)
   --dismiss X          after load, press a key (Escape, Enter) or click a selector, at 0 / 400 / 900 ms: lifts a splash, closes a cookie bar
+  --act STEP           what a person does before the state you want measured, in order (repeatable):
+                       click:SEL · type:SEL=TEXT · press:KEY · hover:SEL · focus:SEL · select:SEL=VALUE · wait:MS|SEL
+                       (SEL is any Playwright selector: css, text=Save, role=button[name="Delete"]). A dialog it opens
+                       gets its own audit: focus inside, Tab trapped, a name, Escape closes, fits the viewport
   --compare DIR        pixel-diff every screenshot against the same-named one in DIR (a previous run)
   --strict             exit 1 when any viewport FAILs
 env  UI_CRAFT_CHROME   path to a Chrome/Chromium binary to use`;
@@ -61,7 +65,7 @@ if (!argv.length || argv.includes('--help') || argv.includes('-h')) {
   process.exit(argv.length ? 0 : 1);
 }
 const opt = { out: '.ui-craft/latest', viewports: [375, 768, 1440], wait: 500, waitFor: null, fold: true, dark: 'auto', hover: true, strict: false,
-  storageState: null, cookies: [], headers: {}, auth: null, initScript: null, mocks: [], compare: null, dismiss: null };
+  storageState: null, cookies: [], headers: {}, auth: null, initScript: null, mocks: [], compare: null, dismiss: null, acts: [] };
 let target = null;
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
@@ -82,6 +86,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--mock') { const v = argv[++i]; const k = v.lastIndexOf('='); if (k > 0) opt.mocks.push({ pattern: v.slice(0, k), file: v.slice(k + 1) }); }
   else if (a === '--compare') opt.compare = argv[++i];
   else if (a === '--dismiss') opt.dismiss = argv[++i];
+  else if (a === '--act') opt.acts.push(argv[++i]);
   else if (a.startsWith('--')) { console.error(`unknown option ${a}\n${USAGE}`); process.exit(1); }
   else target = a;
 }
@@ -412,7 +417,11 @@ function domAudit(INTERACTIVE) {
   const pageTitle = (document.title || '').trim().slice(0, 80);
   const passwordField = !!document.querySelector('input[type="password"]');
   const devOverlay = [...document.querySelectorAll('nextjs-portal, vite-error-overlay')].map((el) => el.tagName.toLowerCase())[0] || null;
-  return { pageColors, contrast, nonText, targets, unnamedControls, overflow, motion, darkSupport, fonts, imagesMissingAlt, structure, viewportMeta, bodyText, pageTitle, passwordField, devOverlay };
+  // What a form's error state says: live regions with text, and fields marked invalid.
+  const alerts = [...document.querySelectorAll('[role="alert"], [role="status"], [aria-live="polite"], [aria-live="assertive"]')]
+    .map((el) => (el.textContent || '').trim().replace(/\s+/g, ' ')).filter(Boolean).slice(0, 6).map((t) => t.slice(0, 80));
+  const invalidFields = document.querySelectorAll('[aria-invalid="true"]').length;
+  return { pageColors, contrast, nonText, targets, unnamedControls, overflow, motion, darkSupport, fonts, imagesMissingAlt, structure, viewportMeta, bodyText, pageTitle, passwordField, devOverlay, alerts, invalidFields };
 }
 
 // ------------------------------------------------- keyboard focus (real Tabs)
@@ -427,6 +436,117 @@ async function dismiss(page, what) {
     else { const el = await page.$(what).catch(() => null); if (el) await el.click({ timeout: 1000, force: true }).catch(() => {}); }
   }
   await page.waitForTimeout(400);
+}
+
+// --act: the steps that put the page into the state to measure — open the dialog, fill the form badly and
+// submit, hover the menu. Run after load (and again when the dark pass reloads). SEL=VALUE splits at the
+// first "=" outside brackets and quotes, so input[name=email]=x means what it says.
+function splitStep(rest) {
+  let depth = 0, quote = null;
+  for (let i = 0; i < rest.length; i++) {
+    const ch = rest[i];
+    if (quote) { if (ch === quote) quote = null; continue; }
+    if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === '[' || ch === '(') depth++;
+    else if (ch === ']' || ch === ')') depth--;
+    else if (ch === '=' && depth === 0) return [rest.slice(0, i), rest.slice(i + 1)];
+  }
+  return [rest, ''];
+}
+async function act(page, steps, errors) {
+  for (const step of steps) {
+    const m = /^(click|type|press|hover|focus|select|wait):([\s\S]*)$/.exec(step);
+    if (!m) { errors.push(`act "${step}": not a step (click: type: press: hover: focus: select: wait:)`); continue; }
+    const [, kind, rest] = m;
+    try {
+      if (kind === 'press') await page.keyboard.press(rest);
+      else if (kind === 'wait') { if (/^\d+$/.test(rest)) await page.waitForTimeout(Number(rest)); else await page.waitForSelector(rest, { timeout: 10000 }); }
+      else {
+        const [sel, val] = (kind === 'type' || kind === 'select') ? splitStep(rest) : [rest, ''];
+        const loc = page.locator(sel).first();
+        await loc.waitFor({ state: 'visible', timeout: 5000 });
+        if (kind === 'click') await loc.click({ timeout: 5000 });
+        else if (kind === 'type') await loc.fill(val, { timeout: 5000 });
+        else if (kind === 'hover') await loc.hover({ timeout: 5000 });
+        else if (kind === 'focus') await loc.focus({ timeout: 5000 });
+        else if (kind === 'select') await loc.selectOption(val, { timeout: 5000 });
+      }
+      await page.waitForTimeout(250);
+    } catch (e) { errors.push(`act "${step}": ${String(e.message).split('\n')[0].slice(0, 140)}`); }
+  }
+  if (steps.length) await page.waitForTimeout(300);
+}
+
+// A dialog the steps opened, measured against the dialog pattern: focus moved into it, Tab stays inside
+// (a trap, or a native modal), it has a name, the page behind it is inert, it fits the viewport, there is
+// a way out. Runs before the screenshots like the focus audit; the Escape check runs last, since it closes it.
+async function dialogAudit(page, opened) {
+  const info = await page.evaluate(() => {
+    const visible = (el) => { const cs = getComputedStyle(el); if (cs.display === 'none' || cs.visibility === 'hidden') return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    const dialogs = [...document.querySelectorAll('dialog[open], [role="dialog"], [role="alertdialog"]')].filter(visible);
+    if (!dialogs.length) return null;
+    const d = dialogs[dialogs.length - 1]; // the one opened last is on top
+    document.querySelectorAll('[data-uic-dialog]').forEach((el) => el.removeAttribute('data-uic-dialog'));
+    d.setAttribute('data-uic-dialog', '1');
+    const byId = (d.getAttribute('aria-labelledby') || '').split(/\s+/).map((id) => (document.getElementById(id)?.textContent || '').trim()).filter(Boolean).join(' ');
+    const name = (d.getAttribute('aria-label') || byId || '').replace(/\s+/g, ' ').slice(0, 60) || null;
+    const native = d.tagName === 'DIALOG';
+    let modal = d.getAttribute('aria-modal') === 'true';
+    try { modal = modal || (native && d.matches(':modal')); } catch { /* older engines */ }
+    const focusableSel = 'a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
+    const usable = (el) => visible(el) && !el.disabled && el.tabIndex >= 0;
+    const inside = [...d.querySelectorAll(focusableSel)].filter(usable);
+    const outsideReachable = [...document.querySelectorAll(focusableSel)].filter((el) => !d.contains(el) && usable(el) && !el.closest('[inert], [aria-hidden="true"]') && !(modal && native));
+    const r = d.getBoundingClientRect();
+    const scrolls = (el) => el.scrollHeight > el.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(el).overflowY);
+    const fits = r.left >= -1 && r.right <= window.innerWidth + 1 && (r.bottom <= window.innerHeight + 1 || scrolls(d) || [...d.querySelectorAll('*')].some(scrolls));
+    const closeControl = [...d.querySelectorAll('button, a[href], [role="button"]')].some((el) => /close|dismiss|cancel|done|got it|关闭|取消|知道了|×|✕/i.test(`${el.getAttribute('aria-label') || ''} ${el.textContent || ''}`));
+    const ae = document.activeElement;
+    return {
+      role: native ? '<dialog>' : `role=${d.getAttribute('role')}`, name, modal, native,
+      focusInside: !!ae && ae !== document.body && d.contains(ae),
+      focusables: inside.length, outsideReachable: outsideReachable.length,
+      fits, rect: { w: Math.round(r.width), h: Math.round(r.height) }, closeControl,
+    };
+  });
+  if (!info || (!opened && !info.modal)) return null; // not opened by --act and not modal: a cookie bar, a widget
+  const where = () => page.evaluate(() => {
+    const d = document.querySelector('[data-uic-dialog]'); const ae = document.activeElement;
+    if (!ae || ae === document.body) return 'the page (nothing focused)';
+    if (d && d.contains(ae)) return null;
+    let s = ae.tagName.toLowerCase(); const t = (ae.textContent || ae.getAttribute('aria-label') || ae.getAttribute('name') || '').trim().replace(/\s+/g, ' ').slice(0, 28); return t ? `${s} "${t}"` : s;
+  });
+  let escapedTo = null;
+  for (let i = 0; i < Math.min(info.focusables + 2, 24) && !escapedTo; i++) {
+    await page.keyboard.press('Tab');
+    const w = await where();
+    if (w) escapedTo = { after: `${i + 1} Tab${i ? 's' : ''}`, to: w };
+  }
+  if (!escapedTo) {
+    for (let i = 0; i < 2 && !escapedTo; i++) {
+      await page.keyboard.press('Shift+Tab');
+      const w = await where();
+      if (w) escapedTo = { after: `${i + 1} Shift+Tab`, to: w };
+    }
+  }
+  return { ...info, trapped: !escapedTo, escapedTo, escapeCloses: null };
+}
+async function dialogEscape(page) {
+  await page.evaluate(() => {
+    const d = document.querySelector('[data-uic-dialog]');
+    const f = d && d.querySelector('a[href], button, input, select, textarea, [tabindex]');
+    if (f) f.focus(); else if (d) { d.setAttribute('tabindex', '-1'); d.focus(); }
+  }).catch(() => {});
+  await page.keyboard.press('Escape').catch(() => {});
+  await page.waitForTimeout(400);
+  return page.evaluate(() => {
+    const d = document.querySelector('[data-uic-dialog]');
+    if (!d || !d.isConnected) return true;
+    if (d.tagName === 'DIALOG' && !d.open) return true;
+    let el = d;
+    while (el) { const cs = getComputedStyle(el); if (cs.display === 'none' || cs.visibility === 'hidden') return true; el = el.parentElement; }
+    const r = d.getBoundingClientRect(); return !(r.width > 0 && r.height > 0);
+  });
 }
 
 async function focusAudit(page, max = 30) {
@@ -714,6 +834,8 @@ for (const width of opt.viewports) {
     if (opt.waitFor) await page.waitForSelector(opt.waitFor, { timeout: 30000 });
   } catch (e) { loadError = String(e.message).split('\n')[0]; }
   if (!loadError) await dismiss(page, opt.dismiss);
+  const actErrors = [], darkActErrors = [];
+  if (!loadError) await act(page, opt.acts, actErrors);
   await page.waitForTimeout(opt.wait);
 
   // Scroll through once so lazy / IntersectionObserver content mounts, then back to top.
@@ -728,6 +850,7 @@ for (const width of opt.viewports) {
 
   const key = String(width);
   const audit = loadError ? null : await page.evaluate(domAudit, INTERACTIVE_SELECTOR);
+  const dialog = loadError ? null : await dialogAudit(page, opt.acts.length > 0); // before the focus audit moves focus
   const focus = loadError ? null : await focusAudit(page);
   const hover = (!loadError && opt.hover && width === widest) ? await hoverAudit(page) : null;
   if (!loadError) await page.evaluate(() => window.scrollTo(0, 0));
@@ -760,6 +883,7 @@ for (const width of opt.viewports) {
         if (opt.waitFor) await page.waitForSelector(opt.waitFor, { timeout: 30000 });
       } catch { /* keep the in-place measurement below */ }
       await dismiss(page, opt.dismiss);
+      await act(page, opt.acts, darkActErrors);
       await page.waitForTimeout(opt.wait);
       if (audit.darkSupport.class) await page.evaluate(() => document.documentElement.classList.add('dark'));
       await page.evaluate(async () => {
@@ -793,6 +917,7 @@ for (const width of opt.viewports) {
     };
     await page.emulateMedia({ colorScheme: 'light' });
   }
+  if (dialog) dialog.escapeCloses = await dialogEscape(page); // last: it closes the dialog
 
   const fails = [], warns = [];
   if (loadError) fails.push(`load error: ${loadError}`);
@@ -831,6 +956,18 @@ for (const width of opt.viewports) {
     if (dark.nonText.weak.length) warns.push(`dark weak button surface <3:1 ${dark.nonText.weak.length}`);
     if (!dark.themeChanged && !dark.forced) warns.push('dark rule present but page colours did not change');
   }
+  if (dialog) {
+    if (!dialog.focusInside) fails.push('dialog: focus did not move into it');
+    if (!dialog.name) fails.push('dialog: no accessible name');
+    if (!dialog.fits) fails.push(`dialog: does not fit the viewport (${dialog.rect.w}×${dialog.rect.h}) and does not scroll`);
+    if (dialog.modal && !dialog.trapped) fails.push(`dialog: modal, but Tab leaves it after ${dialog.escapedTo.after} → ${dialog.escapedTo.to}`);
+    if (dialog.modal && dialog.trapped && dialog.outsideReachable) warns.push(`dialog: modal, but ${dialog.outsideReachable} controls behind it stay reachable (inert the page behind it)`);
+    if (!dialog.modal) warns.push(`dialog: not modal (no aria-modal), ${dialog.outsideReachable} controls behind it stay reachable${dialog.trapped ? '' : `, Tab leaves it after ${dialog.escapedTo.after} → ${dialog.escapedTo.to}`}`);
+    if (dialog.escapeCloses === false) warns.push('dialog: Escape does not close it');
+    if (!dialog.closeControl) warns.push('dialog: no close or cancel control inside it');
+  }
+  if (actErrors.length) warns.push(`act failed: ${actErrors.join(' | ')}`);
+  if (darkActErrors.length) warns.push(`act failed on the dark reload: ${darkActErrors.join(' | ')}`);
   if (consoleErrors.length) warns.push(`console errors ${consoleErrors.length}`);
   if (failedRequests.length) warns.push(`failed requests ${failedRequests.length}`);
   if (httpErrors.length) warns.push(`http errors ${httpErrors.length}`);
@@ -841,7 +978,7 @@ for (const width of opt.viewports) {
   report.viewports[key] = {
     width, height, status, fails, warns, loadError,
     console: consoleErrors.slice(0, 20), failedRequests: failedRequests.slice(0, 20), httpErrors: httpErrors.slice(0, 20), requests: requests.slice(0, 40),
-    audit, focus, hover, dark,
+    audit, focus, hover, dark, dialog, acts: opt.acts, actErrors, darkActErrors,
     screenshots: { fold: opt.fold ? `${key}-fold.png` : null, full: `${key}-full.png`, darkFold: dark && dark.screenshot },
   };
   await context.close();
@@ -863,6 +1000,7 @@ await writeFile(join(opt.out, 'report.json'), JSON.stringify(report, null, 2));
 // ------------------------------------------------------------------ output
 console.log(`ui-craft render → ${opt.out}`);
 console.log(`  target: ${url}`);
+if (opt.acts.length) console.log(`  after: ${opt.acts.join(' · ')}`);
 if (folds.length) console.log(`  look first: ${join(opt.out, 'contact.png')} (all viewports, above the fold, one image)${darkFolds.length ? ` · dark: ${join(opt.out, 'contact-dark.png')}` : ''}`);
 for (const [k, v] of Object.entries(report.viewports)) {
   const detail = [...v.fails, ...v.warns.map((w) => `warn:${w}`)].join(' · ') || 'clean';
@@ -883,6 +1021,7 @@ if (first) {
   const h1s = (first.audit.structure && first.audit.structure.headings || []).filter((h) => h.level === 1).map((h) => h.text);
   console.log(`  page: ${JSON.stringify(first.audit.pageTitle || '(no title)')}${h1s.length ? ` · h1 ${h1s.map((t) => JSON.stringify(t.slice(0, 40))).join(', ')}` : ' · no h1'}${(/sign ?in|log ?in|登录/i.test((first.audit.pageTitle || '') + ' ' + h1s.join(' ')) || (first.audit.passwordField && /sign ?in|log ?in|login|登录|password|密码/i.test((first.audit.bodyText || '').slice(0, 400)))) ? '  ← looks like a sign-in page: was the session passed? (--cookie / --storage-state)' : ''}`);
   const reqs = first.requests || [];
+  if ((first.audit.alerts || []).length || first.audit.invalidFields) console.log(`  alerts: ${(first.audit.alerts || []).map((t) => JSON.stringify(t)).join(' · ') || 'none'}${first.audit.invalidFields ? ` · ${first.audit.invalidFields} field${first.audit.invalidFields > 1 ? 's' : ''} marked invalid` : ''}`);
   if (!reqs.length && !first.loadError) console.log('  requests (xhr/fetch): none — the data came with the HTML (server-rendered or static); nothing for --mock to answer');
   if (first.audit.devOverlay) console.log(`  dev overlay: <${first.audit.devOverlay}> hidden for the screenshots and the audits — its errors still count under console errors`);
   if (reqs.length) {
@@ -913,6 +1052,16 @@ const specs = [
   ['dark contrast', (v) => v.dark && v.dark.contrast.failures, 6, (f) => `${f.ratio}:1 (need ${f.required}) ${f.selector} — ${f.color} on ${f.background}`],
   ['unnamed', (v) => v.audit.unnamedControls, 6, (s) => s],
   ['img without alt', (v) => v.audit.imagesMissingAlt, 4, (s) => s],
+  ['dialog', (v) => (v.dialog ? [
+    !v.dialog.focusInside && 'focus did not move into the dialog: focus its first control (or the close button) on open',
+    v.dialog.modal && !v.dialog.trapped && `says it is modal, but Tab leaves it after ${v.dialog.escapedTo.after} → ${v.dialog.escapedTo.to}: trap focus, or use <dialog>.showModal()`,
+    !v.dialog.name && 'no accessible name: aria-labelledby the heading, or aria-label',
+    !v.dialog.fits && `does not fit the viewport (${v.dialog.rect.w}×${v.dialog.rect.h}) and does not scroll`,
+    v.dialog.modal && v.dialog.trapped && v.dialog.outsideReachable ? `${v.dialog.outsideReachable} controls behind it stay reachable by script and assistive tech: inert on the page behind it` : null,
+    !v.dialog.modal ? `not modal (no aria-modal): ${v.dialog.outsideReachable} controls behind it stay reachable${v.dialog.trapped ? '' : `, Tab leaves it after ${v.dialog.escapedTo.after} → ${v.dialog.escapedTo.to}`} — if it is meant to block the page: aria-modal="true", a focus trap, inert behind it` : null,
+    v.dialog.escapeCloses === false && 'Escape does not close it',
+    !v.dialog.closeControl && 'no close or cancel control inside it',
+  ].filter(Boolean) : []), 8, (s) => s],
 ];
 {
   const audited = Object.entries(report.viewports).filter(([, v]) => v.audit);
@@ -966,6 +1115,12 @@ const specs = [
     L.push(`- Names & alt: ${un.n} unnamed controls · ${ia.n} images without alt · ${widest.audit.structure.h1Count} h1 · ${widest.audit.structure.skippedLevels.length} skipped heading levels`);
     const decl = widest.audit.fonts.declared, errs = decl.filter((x) => x.status === 'error').map((x) => x.family);
     L.push(`- Fonts: ${decl.length ? `${decl.length} declared, ${errs.length ? `${errs.length} failed to load (${[...new Set(errs)].join(', ')}) — rendered with fallbacks` : 'all loaded'}` : 'none declared (system stack)'}`);
+    const dvs = vps.filter((v) => v.dialog);
+    if (dvs.length) {
+      const d = dvs[0].dialog;
+      const fitsAt = dvs.filter((v) => v.dialog.fits).map((v) => v.width), overflowsAt = dvs.filter((v) => !v.dialog.fits).map((v) => v.width);
+      L.push(`- Dialog: ${d.name ? JSON.stringify(d.name) : 'unnamed'} (${d.role}${d.modal ? ', modal' : ', not modal'}, ${d.focusables} controls) · ${d.focusInside ? 'focus moved inside' : 'focus stayed outside'} · ${dvs.every((v) => v.dialog.trapped) ? 'Tab stays inside' : 'Tab leaves it'} · ${d.escapeCloses ? 'Escape closes' : 'Escape does not close'} · ${overflowsAt.length ? `overflows at ${overflowsAt.join(' / ')}` : `fits ${fitsAt.join(' / ')}`} · ${d.closeControl ? 'a close control' : 'no close control'}`);
+    }
     if (report.compare) {
       const fs_ = Object.entries(report.compare.files);
       const changed = fs_.filter(([, f]) => f.status === 'changed');

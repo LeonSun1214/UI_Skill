@@ -165,6 +165,37 @@ try {
   });
 
   // 3c. --dismiss lifts a splash that a key press removes
+  // 3d. --act: a dialog that follows the pattern, one that does not, a form's error state, a step that finds nothing
+  await check('--act opens a dialog that behaves', async () => {
+    const r = await render(`${base}/dialog.html`, join(work, 'dlg-good'), '--act', 'click:#open-good');
+    const d = v(r).dialog;
+    expect(d && d.name === 'Delete project?', `dialog not found or unnamed: ${JSON.stringify(d)}`);
+    expect(d.focusInside && d.trapped && d.escapeCloses && d.fits && d.modal && d.closeControl, `good dialog flagged: ${JSON.stringify(d)}`);
+    expect(!v(r).fails.some((f) => /^dialog/.test(f)) && !v(r).warns.some((w) => /^dialog|^act/.test(w)), `unexpected: ${v(r).fails.join(' | ')} · ${v(r).warns.join(' | ')}`);
+    return `"${d.name}" · focus inside · ${d.focusables} controls, Tab stays · Escape closes`;
+  });
+  await check('--act opens a dialog that does not', async () => {
+    const r = await render(`${base}/dialog.html`, join(work, 'dlg-bad'), '--act', 'click:#open-bad');
+    const d = v(r).dialog, f = v(r).fails.join(' | '), w = v(r).warns.join(' | ');
+    expect(d && !d.focusInside && !d.trapped && !d.name, `bad dialog not caught: ${JSON.stringify(d)}`);
+    expect(/dialog: focus did not move/.test(f) && /dialog: no accessible name/.test(f) && !/Tab leaves/.test(f), `expected two dialog FAILs: ${f}`);
+    expect(/dialog: not modal .*Tab leaves it after 1 Tab/.test(w) && /Escape does not close/.test(w) && /no close or cancel/.test(w), `expected three dialog warns: ${w}`);
+    return f.split(' | ').filter((x) => x.startsWith('dialog')).join(' | ');
+  });
+  await check('--act type + press shows the form error', async () => {
+    const r = await render(`${base}/dialog.html`, join(work, 'dlg-form'), '--act', 'type:input[name=email]=nope', '--act', 'press:Enter');
+    const a = v(r).audit.alerts || [];
+    expect(a.some((t) => /Email is required/.test(t)), `no alert text: ${JSON.stringify(a)}`);
+    expect(v(r).audit.invalidFields === 1, `invalid field count ${v(r).audit.invalidFields}`);
+    expect(!v(r).dialog, 'a dialog was reported where none opened');
+    return `alert "${a[0]}" · 1 invalid field`;
+  });
+  await check('--act reports a step that finds nothing', async () => {
+    const r = await render(`${base}/dialog.html`, join(work, 'dlg-miss'), '--act', 'click:#nope');
+    expect(v(r).actErrors.length === 1 && v(r).warns.some((x) => /^act failed/.test(x)), `missing step not reported: ${JSON.stringify(v(r).actErrors)} · ${v(r).warns.join(' | ')}`);
+    return v(r).actErrors[0].slice(0, 70);
+  });
+
   await check('--dismiss Escape lifts the splash', async () => {
     const a = await render(`${base}/splash.html`, join(work, 's0'));
     const b = await render(`${base}/splash.html`, join(work, 's1'), '--dismiss', 'Escape');

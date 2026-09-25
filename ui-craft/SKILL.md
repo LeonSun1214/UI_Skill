@@ -8,7 +8,7 @@ description: >-
 
 # ui-craft
 
-Version 0.10.1. (An older copy of this file means the installed skill is behind the
+Version 0.11.0. (An older copy of this file means the installed skill is behind the
 repository: re-run `install.sh`; `doctor.mjs` says when that is the case.)
 
 UI work has a gap that code review can't close: the first draft always has two or
@@ -181,7 +181,8 @@ The rules that get UIs rejected in review, all measured by the loop: 4.5:1 text
 contrast (3:1 for large text), 3:1 on control boundaries and focus rings, 24px
 minimum / 44px preferred targets, visible keyboard focus, hover feedback on buttons,
 no horizontal scroll at 320–375px, `prefers-reduced-motion` respected, a label on
-every control, `alt` on every image. `references/constraints.md` has the sources and
+every control, `alt` on every image; for a dialog: focus moves into it, Tab stays
+inside when it is modal, it has a name, Escape closes it, it fits the phone. `references/constraints.md` has the sources and
 the rules the loop *can't* measure (forms, zoom, dragging, flashing) — open only the
 section your page needs.
 
@@ -222,7 +223,10 @@ node <skill-dir>/scripts/render.mjs http://localhost:5173/pricing --out .ui-craf
 
 Options: `--viewports 375,768,1440` (default) · `--dark` / `--no-dark` (dark mode is
 rendered automatically when the page has a `prefers-color-scheme: dark` rule or
-`.dark` class styles) · `--no-hover` · `--wait <ms>`.
+`.dark` class styles) · `--no-hover` · `--wait <ms>` · `--act STEP` (repeatable: what a
+person does before the state you want measured — `click:SEL`, `type:SEL=TEXT`,
+`press:KEY`, `hover:SEL`, `focus:SEL`, `select:SEL=VALUE`, `wait:MS|SEL`; SEL is any
+Playwright selector, `text=Save` and `role=button[name="Delete"]` included).
 
 It writes `contact.png` (all viewports above the fold, one image), `contact-dark.png`
 when dark mode was rendered, `<w>-fold.png`, `<w>-full.png`, `<w>-dark-fold.png`, and
@@ -305,6 +309,7 @@ Don't work around these by hand; each has a flag, and the loop stays the same:
 | The task is one component, not a page | `node <skill-dir>/scripts/harness.mjs <project> --component src/components/ui/Button.tsx --states '[{"children":"Save"},{"variant":"secondary","children":"Cancel"},{"disabled":true,"children":"Off"}]'` writes `.ui-craft/harness/index.html`; render that URL on the project's own dev server. Vite + React only. |
 | You are changing a page that exists (a card on the dashboard, a row on the settings page) — or must prove one did not change | render it before touching anything, then render after with `--compare .ui-craft/<page>-0`: the Verified block reports the height change first, then the share of the overlap that moved, and writes `diff-*.png`. The new content is expected to differ; anything else that moved is a regression to explain. |
 | Monorepo | `inspect.py` on the workspace root lists the UI app packages; run it, and the dev server, in the one you are changing. |
+| The task is a dialog, a drawer, a menu, a dropdown, or a form's error state | render the page in that state: `--act 'click:text=Delete'` for the dialog, `--act 'hover:nav >> text=Products'` for the menu, `--act 'type:input[name=email]=x' --act press:Enter` for the error. The report then carries a *Dialog* line (focus moved inside, Tab stays inside, Escape closes, fits 375, a close control) and FAILs when a dialog that claims to be modal lets Tab out, has no name, or opens without focus; an `alerts:` line quotes what the live region says and how many fields are marked invalid. Render the closed state too, so the page under it is measured. A dialog the app opened on its own (a due-reminder, an announcement) is audited the same way when it says `aria-modal`; say whose it is. |
 | The project has its own checks (`tsc`, lint, tests) | run them after the last render, not alongside it: `tsc --noEmit` still writes `tsconfig.tsbuildinfo`, a dev server rebuilds on it, and a render in flight then measures a half-built page. A lint script that carries `--fix` reformats files you never touched: revert those so the diff stays yours. |
 | Next.js | `next dev` is slower to answer; wait for the port, then render the route **as `http://localhost:PORT`**, not `127.0.0.1`: since 15.2 the dev server refuses its own `/_next/*` scripts from any other host (403), the page is then never hydrated, and the report says so. Pages are server components unless they say `'use client'`: the `requests` line reads *none*, the data came with the HTML, and `--mock` cannot answer it — start what the `dev` script starts (a database, a content compiler). Fonts loaded through `next/font` show as loaded in the report. |
 

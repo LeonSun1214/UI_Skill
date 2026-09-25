@@ -101,6 +101,7 @@ Verified (render.mjs · .ui-craft/pricing-2):
 | Situation | What the skill does |
 |---|---|
 | Page behind a login | `node scripts/login-state.mjs <login-url>` opens a window, you log in, the session is saved; renders replay it with `--storage-state`. Or `--cookie`, `--header "Authorization: Bearer …"`, `--auth user:pass`. |
+| A dialog, a menu, a form's error state | `--act 'click:text=Delete'`, `--act 'type:input[name=email]=x' --act press:Enter` put the page in that state first; a dialog gets its own audit (focus inside, Tab trapped when modal, a name, Escape, fits the phone) and the live region's text is quoted |
 | Page needs data | `--mock '**/api/items=fixture.json'` answers requests from a file, `'**/api/teams=[]'` inline, `'**/api/auth/me=401'` a bare status; the output lists every xhr/fetch the page made with its status. `--init-script seed.js` runs before the app (localStorage, flags). |
 | A splash or cookie bar covers the page | `--dismiss Escape` or `--dismiss '.cookie-bar button'` |
 | SPA that hydrates late | `--wait-for '[data-loaded]'` |
@@ -115,7 +116,7 @@ All standard tools; the skill calls them, and so can you.
 
 | Script | Purpose |
 |---|---|
-| `scripts/render.mjs <url\|file>` | screenshots + audits at 375/768/1440, dark pass when the page has a dark rule, `contact.png`, `report.json`, the `Verified` block |
+| `scripts/render.mjs <url\|file>` | screenshots + audits at 375/768/1440, dark pass when the page has a dark rule, `--act` steps for dialogs, menus and error states, `contact.png`, `report.json`, the `Verified` block |
 | `scripts/inspect.py <project>` | a *Start here* reading list (the CSS vocabulary with declarations, what every page imports, one line per page, routes, where the strings live, what runs before a page renders — what `dark:` keys on and who sets it, the Next.js layouts and middleware), then stack, declared tokens, fonts, primitives and the classes the code actually uses; verdict *match* or *establish* |
 | `scripts/contrast.py fg bg …` / `--css tokens.css` | WCAG ratios for pairs or a token file, light and dark side by side |
 | `scripts/verify.py <project>` | the facts a model invents: imported packages installed, icon names exported, Google Fonts families/weights real and carrying the page's language subset, `@font-face` files present |
