@@ -583,6 +583,7 @@ def page_signatures(root: Path, src_files: list[Path], vocab_names: list[str]) -
             text = read(p, 200_000)
             if "<Route" in text:
                 routes += re.findall(r"<Route\s+[^>]*?path=\{?['\"]([^'\"]+)['\"]\}?[^>]*?element=\{<(\w+)", text)
+                routes += [("(index)", comp) for comp in re.findall(r"<Route\s+index\b[^>]*?element=\{<(\w+)", text)]
     app_dir = next((d for d in (root / "app", root / "src" / "app") if d.is_dir()), None)
     if app_dir:
         for pg in sorted(app_dir.rglob("page.*")):
@@ -668,6 +669,32 @@ def dev_setup(root: Path) -> dict:
     return {"proxies": proxies[:6], "helpers": sorted(helpers), "scripts": scripts}
 
 
+def storage_keys(root: Path, src_files: list[Path]) -> list[str]:
+    """Where the app keeps its state in the browser: the keys to seed with --init-script."""
+    found: dict[str, str] = {}
+    # The store's own file names the key best; an error boundary that also reads it comes later.
+    ranked = sorted(src_files, key=lambda p: (0 if re.search(r"stor(e|age)|persist|db", str(p), re.I) else 1, str(p)))
+    for p in ranked:
+        if p.suffix not in {".ts", ".tsx", ".js", ".jsx", ".vue", ".svelte"}:
+            continue
+        t = read(p, 200_000)
+        if "localStorage" not in t and "sessionStorage" not in t and "indexedDB" not in t and "openDB(" not in t:
+            continue
+        keys = re.findall(r"(?:localStorage|sessionStorage)\.(?:getItem|setItem)\(\s*['\"`]([^'\"`$]+)['\"`]", t)
+        for name, value in re.findall(r"(?:const|let|var)\s+(\w+)\s*=\s*['\"`]([\w.:/-]+)['\"`]", t):
+            if re.search(r"(?:localStorage|sessionStorage)\.(?:getItem|setItem)\(\s*" + re.escape(name) + r"\b", t):
+                keys.append(value)
+        db = re.findall(r"(?:indexedDB\.open|openDB)\(\s*['\"`]([^'\"`]+)['\"`]", t)
+        for k in keys:
+            found.setdefault(f"localStorage `{k}`", rel(root, p))
+        for k in db:
+            found.setdefault(f"IndexedDB `{k}`", rel(root, p))
+    by_file: dict[str, list[str]] = collections.defaultdict(list)
+    for k, f in found.items():
+        by_file[f].append(k)
+    return [f"`{f}` keeps state in " + ", ".join(ks[:5]) + " — seed it with `--init-script` to render a populated page" for f, ks in list(by_file.items())[:3]]
+
+
 def gates(root: Path, src_files: list[Path]) -> list[str]:
     out = []
     idx = root / "index.html"
@@ -703,7 +730,7 @@ def start_here(root: Path, src_files: list[Path], css_files: list[Path], stack: 
         "copy": copy_mechanism(root, src_files, deps),
         "boot": boot_requests(root, src_files),
         "dev": dev_setup(root),
-        "gates": gates(root, src_files),
+        "gates": gates(root, src_files) + storage_keys(root, src_files),
     }
 
 
