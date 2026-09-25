@@ -51,9 +51,13 @@ a lean, not a margin. Details in `evals/notes/`.
 ## Install
 
 ```bash
-git clone <this repo> && bash UI_Skill/ui-craft/install.sh          # → ~/.claude/skills/ui-craft
+git clone https://github.com/LeonSun1214/UI_Skill.git
+bash UI_Skill/ui-craft/install.sh                                    # → ~/.claude/skills/ui-craft
 bash UI_Skill/ui-craft/install.sh --project                          # → ./.claude/skills/ui-craft (one project)
 ```
+
+The path is relative to wherever the clone landed: from your home folder the
+script is `UI_Skill/ui-craft/install.sh`, not `ui-craft/install.sh`.
 
 The installer copies the skill, installs Playwright, reuses a Chrome/Chromium already
 on the machine (or downloads the bundled one), and runs `doctor`:
