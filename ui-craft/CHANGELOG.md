@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.2 — first real-repository trial
+
+- `render.mjs`: when the in-place dark-scheme emulation changes nothing (a boot
+  script that read `matchMedia` once and set `data-theme`), the page is reloaded
+  under the dark scheme and measured again. Found on a Vite + Tailwind 3 app whose
+  "dark" audit had been measuring the light page.
+- `evals/notes/trial-sunnotice.md`: nine findings from the trial, of which the
+  stale installed copy, comment-blind `verify.py`, gradient-filled controls,
+  `outline-style: auto` rings and pressed segments are open.
+
 ## 0.8.1 — the critique rule, measured
 
 - Nine variance runs with the critic in the loop (three per task on tasks 1–3): a

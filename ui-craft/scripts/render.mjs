@@ -680,7 +680,26 @@ for (const width of opt.viewports) {
     await page.emulateMedia({ colorScheme: 'dark' });
     if (audit && audit.darkSupport.class) await page.evaluate(() => document.documentElement.classList.add('dark'));
     await page.waitForTimeout(350);
-    const dAudit = await page.evaluate(domAudit, INTERACTIVE_SELECTOR);
+    let dAudit = await page.evaluate(domAudit, INTERACTIVE_SELECTOR);
+    // A page that reads matchMedia once at boot and sets data-theme / a class from it never sees the
+    // emulation above. If the colours did not move, load it again under the dark scheme, the way a
+    // dark-mode visitor would, and measure that.
+    if (audit && dAudit.pageColors.background === audit.pageColors.background) {
+      try {
+        await page.reload({ waitUntil: 'load', timeout: 30000 });
+        await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+        if (opt.waitFor) await page.waitForSelector(opt.waitFor, { timeout: 30000 });
+      } catch { /* keep the in-place measurement below */ }
+      await page.waitForTimeout(opt.wait);
+      if (audit.darkSupport.class) await page.evaluate(() => document.documentElement.classList.add('dark'));
+      await page.evaluate(async () => {
+        const h = document.documentElement.scrollHeight;
+        for (let y = 0; y < h; y += 600) { window.scrollTo(0, y); await new Promise((r) => setTimeout(r, 40)); }
+        window.scrollTo(0, 0);
+      });
+      await page.waitForTimeout(150);
+      dAudit = await page.evaluate(domAudit, INTERACTIVE_SELECTOR);
+    }
     const dFocus = await focusAudit(page);
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.waitForTimeout(100);
