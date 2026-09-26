@@ -50,7 +50,7 @@ const installs = [join(homedir(), '.claude', 'skills', 'ui-craft'), join(process
   .filter((d) => existsSync(join(d, 'SKILL.md')) && resolve(d) !== resolve(join(here, '..')));
 const behind = installs.map((d) => [d, versionOf(d)]).filter(([, v]) => mine && v && newer(mine, v));
 if (behind.length) warn('version', `${mine} here, but ${behind.map(([d, v]) => `${v} installed at ${d}`).join(' and ')} — that copy is what Claude loads; re-run install.sh`);
-else ok('version', `${mine || '?'}${installs.length ? ` (installed: ${installs.map(([d]) => d ? d : d).join(', ')})` : ''}`);
+else ok('version', `${mine || '?'}${installs.length ? ` (installed: ${installs.map((d) => `${versionOf(d) || '?'} at ${d}`).join(', ')})` : ''}`);
 
 // python
 const py = spawnSync('python3', ['--version'], { encoding: 'utf8' });

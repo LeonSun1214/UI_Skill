@@ -14,6 +14,13 @@ jobs:
         with: { node-version: "22", cache: npm, cache-dependency-path: ui-craft/scripts/package-lock.json }
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
+      - name: One version everywhere (frontmatter, the Version line, the changelog)
+        run: |
+          fm=$(sed -n 's/^  version: //p' ui-craft/SKILL.md | head -1)
+          body=$(sed -n 's/^Version \([0-9.]*[0-9]\)\..*/\1/p' ui-craft/SKILL.md | head -1)
+          log=$(sed -n 's/^## \([0-9][0-9.]*\) .*/\1/p' ui-craft/CHANGELOG.md | head -1)
+          echo "frontmatter $fm · Version line $body · changelog $log"
+          test -n "$fm" && test "$fm" = "$body" && test "$fm" = "$log"
       - name: Syntax
         run: |
           for f in ui-craft/scripts/*.mjs ui-craft/scripts/lib/*.mjs; do node --check "$f"; done

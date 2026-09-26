@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.11.6 — a shorter SKILL.md
+
+Every task loads the whole of SKILL.md in its first turn and carries it in every turn
+after. Step 4½, what to do when a page won't just render, had grown to 5.3k characters,
+a fifth of the file, of which a task uses one row.
+
+- Step 4½ is now a compact table: each situation with the flag to use (1.8k
+  characters). The explanations, and what the report says in each case, moved to
+  `references/real-projects.md`, one heading per situation, read only for the one
+  a task hits. "When to read what" points there.
+- SKILL.md: 26.3k → 23.2k characters, about 6.6k → 5.8k tokens. No rule changed,
+  and every flag the old section named is still in SKILL.md or the reference. The
+  critique rules in step 4d, the next-largest block, stay as they are: they were
+  tuned on measured runs.
+- The frontmatter version had stayed at 0.9.1 since 0.9.1: every later bump changed
+  only the `Version` line, and `install.sh` and `doctor.mjs` read the frontmatter. So
+  the installer kept printing 0.9.1, and the doctor could not tell that an installed
+  copy was behind. Both marks say 0.11.6 now, and CI fails when the frontmatter, the
+  `Version` line and the changelog's top entry disagree. The doctor's version line
+  printed "/" for the installed copy; it now prints its version and path.
+
 ## 0.11.5 — a render in a third of the time
 
 Measured before changing anything: every phase of every viewport is now timed

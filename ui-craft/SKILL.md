@@ -1,14 +1,14 @@
 ---
 name: ui-craft
 metadata:
-  version: 0.9.1
+  version: 0.11.6
 description: >-
   Build, change, and review UI in React + Tailwind projects (Vite, Next.js) with a render → look → measure → fix loop, so what ships is checked against a real screenshot and real DOM measurements (contrast, tap targets, overflow, keyboard focus, hover, motion, dark mode) instead of guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even when they never say "design" or "UI". Also use it to inspect an existing project's design conventions before adding to it.
 ---
 
 # ui-craft
 
-Version 0.11.5. (An older copy of this file means the installed skill is behind the
+Version 0.11.6. (An older copy of this file means the installed skill is behind the
 repository: re-run `install.sh`; `doctor.mjs` says when that is the case.)
 
 UI work has a gap that code review can't close: the first draft always has two or
@@ -307,21 +307,23 @@ there. `.ui-craft/` belongs in `.gitignore`.
 
 ### 4½. When the page won't just render (real projects)
 
-Don't work around these by hand; each has a flag, and the loop stays the same:
+Don't work around these by hand. Each has a flag, and the loop stays the same. The
+details, and what the report says in each case, are in `references/real-projects.md`:
+read only the section you hit.
 
 | Situation | Do this |
 |---|---|
-| The page is behind a login | the render output's first lines name the page that rendered (`page: "…" · h1 …`); a sign-in title there means the session did not stick. Then: ask the user to run `node <skill-dir>/scripts/login-state.mjs <login-url> --out .ui-craft/state.json` (a window opens, they log in with the app's own form, close the window, it saves the session), then render with `--storage-state .ui-craft/state.json`. Google and Microsoft sign-in refuse a browser under automation ("this browser or app may not be secure"): for an app whose only door is that button, the user copies the session cookie from their normal browser (DevTools → Application → Cookies) and passes `--cookie name=value`. A token you were given: `--header "Authorization: Bearer …"`. |
-| The page needs data a backend would provide | the inspector's *Start here* section names the calls the store makes and the dev proxy's target: start that backend if a script does it (`dev.sh`, `compose.yaml`). Else `--mock`: a file (`'**/api/items=.ui-craft/items.json'`), an inline body (`'**/api/teams=[]'`, `'**/api/config={"demo_mode":false}'`) or a bare status (`'**/api/auth/me=401'`, a signed-out visitor). The render output's `requests` line lists every xhr/fetch the page made with its status, so the second render can mock all of them. `--init-script .ui-craft/seed.js` runs before the app (localStorage under the key the inspector names, feature flags). |
-| Content appears after hydration or a fetch | `--wait-for '[data-loaded]'` (any selector that exists only when the real content does). |
-| A splash, intro animation or cookie bar covers the page | `--dismiss Escape` (any key name) or `--dismiss '.cookie-bar button'` (a selector to click), pressed at 0 / 400 / 900 ms after load; plus `--wait` for the fade. The report's `focus … obscured` count says whether something is still on top. |
-| The theme is set by a script at boot (`data-theme`) | nothing: the dark pass reloads the page under the dark scheme when in-place emulation changes nothing, and the report names the mode (`media`, `class`, `attribute`). |
-| The task is one component, not a page | `node <skill-dir>/scripts/harness.mjs <project> --component src/components/ui/Button.tsx --states '[{"children":"Save"},{"variant":"secondary","children":"Cancel"},{"disabled":true,"children":"Off"}]'` writes `.ui-craft/harness/index.html`; render that URL on the project's own dev server. Vite + React only. |
-| You are changing a page that exists (a card on the dashboard, a row on the settings page) — or must prove one did not change | render it before touching anything, then render after with `--compare .ui-craft/<page>-0`: the Verified block reports the height change first, then the share of the overlap that moved and where it moved (*within the header*, *within "Software"*, or *spread over the page*, with the y range), and writes `diff-*.png`. The new content is expected to differ; anything else that moved is a regression to explain. A dev server that writes generated files (contentlayer rewrites its indexes on start and whenever a watched file changes; codegen, route manifests) can move the page for reasons that are not yours: `git checkout --` the generated file before each of the two renders, so both see the same one. |
-| Monorepo | `inspect.py` on the workspace root lists the UI app packages; run it, and the dev server, in the one you are changing. |
-| The task is a dialog, a drawer, a menu, a dropdown, or a form's error state | render the page in that state: `--act 'click:text=Delete'` for the dialog, `--act 'hover:nav >> text=Products'` for the menu, `--act 'type:input[name=email]=x' --act press:Enter` for the error. The report then carries a *Dialog* line (focus moved inside, Tab stays inside, Escape closes, fits 375, a close control) and FAILs when a dialog that claims to be modal lets Tab out, has no name, or opens without focus; an `alerts:` line quotes what the live region says and how many fields are marked invalid. Render the closed state too, so the page under it is measured. A dialog the app opened on its own (a due-reminder, an announcement) is audited the same way when it says `aria-modal`; say whose it is. |
-| The project has its own checks (`tsc`, lint, tests) | run them after the last render, not alongside it: `tsc --noEmit` still writes `tsconfig.tsbuildinfo`, a dev server rebuilds on it, and a render in flight then measures a half-built page. A lint script that carries `--fix` reformats files you never touched: revert those so the diff stays yours. |
-| Next.js | `next dev` is slower to answer; wait for the port, then render the route **as `http://localhost:PORT`**, not `127.0.0.1`: since 15.2 the dev server refuses its own `/_next/*` scripts from any other host (403), the page is then never hydrated, and the report says so. Pages are server components unless they say `'use client'`: the `requests` line reads *none*, the data came with the HTML, and `--mock` cannot answer it — start what the `dev` script starts (a database, a content compiler). Fonts loaded through `next/font` show as loaded in the report. |
+| Behind a login (the output's `page:` line names a sign-in page) | the user runs `scripts/login-state.mjs <login-url> --out .ui-craft/state.json`; render with `--storage-state .ui-craft/state.json`. Google or Microsoft sign-in: `--cookie name=value` copied from their browser. A token: `--header "Authorization: Bearer …"` |
+| Needs data a backend provides | start the backend if a script does (`dev.sh`, `compose.yaml`); else `--mock 'PATTERN=X'` (X a file, an inline body or a bare status) for each call on the output's `requests` line; `--init-script` seeds localStorage |
+| Content appears after hydration or a fetch | `--wait-for SELECTOR` |
+| A splash or cookie bar covers the page | `--dismiss Escape` or `--dismiss SELECTOR` |
+| The theme is set by a script at boot | nothing: the dark pass reloads |
+| One component, not a page | `scripts/harness.mjs` (Vite + React) |
+| Changing a page that exists, or proving one did not change | render before touching it, `--compare` after; restore generated files (contentlayer, codegen) before each render |
+| A dialog, drawer, menu, dropdown, or form error | `--act 'click:text=Delete'`, `--act 'type:SEL=x' --act press:Enter`; render the closed state too |
+| The project has checks (`tsc`, lint, tests) | run them after the last render; revert what a `lint --fix` reformats |
+| Monorepo | inspect, serve and render the one app you change |
+| Next.js | render `http://localhost:PORT`, never `127.0.0.1`; `requests: none` means the data came with the HTML: start what `dev` starts instead of mocking |
 
 ### 5. Report
 
@@ -354,6 +356,7 @@ never a temp directory.
 | Situation | Read |
 |---|---|
 | Starting on any existing codebase | run `scripts/inspect.py` — nothing else for a match task |
+| The page won't just render (a login, a backend, a splash, a dialog, Next.js) | that section of `references/real-projects.md` |
 | Choosing a look, or the output feels generic | `references/anti-generic.md` |
 | Picking token values, light or dark | run `scripts/contrast.py` |
 | A project the user will keep building on (tokens to persist) | `scripts/direction.py` — brief.json → check --fix → write |
