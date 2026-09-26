@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kit defaults</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: #1a1a1a; background: #fff; }
+  main { padding: 96px 24px 24px; }
+  button { font: inherit; min-height: 44px; padding: 0 16px; border: 0; border-radius: 6px; cursor: pointer; background: transparent; color: #1c252e; position: relative; overflow: hidden; }
+  button:hover { background: #ececec; }
+  button:focus { outline: none; }
+  /* Vuetify: an overlay element that fades to 12% on keyboard focus */
+  .overlay { position: absolute; inset: 0; background: currentColor; opacity: 0; pointer-events: none; }
+  #tinted:focus-visible .overlay { opacity: .12; }
+  /* MUI: a ripple the framework mounts a frame after focus-visible, fading in to 30% */
+  .ripple { position: absolute; inset: 0; opacity: .3; pointer-events: none; animation: enter 550ms; }
+  .ripple span { position: absolute; inset: 4px; border-radius: 50%; background: currentColor; }
+  @keyframes enter { from { opacity: .1; } to { opacity: .3; } }
+  /* Element Plus's default stylesheet: one widget rule under .dark, not a page theme */
+  .dark .widget { --widget-bg: #222; }
+  /* MUI with a light color scheme only */
+  [data-color-scheme="light"] { --page-bg: #fff; }
+  /* A tonal icon button: its fill is its card's colour, its icon is what identifies it */
+  .card { background: #5e35b1; color: #fff; padding: 16px; border-radius: 12px; margin: 16px 0; }
+  .card button.icon { background: #5e35b1; color: #fff; width: 44px; padding: 0; }
+  .card button.icon:hover { background: #4527a0; }
+  .card button.icon:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+  /* A dashboard layout grid: items span 3, 4 and 8 columns */
+  .grid { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+  .grid > div { height: 40px; background: #eee; }
+  .w3 { width: calc(25% - 8px); } .w4 { width: calc(33% - 8px); } .w8 { width: calc(66% - 8px); }
+  /* A drawer left open over the header */
+  .drawer { position: fixed; left: 0; top: 0; width: 240px; height: 72px; background: #333; color: #fff; z-index: 2; margin: 0; padding: 8px; }
+  #under { position: absolute; left: 16px; top: 14px; }
+  #under:focus-visible { outline: 3px solid #1a1a1a; outline-offset: 2px; }
+  /* A select whose shown value sits over its input */
+  .select { position: relative; display: inline-block; width: 180px; height: 44px; border: 1px solid #6b6b6b; border-radius: 6px; }
+  .select input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; margin: 0; }
+  .select .shown { position: absolute; inset: 0; padding: 10px 12px; }
+  .select:focus-within { outline: 3px solid #1a1a1a; outline-offset: 2px; }
+</style>
+</head>
+<body>
+<header><button id="under" type="button" aria-label="Menu">≡</button></header>
+<p class="drawer">Drawer</p>
+<main>
+  <h1>Kit defaults</h1>
+  <p><button id="rippled" type="button">Rippled</button> <button id="tinted" type="button"><span class="overlay"></span>Tinted</button></p>
+  <div class="card">
+    <p>Earnings</p>
+    <button class="icon" type="button" aria-label="More"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 12h16" stroke="currentColor" stroke-width="2"/></svg></button>
+  </div>
+  <div class="grid"><div class="w3"></div><div class="w3"></div><div class="w3"></div><div class="w3"></div><div class="w4"></div><div class="w8"></div><div class="w3"></div></div>
+  <label for="pick">Plan</label>
+  <div class="select"><input id="pick" readonly value="Pro"><span class="shown">Pro</span></div>
+  <p class="widget">A widget with its own dark variant.</p>
+</main>
+<script>
+  // MUI's TouchRipple: mounted after the re-render that focus-visible causes, removed on blur.
+  const rb = document.getElementById('rippled');
+  rb.addEventListener('focus', () => {
+    if (!rb.matches(':focus-visible')) return;
+    requestAnimationFrame(() => { const r = document.createElement('span'); r.className = 'ripple'; r.innerHTML = '<span></span>'; rb.appendChild(r); });
+  });
+  rb.addEventListener('blur', () => rb.querySelectorAll('.ripple').forEach((n) => n.remove()));
+</script>
+</body>
+</html>

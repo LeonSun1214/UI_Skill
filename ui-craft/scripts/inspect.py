@@ -37,7 +37,7 @@ MAX_SRC_FILES = 600
 MAX_READ = 400_000
 
 KNOWN_FRAMEWORKS = [
-    ("next", "Next.js"), ("@remix-run/react", "Remix"), ("react-router", "React Router"),
+    ("next", "Next.js"), ("@remix-run/react", "Remix"), ("@umijs/max", "Umi"), ("umi", "Umi"), ("react-router", "React Router"),
     ("react-router-dom", "React Router"), ("@tanstack/react-router", "TanStack Router"),
     ("nuxt", "Nuxt"), ("@sveltejs/kit", "SvelteKit"), ("@angular/core", "Angular"),
     ("astro", "Astro"), ("gatsby", "Gatsby"), ("vue", "Vue"), ("svelte", "Svelte"), ("solid-js", "Solid"),
@@ -523,6 +523,11 @@ def verdict(stack: dict, tokens: dict, fonts: dict, comps: dict, usage: dict, do
     sh = sh or {}
     ng, mt, site, lv = sh.get("ng"), sh.get("material"), sh.get("site"), sh.get("laravel")
     pages = len(sh.get("pages") or [])
+    kk = sh.get("kits") or {}
+    kit_list = kk.get("kits") or []
+    tokens_declared = tokens_declared or any(k.get("colors") or k.get("scales") or k.get("tokens") or k.get("themes") for k in kit_list) \
+        or bool((kk.get("styled") or {}).get("colors"))
+    kit_look = sh.get("kitLook") and (not stack.get("tailwind") or usage["rawTotal"] + usage["semanticTotal"] < 10)
     established = (
         usage["rawTotal"] + usage["semanticTotal"] >= 25
         or len(comps["primitives"]) + len(comps["composed"]) >= 4
@@ -531,6 +536,8 @@ def verdict(stack: dict, tokens: dict, fonts: dict, comps: dict, usage: dict, do
         # pages that share a kit, a layout, copied chrome or a stylesheet's classes have a look to match
         or bool(site and pages >= 2 and (site["kits"] or site["copies"] or sh.get("layouts") or len(sh.get("vocabulary") or []) >= 5))
         or bool(lv and pages >= 2 and (sh.get("bladeUsed") or sh.get("bladeKit") or sh.get("layouts")))
+        or any(k.get("uses") and sum(c for _, c in k["uses"]) >= 6 for k in kit_list)
+        or bool((kk.get("styled") or {}).get("files", 0) >= 5) or bool((kk.get("modules") or {}).get("importers", 0) >= 3)
     )
     lines = []
     if mt and (mt["file"] or mt["prebuilt"]):
@@ -540,24 +547,35 @@ def verdict(stack: dict, tokens: dict, fonts: dict, comps: dict, usage: dict, do
         lines.append(f"UI kit: **{site['kits']}** — build with its classes, not new CSS")
     if sh.get("bladeKit"):
         lines.append(f"UI kit: **{sh['bladeKit']['name']}** — build with its components, not hand-rolled ones")
-    total_color = usage["rawTotal"] + usage["semanticTotal"]
+    for k in kit_list:
+        first = (k.get("colors") or [None])[0] or (k.get("scales") or [None])[0] or (k.get("tokens") or [None])[0] \
+            or next((t["colors"][0] for t in k.get("themes") or [] if t["colors"]), None)
+        detail = f" ({first[0]} {first[1]})" if first else f" (default theme, primary {KIT_DEFAULT_PRIMARY.get(k['kit'], '?')})"
+        lines.append(f"UI kit: **{k['kit']}**{detail} — build with its components and the theme's values, not hand-picked colours")
+    if kk.get("styled"):
+        lines.append(f"Styling: **{kk['styled']['kit']}** with a theme object — new components are styled components reading the theme")
+    if kk.get("modules"):
+        lines.append("Styling: **CSS Modules**, one per component — a new component gets its own module")
+    total_color = 0 if kit_look else usage["rawTotal"] + usage["semanticTotal"]
     if total_color:
         sem_pct = round(100 * usage["semanticTotal"] / total_color)
         if usage["colorFamilies"]:
             fam, n = usage["colorFamilies"][0]
             lines.append(f"Dominant hue family: **{fam}** ({n} uses)")
         lines.append(f"Color naming: {sem_pct}% semantic tokens (`bg-primary`) vs {100 - sem_pct}% raw palette (`bg-indigo-600`)")
-    if usage["radius"]:
+    if usage["radius"] and not kit_look:
         lines.append(f"Radius: **rounded-{usage['radius'][0][0]}** dominant" if usage["radius"][0][0] != "default" else "Radius: **rounded** (default) dominant")
-    if usage["shadow"]:
+    if usage["shadow"] and not kit_look:
         lines.append(f"Shadow: **shadow-{usage['shadow'][0][0]}** dominant" if usage["shadow"][0][0] != "default" else "Shadow: **shadow** (default) dominant")
-    if usage["textSize"]:
+    if usage["textSize"] and not kit_look:
         lines.append(f"Most-used text size: **text-{usage['textSize'][0][0]}**")
     all_fonts = fonts["nextFont"] + fonts["googleLinks"] + fonts["fontFace"] + [v for _, v in fonts["tokenFonts"]]
     if all_fonts:
         lines.append("Fonts: " + ", ".join(dict.fromkeys(all_fonts))[:160])
-    lines.append("Dark mode: " + ("present" if usage["dark"] or tokens["darkBlock"] or (ng and (sh or {}).get("theme")) else "not used"))
-    if usage["arbitraryTotal"] >= 8:
+    dark_on = sh.get("kitDark") if sh.get("kitDark") is not None else \
+        bool(usage["dark"] or tokens["darkBlock"] or (ng and sh.get("theme")) or (kit_look and sh.get("theme")))
+    lines.append("Dark mode: " + ("present" if dark_on else "not used"))
+    if usage["arbitraryTotal"] >= 8 and not kit_look:
         lines.append(f"Token drift: {usage['arbitraryTotal']} arbitrary values (`w-[…]`, `bg-[#…]`) — missing tokens, or one-offs to avoid repeating")
     if docs:
         lines.append("Design docs exist: read them first — " + ", ".join(docs))
@@ -758,7 +776,7 @@ def _resolve_import(root: Path, from_file: Path, spec: str) -> Path | None:
 
 def _rendered_by(root: Path, page: Path, text: str) -> dict | None:
     """The local component a thin page hands everything to — a layout or template that is the real page."""
-    m = re.search(r"return\s*\(?\s*<([A-Z]\w*)", text)
+    m = re.search(r"return\s*\(?\s*(?:<>|<(?:React\.)?Fragment>)?\s*(?:<title>[\s\S]{0,200}?</title>\s*|<(?:meta|link)\b[^>]*>\s*|<Helmet\b[\s\S]{0,400}?</Helmet>\s*)*<([A-Z]\w*)", text)
     if not m:
         return None
     name = m.group(1)
@@ -766,6 +784,9 @@ def _rendered_by(root: Path, page: Path, text: str) -> dict | None:
     if not im:
         return None
     target = _resolve_import(root, page, im.group(1))
+    if target and target.suffix in {".ts", ".js"}:           # a barrel: sections/blog/view/index.ts
+        orig = re.search(r"\b(\w+)\s+as\s+" + re.escape(name) + r"\b", im.group(0))
+        target = _ng_defines(root, target, orig.group(1) if orig else name, ts_aliases(root), exts=JS_EXTS)
     if not target or target == page or target.suffix not in {".tsx", ".jsx"}:
         return None
     t = read(target, 200_000)
@@ -848,6 +869,11 @@ def theme_mechanism(root: Path, css_files: list[Path], stack: dict, src_files: l
             where, plain = f"`{where_}`", True
     if how is None and "@astrojs/starlight" in deps:
         how, where, plain = "`[data-theme=dark]` on `<html>`", "Starlight's own CSS (`--sl-color-*` properties)", True
+    if how is None and "element-plus" in deps:       # Element Plus's own dark variables, under html.dark
+        for p in src_files:
+            if p.suffix in {".ts", ".js", ".mjs"} and "element-plus/theme-chalk/dark/css-vars.css" in read(p, 200_000):
+                how, where, plain = "`.dark` on `<html>`", f"Element Plus's dark variables (`element-plus/theme-chalk/dark/css-vars.css`, imported in `{rel(root, p)}`)", True
+                break
     if how is None:                                  # plain CSS: dark rules keyed on an attribute, a class, or the OS scheme
         for c in css_files:
             t = read(c)
@@ -884,6 +910,17 @@ def theme_mechanism(root: Path, css_files: list[Path], stack: dict, src_files: l
                 break
     if setter is None and stack.get("framework") == "Laravel" and any("@fluxAppearance" in read(p, 100_000) for p in src_files if p.name.endswith(".blade.php")):
         setter = "set before paint by Flux's `@fluxAppearance` (localStorage `flux.appearance`: light, dark or system); render dark through it: `--dark-storage flux.appearance=dark`"
+    if setter is None and "@vueuse/core" in deps:   # VueUse's useDark(): .dark on <html>, the choice in localStorage
+        for p in src_files:
+            if p.suffix not in {".ts", ".js", ".vue", ".mjs"}:
+                continue
+            t = read(p, 200_000)
+            m = re.search(r"\buseDark\(\s*(\{[^)]*\})?\s*\)", t)
+            if m and "@vueuse" in t:
+                key = re.search(r"storageKey\s*:\s*['\"]([^'\"]+)", m.group(1) or "")
+                k = key.group(1) if key else "vueuse-color-scheme"
+                setter = f"set by VueUse's `useDark()` in `{rel(root, p)}` (localStorage `{k}`): render dark with `--dark-storage {k}=dark`"
+                break
     if setter is None and stack.get("framework") == "Angular":   # a theme service: classList.add('dark')
         cm = re.search(r"`\.([\w-]+)`", how)
         setter = angular_dark_setter(root, src_files, cm.group(1)) if cm else None
@@ -1072,6 +1109,7 @@ def nuxt_routes(root: Path) -> list[tuple[str, str]]:
 def vue_router_routes(root: Path, src_files: list[Path]) -> list[tuple[str, str]]:
     """routes: [{ path: '/x', component: () => import('../views/X.vue') }] in a vue-router file."""
     out = []
+    aliases = ts_aliases(root)
     for p in src_files:
         if p.suffix not in {".ts", ".js", ".mjs"} or "router" not in str(p).lower():
             continue
@@ -1083,10 +1121,12 @@ def vue_router_routes(root: Path, src_files: list[Path]) -> list[tuple[str, str]
             chunk = t[m.end(): m.end() + 600]
             nxt = re.search(r"\bpath\s*:", chunk)
             chunk = chunk[:nxt.start()] if nxt else chunk
-            c = re.search(r"component\s*:\s*(?:\(\)\s*=>\s*import\(\s*['\"]([^'\"]+)['\"]\s*\)|(\w+))", chunk)
+            c = re.search(r"component\s*:\s*(?:\(\)\s*=>\s*import\(\s*(?:/\*.*?\*/\s*)?['\"]([^'\"]+)['\"]\s*\)|(\w+))", chunk)
             if c:
                 spec = c.group(1) or imports.get(c.group(2), "")
-                target = (p.parent / spec).resolve() if spec.startswith(".") else (root / "src" / spec[2:]) if spec.startswith("@/") else None
+                target = _js_resolve(root, p, spec, aliases) if spec else None           # `@/views/login` is login.vue
+                if target is None:
+                    target = (p.parent / spec).resolve() if spec.startswith(".") else (root / "src" / spec[2:]) if spec.startswith("@/") else None
                 shown = rel(root, target) if target is not None else (c.group(2) or spec)
             elif re.search(r"\bredirect\s*:", chunk):
                 shown = "(redirect)"
@@ -1561,7 +1601,10 @@ def ts_aliases(root: Path) -> list[tuple[str, list[Path]]]:
     return []
 
 
-def _ng_resolve(root: Path, from_file: Path, spec: str, aliases: list) -> Path | None:
+NG_EXTS = ("", ".ts", "/index.ts", ".js", "/index.js")
+
+
+def _ng_resolve(root: Path, from_file: Path, spec: str, aliases: list, exts: tuple = NG_EXTS) -> Path | None:
     """The file an import specifier names: relative, a tsconfig alias, or a path from the base URL."""
     if spec.startswith("."):
         bases = [from_file.parent / spec]
@@ -1574,14 +1617,14 @@ def _ng_resolve(root: Path, from_file: Path, spec: str, aliases: list) -> Path |
                 bases += targets
         bases = bases or [root / spec, root / "src" / spec]
     for b in bases:
-        for ext in ("", ".ts", "/index.ts", ".js", "/index.js"):
+        for ext in exts:
             c = Path(str(b) + ext)
             if c.is_file():
                 return Path(os.path.normpath(c))
     return None
 
 
-def _ng_defines(root: Path, f: Path, name: str, aliases: list, depth: int = 0) -> Path | None:
+def _ng_defines(root: Path, f: Path, name: str, aliases: list, depth: int = 0, exts: tuple = NG_EXTS) -> Path | None:
     """The file that declares `name`, through a barrel's `export * from` and `export { name } from`."""
     t = read(f, 300_000)
     if re.search(r"export\s+(?:default\s+)?(?:abstract\s+)?(?:const|let|var|function|class|interface|type|enum)\s+" + re.escape(name) + r"\b", t) \
@@ -1592,17 +1635,17 @@ def _ng_defines(root: Path, f: Path, name: str, aliases: list, depth: int = 0) -
     if re.search(r"export\s*\{[^}]*\b" + re.escape(name) + r"\b[^}]*\}(?!\s*from)", t):     # export { X } of an imported X
         for names, spec in re.findall(r"import\s*\{([^}]*)\}\s*from\s*['\"]([^'\"]+)['\"]", t):
             if re.search(r"(?:^|[\s,])" + re.escape(name) + r"\s*(?:,|$)", names):
-                g = _ng_resolve(root, f, spec, aliases)
-                return _ng_defines(root, g, name, aliases, depth + 1) if g else None
+                g = _ng_resolve(root, f, spec, aliases, exts)
+                return _ng_defines(root, g, name, aliases, depth + 1, exts) if g else None
     for names, spec in re.findall(r"export\s*\{([^}]*)\}\s*from\s*['\"]([^'\"]+)['\"]", t):
         for part in names.split(","):
             bits = [x.strip() for x in part.split(" as ")]
             if bits[-1] == name:
-                g = _ng_resolve(root, f, spec, aliases)
-                return _ng_defines(root, g, bits[0], aliases, depth + 1) if g else None
+                g = _ng_resolve(root, f, spec, aliases, exts)
+                return _ng_defines(root, g, bits[0], aliases, depth + 1, exts) if g else None
     for spec in re.findall(r"export\s*\*\s*from\s*['\"]([^'\"]+)['\"]", t):
-        g = _ng_resolve(root, f, spec, aliases)
-        hit = _ng_defines(root, g, name, aliases, depth + 1) if g else None
+        g = _ng_resolve(root, f, spec, aliases, exts)
+        hit = _ng_defines(root, g, name, aliases, depth + 1, exts) if g else None
         if hit:
             return hit
     return None
@@ -3139,7 +3182,854 @@ def laravel_start(root: Path, src_files: list[Path], css_files: list[Path], deps
             "version": re.sub(r"[^\d.]", "", app["version"]).split(".")[0] if app["version"] != "?" else None}
 
 
-def page_signatures(root: Path, src_files: list[Path], vocab_names: list[str], framework: str | None = None) -> dict:
+# ------------------------------------------------------------- React route tables
+# A React app names its pages in a route table: objects (useRoutes, createBrowserRouter, a RouteObject[]),
+# <Route> elements (v6 element=, v5 component=), or umi's config/routes.ts. Each route is followed to the
+# file that renders it, through lazy imports and barrels, with the layout and guards around it.
+JS_EXTS = ("", ".tsx", ".ts", ".jsx", ".js", ".vue", "/index.tsx", "/index.ts", "/index.jsx", "/index.js", "/index.vue")
+ROUTE_NOT_PAGES = {"Suspense", "Outlet", "Fragment", "React.Fragment", "ErrorBoundary", "StrictMode", "Navigate", "Redirect", "Switch",
+                   "Routes", "Route", "DelayedMount"}
+GUARD_NAME = re.compile(r"Guard|Protected|Private|Require|Authenticated|Authorized|Auth(?:Route|Wrapper|Check)?$")
+
+
+def _js_resolve(root: Path, from_file: Path, spec: str, aliases: list) -> Path | None:
+    """A local import's file, for a React or Vue app: relative, a tsconfig alias, `@/` or `~/`, or from the root or src/."""
+    hit = _ng_resolve(root, from_file, spec, aliases, JS_EXTS)
+    if hit is None and re.match(r"^[@~]/", spec):
+        for base in ("src", "app"):
+            hit = _ng_resolve(root, from_file, f"{base}/{spec[2:]}", [], JS_EXTS)
+            if hit:
+                break
+    return hit
+
+
+def _js_source_of(root: Path, f: Path, code: str, name: str | None, aliases: list, depth: int = 0) -> Path | None:
+    """Where a component a routes file names is defined: a lazy import, an import (through barrels), or the file itself."""
+    if not name or depth > 3:
+        return None
+    parts = name.split(".")
+    base = parts[0]
+    ns = re.search(r"import\s*\*\s*as\s+" + re.escape(base) + r"\s+from\s*['\"]([^'\"]+)['\"]", code) if len(parts) > 1 else None
+    if ns:                                                   # import * as Scenes; Scenes.Drafts.Component
+        g = _js_resolve(root, f, ns.group(1), aliases)
+        return _js_source_of(root, g, _no_comments(read(g, 300_000)), ".".join(parts[1:]), aliases, depth + 1) if g else None
+    m = re.search(r"(?:const|let|var)\s+" + re.escape(base) + r"\s*=\s*[^;]{0,160}?\bimport\(\s*['\"]([^'\"]+)['\"]", code)
+    if m:
+        return _js_resolve(root, f, m.group(1), aliases)
+    for names, spec in re.findall(r"import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*['\"]([^'\"]+)['\"]", code):
+        for part in names.split(","):
+            bits = [x.strip() for x in part.split(" as ")]
+            if bits[-1] == base:
+                g = _js_resolve(root, f, spec, aliases)
+                return (_ng_defines(root, g, bits[0], aliases, exts=JS_EXTS) or g) if g else None
+    m = re.search(r"import\s+" + re.escape(base) + r"\s*(?:,\s*\{[^}]*\})?\s+from\s*['\"]([^'\"]+)['\"]", code)
+    if m:
+        return _js_resolve(root, f, m.group(1), aliases)
+    if re.search(r"(?:const|let|var|function|class)\s+" + re.escape(base) + r"\b", code):
+        return f
+    return None
+
+
+def _js_array_of(root: Path, f: Path, code: str, name: str, aliases: list, depth: int = 0) -> tuple[Path, str, str] | None:
+    """The array literal a name holds: declared in this file, or imported (through barrels)."""
+    m = re.search(r"(?:const|let|var)\s+" + re.escape(name) + r"\b[^=\n]*=\s*\[", code)
+    if m:
+        return f, code, _balanced(code, m.end() - 1)
+    m = re.search(r"export\s+default\s+\[", code) if name == "default" else None
+    if m:
+        return f, code, _balanced(code, m.end() - 1)
+    if depth >= 3:
+        return None
+    src = _js_source_of(root, f, code, name, aliases)
+    if src and src != f:
+        c2 = _no_comments(read(src, 300_000))
+        found = _js_array_of(root, src, c2, name, aliases, depth + 1)
+        if found:
+            return found
+        dm = re.search(r"export\s+default\s+(\w+)\s*;?\s*$", c2, re.M)       # const routes = [...]; export default routes
+        if dm and dm.group(1) != name:
+            return _js_array_of(root, src, c2, dm.group(1), aliases, depth + 1)
+    return None
+
+
+def _jsx_tags(jsx: str) -> list[str]:
+    return [t for t in re.findall(r"<([A-Z][\w.]*)", jsx) if t not in ROUTE_NOT_PAGES]
+
+
+def _join_route(prefix: str, path: str) -> str:
+    if path.startswith("/"):
+        return path
+    return "/" + "/".join(x for x in (prefix.strip("/"), path.strip("/")) if x)
+
+
+def _route_path(v: str | None) -> str:
+    """A path attribute or field: a string, a template literal with ${…} shown as {…}, or a call shown as {call}."""
+    if not v:
+        return ""
+    v = v.strip()
+    if v.startswith("{") and v.endswith("}"):
+        v = v[1:-1].strip()
+    s = _unquote(v)
+    if s is not None:
+        return re.sub(r"\$\{\s*([^}]*?)\s*\}", r"{\1}", s)
+    return "{" + v[:40] + "}"
+
+
+def _layout_rec(root: Path, f: Path, code: str, name: str | None, aliases: list) -> dict | None:
+    if not name:
+        return None
+    lf = _js_source_of(root, f, code, name, aliases)
+    return {"name": name, "file": lf}
+
+
+def _react_walk(root: Path, f: Path, code: str, body: str, prefix: str, layout: dict | None, guards: list[str],
+                aliases: list, out: list[dict], depth: int) -> None:
+    if depth > 6 or len(out) > 200:
+        return
+    for el in _split_top(body):
+        if el.startswith("..."):                                 # ...authRoutes
+            found = _js_array_of(root, f, code, el[3:].strip(), aliases)
+            if found:
+                _react_walk(root, *found, prefix, layout, guards, aliases, out, depth + 1)
+            continue
+        if not el.startswith("{"):
+            continue
+        fl = _fields(_balanced(el, 0))
+        path = _route_path(fl.get("path"))
+        lay_prefix = _unquote(fl.get("layout")) or ""                 # { layout: '/admin', path: '/default' }: a menu table
+        if lay_prefix.startswith("/") and path:                        # the menu's layout path always prefixes the route's
+            full = _join_route(prefix, lay_prefix.rstrip("/") + "/" + path.lstrip("/"))
+        else:
+            full = _join_route(prefix, path) if path else (prefix or "/")
+        elem = fl.get("element") or ""
+        comps = _jsx_tags(elem)
+        for key in ("Component", "component"):
+            c = (fl.get(key) or "").strip()
+            if c:
+                comps += _jsx_tags(c) if "<" in c else [c] if re.match(r"^[A-Z][\w.]*$", c) else []
+        g = guards + [c for c in comps if GUARD_NAME.search(c)]
+        comps = [c for c in comps if not GUARD_NAME.search(c)]
+        nav = re.search(r"<Navigate\b[^>]*\bto=\{?\s*['\"`]([^'\"`]+)", elem)
+        kids = fl.get("children") or (fl.get("items") if (fl.get("items") or "").startswith("[") else None)
+        if kids:
+            lay = _layout_rec(root, f, code, comps[0], aliases) if comps else layout
+            if kids.startswith("["):
+                _react_walk(root, f, code, _balanced(kids, 0), full, lay, g, aliases, out, depth + 1)
+            else:
+                found = _js_array_of(root, f, code, kids.strip(), aliases)
+                if found:
+                    _react_walk(root, *found, full, lay, g, aliases, out, depth + 1)
+            continue
+        rec = {"path": full, "name": None, "file": None, "layout": layout, "guards": list(dict.fromkeys(g)), "redirect": None}
+        if nav:
+            rec["redirect"] = nav.group(1)
+        elif comps:
+            rec["name"] = comps[-1]
+            rec["file"] = _js_source_of(root, f, code, comps[-1], aliases)
+            if len(comps) > 1:                                     # <AuthLayout><SignInPage /></AuthLayout>
+                rec["layout"] = _layout_rec(root, f, code, comps[0], aliases)
+        elif fl.get("lazy"):                                       # lazy: () => import('./routes/x')
+            lm = re.search(r"import\(\s*['\"]([^'\"]+)['\"]", fl["lazy"])
+            rec["file"] = _js_resolve(root, f, lm.group(1), aliases) if lm else None
+            rec["name"] = rec["file"].stem if rec["file"] else None
+        else:
+            continue
+        out.append(rec)
+
+
+def _jsx_attrs(code: str, i: int) -> tuple[str, int, bool]:
+    """The attributes of the JSX tag whose name ends at i, where the tag ends, and whether it closes itself."""
+    depth, quote, j = 0, None, i
+    while j < len(code):
+        ch = code[j]
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in "'\"`" and depth:
+            quote = ch
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        elif ch == ">" and depth == 0:
+            return code[i:j], j + 1, code[j - 1] == "/"
+        j += 1
+    return code[i:], len(code), True
+
+
+def _jsx_attr(attrs: str, name: str) -> str | None:
+    m = re.search(r"(?<![\w-])" + name + r"\s*=\s*", attrs)
+    if not m:
+        return None
+    rest = attrs[m.end():]
+    if rest[:1] in "'\"":
+        end = rest.find(rest[0], 1)
+        return rest[:end + 1]
+    if rest[:1] == "{":
+        return "{" + _balanced(rest, 0) + "}"
+    return None
+
+
+def _jsx_routes(root: Path, f: Path, code: str, aliases: list, out: list[dict]) -> None:
+    """<Route path element|component|render> in JSX, nested <Route>s joined to their parent's path and layout."""
+    stack: list[tuple[str, dict | None, list[str]]] = []
+    for m in re.finditer(r"<(/?)Route\b(?![\w.])", code):
+        if m.group(1):
+            if stack:
+                stack.pop()
+            continue
+        attrs, _end, closed = _jsx_attrs(code, m.end())
+        prefix, layout, guards = stack[-1] if stack else ("", None, [])
+        path = _route_path(_jsx_attr(attrs, "path"))
+        index = re.search(r"(?<![\w-])index(?![\w-])", attrs) is not None
+        full = _join_route(prefix, path) if path else (prefix or "/")
+        comps = []
+        for key in ("element", "render", "component", "Component"):
+            v = _jsx_attr(attrs, key)
+            if v:
+                inner = v[1:-1].strip() if v.startswith("{") else v
+                comps += _jsx_tags(inner) if "<" in inner else [inner] if re.match(r"^[A-Z][\w.]*$", inner) else []
+        g = guards + [c for c in comps if GUARD_NAME.search(c)]
+        comps = [c for c in comps if not GUARD_NAME.search(c)]
+        if not closed:                                   # a parent route: a layout for the routes inside it
+            lay = _layout_rec(root, f, code, comps[0], aliases) if comps else layout
+            stack.append((full, lay, g))
+            continue
+        if not comps or not (path or index):
+            continue
+        out.append({"path": full, "name": comps[-1], "file": _js_source_of(root, f, code, comps[-1], aliases),
+                    "layout": _layout_rec(root, f, code, comps[0], aliases) if len(comps) > 1 else layout,
+                    "guards": list(dict.fromkeys(g)), "redirect": None})
+
+
+def _umi_routes(root: Path, aliases: list) -> list[dict]:
+    """umi / Ant Design Pro: config/routes.ts, or `routes:` in .umirc.ts or config/config.ts."""
+    out: list[dict] = []
+    for name in ("config/routes.ts", "config/routes.js", ".umirc.ts", ".umirc.js", "config/config.ts", "config/config.js"):
+        f = root / name
+        if not f.is_file():
+            continue
+        code = _no_comments(read(f, 300_000))
+        m = re.search(r"export\s+default\s+\[", code) if "routes" in f.stem else re.search(r"\broutes\s*:\s*\[", code)
+        if not m:
+            continue
+
+        def walk(body: str, prefix: str, layout: bool, guards: list[str], depth: int) -> None:
+            for el in _split_top(body):
+                if not el.startswith("{") or depth > 6:
+                    continue
+                fl = _fields(_balanced(el, 0))
+                path = _unquote(fl.get("path")) or ""
+                full = _join_route(prefix, path) if path else prefix or "/"
+                g = guards + ([f"access {_unquote(fl['access'])}"] if _unquote(fl.get("access")) else []) \
+                    + [f"wrapper {Path(w).stem}" for w in re.findall(r"['\"]([^'\"]+)['\"]", fl.get("wrappers") or "")]
+                lay = layout and fl.get("layout") != "false"
+                comp = _unquote(fl.get("component"))
+                if fl.get("routes", "").startswith("["):
+                    walk(_balanced(fl["routes"], 0), full, lay, g, depth + 1)
+                    continue
+                if _unquote(fl.get("redirect")):
+                    out.append({"path": full, "name": None, "file": None, "layout": None, "guards": g, "redirect": _unquote(fl["redirect"])})
+                    continue
+                if comp:
+                    spec = comp if comp.startswith("@") else "src/pages/" + comp.lstrip("./")
+                    target = _js_resolve(root, root / "src" / "pages" / "x", spec, aliases)
+                    out.append({"path": full, "name": Path(comp).name, "file": target, "guards": g, "redirect": None,
+                                "layout": {"name": "the umi layout (ProLayout)", "file": None} if lay else None})
+
+        walk(_balanced(code, m.end() - 1), "", True, [], 0)
+        if out:
+            return out
+    return out
+
+
+def react_route_table(root: Path, src_files: list[Path], deps: dict) -> dict:
+    """The route table of a React app that is not Next.js: routes with their files, layouts and guards."""
+    aliases = ts_aliases(root)
+    out: list[dict] = []
+    kind = None
+    if "@umijs/max" in deps or "umi" in deps:
+        out = _umi_routes(root, aliases)
+        kind = "umi (`config/routes.ts`)" if out else None
+    if not out:
+        for p in src_files:
+            if p.suffix not in {".tsx", ".jsx", ".ts", ".js"} or re.search(r"\.(test|spec|stories)$", p.stem):
+                continue
+            code = read(p, 300_000)
+            if not re.search(r"createBrowserRouter|createHashRouter|createMemoryRouter|useRoutes\(|<Route\b", code):
+                continue
+            code = _no_comments(code)
+            for m in re.finditer(r"\b(?:createBrowserRouter|createHashRouter|createMemoryRouter|useRoutes)\(\s*", code):
+                rest = code[m.end():]
+                if rest.startswith("["):
+                    _react_walk(root, p, code, _balanced(rest, 0), "", None, [], aliases, out, 0)
+                else:
+                    nm = re.match(r"[\w$]+", rest)
+                    found = _js_array_of(root, p, code, nm.group(0), aliases) if nm else None
+                    if found:
+                        _react_walk(root, *found, "", None, [], aliases, out, 0)
+                kind = kind or "objects"
+            if "<Route" in code:
+                n0 = len(out)
+                _jsx_routes(root, p, code, aliases, out)
+                if len(out) > n0:
+                    kind = kind or "<Route> elements"
+    if not out or all(r["path"].endswith("/*") for r in out if r["file"]):
+        for p in src_files:                                    # a menu table: routes.js with { layout, path, component }
+            if p.stem.lower() not in {"routes", "router", "route", "routeconfig", "menu", "menus"} or p.suffix not in {".tsx", ".jsx", ".ts", ".js"}:
+                continue
+            code = _no_comments(read(p, 300_000))
+            for m in re.finditer(r"(?:const|let|var)\s+(\w+)\s*(?::[^=\n]+)?=\s*\[", code):
+                body = _balanced(code, m.end() - 1)
+                if re.search(r"\bpath\s*:", body) and re.search(r"\b(?:component|element|Component)\s*:", body):
+                    n0 = len(out)
+                    _react_walk(root, p, code, body, "", None, [], aliases, out, 0)
+                    kind = kind or f"a route table in `{rel(root, p)}`" if len(out) > n0 else kind
+    mounts = [(r["path"][:-2], r) for r in out if r["path"].endswith("/*") and r["path"] != "/*" and r["file"]]
+    for r in out:                                              # /admin/* → AdminLayout holds /admin/default
+        if not r["layout"] and not r["path"].endswith("/*"):
+            for pre, mr in mounts:
+                if r["path"].startswith(pre + "/"):
+                    r["layout"] = {"name": mr["name"], "file": mr["file"]}
+                    break
+    out = [r for r in out if not (r["path"].endswith("/*") and r["path"] != "/*" and r["file"] and mounts)]
+    for r in out:                                              # scenes/Login/index.ts: export { default } from "./Login"
+        f = r["file"]
+        for _ in range(3):
+            if not f or f.suffix not in {".ts", ".js"}:
+                break
+            dm = re.search(r"export\s*\{\s*default(?:\s+as\s+\w+)?\s*\}\s*from\s*['\"]([^'\"]+)['\"]", read(f, 20_000))
+            nxt = _js_resolve(root, f, dm.group(1), aliases) if dm else None
+            if not nxt:
+                break
+            f = nxt
+        r["file"] = f
+    seen, routes = set(), []
+    for r in out:
+        key = (r["path"], str(r["file"]), r["redirect"])
+        if key not in seen:
+            seen.add(key)
+            routes.append(r)
+    return {"routes": routes, "kind": kind}
+
+
+# ---------------------------------------------------------------- component kits
+# MUI, Chakra, Ant Design, styled-components / Emotion, CSS Modules, Element Plus and Vuetify keep the look
+# in a theme object, not in utility classes: where it is, its values, the kit's components by use, how the
+# code styles itself, and how dark mode switches. A match task builds with these, not with new colours.
+KIT_INFRA = {"ThemeProvider", "CssBaseline", "StyledEngineProvider", "ChakraProvider", "ColorModeScript", "ConfigProvider", "App",
+             "GlobalStyles", "CssVarsProvider", "InitColorSchemeScript", "Global", "ColorModeProvider", "Provider", "LocaleProvider"}
+KIT_DEFAULT_PRIMARY = {"MUI": "#1976d2", "Chakra UI": "blue.500 #3182ce", "Ant Design": "#1677ff", "Element Plus": "#409eff",
+                       "Vuetify": "#1867c0"}
+COLOR_LIT = r"#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)"
+
+
+def _code_files(src_files: list[Path], exts=(".ts", ".tsx", ".js", ".jsx", ".mjs")) -> list[Path]:
+    return [p for p in src_files if p.suffix in exts and not re.search(r"\.(test|spec|stories|d)$", p.stem)]
+
+
+def _react_kit_uses(src_files: list[Path], pkgs: tuple[str, ...]) -> list[tuple[str, int]]:
+    """A React kit's components, counted by the files that import them (`import { Button } from 'antd'`, `@mui/material/Button`)."""
+    counts: collections.Counter = collections.Counter()
+    for p in _code_files(src_files, (".tsx", ".jsx", ".ts", ".js")):
+        t = read(p, 200_000)
+        if not any(k in t for k in pkgs):
+            continue
+        names = set()
+        for body, spec in re.findall(r"import\s*\{([^}]*)\}\s*from\s*['\"]([^'\"]+)['\"]", t):
+            if any(spec == k or spec.startswith(k + "/") for k in pkgs):
+                for part in body.split(","):
+                    n = part.strip().split(" as ")[0].strip()
+                    if re.match(r"^[A-Z]\w+$", n) and n not in KIT_INFRA and not re.search(r"(Props|Classes|Theme|Options|Type|Ref)$", n):
+                        names.add(n)
+        for n, spec in re.findall(r"import\s+(\w+)\s+from\s*['\"]([^'\"]+)['\"]", t):
+            if any(spec.startswith(k + "/") for k in pkgs):
+                last = spec.rsplit("/", 1)[-1]
+                if re.match(r"^[A-Z]\w+$", last) and last not in KIT_INFRA:
+                    names.add(last)
+        counts.update(names)
+    return counts.most_common(12)
+
+
+def _vue_kit_uses(src_files: list[Path], prefix: str) -> list[tuple[str, int]]:
+    """A Vue kit's components, counted by the templates that use them: <el-button> or <ElButton> → el-button."""
+    counts: collections.Counter = collections.Counter()
+    kebab = re.compile(r"<(" + prefix + r"-[a-z][a-z0-9-]*)")
+    pascal = re.compile(r"<(" + prefix.capitalize() + r"[A-Z]\w*)")
+    for p in src_files:
+        if p.suffix not in {".vue", ".tsx", ".jsx"}:
+            continue
+        t = read(p, 200_000)
+        tags = set(kebab.findall(t)) | {re.sub(r"(?<!^)(?=[A-Z])", "-", x).lower() for x in pascal.findall(t)}
+        counts.update(tags)
+    return counts.most_common(12)
+
+
+def _obj_block(code: str, key: str) -> str | None:
+    """The body of `key: { … }` (the first one), braces balanced."""
+    m = re.search(r"(?<![\w$])['\"]?" + re.escape(key) + r"['\"]?\s*:\s*\{", code)
+    return _balanced(code, m.end() - 1) if m else None
+
+
+def _lit(v: str | None) -> str | None:
+    """A literal value: a string's content, or a number."""
+    if v is None:
+        return None
+    s = _unquote(v)
+    if s is not None:
+        return s
+    return v.strip() if re.match(r"^-?[\d.]+$", v.strip()) else None
+
+
+def _theme_files(src_files: list[Path], pat: str, in_theme_dir: str | None = None) -> list[Path]:
+    out = []
+    for p in _code_files(src_files):
+        t = read(p, 200_000)
+        dirs = {x.lower() for x in p.parts[:-1]}
+        if re.search(pat, t) or (in_theme_dir and dirs & {"theme", "themes", "styles"} and re.search(in_theme_dir, t)):
+            out.append(p)
+    return out
+
+
+def mui_theme(root: Path, src_files: list[Path], deps: dict) -> dict | None:
+    if not any(k in deps for k in ("@mui/material", "@mui/joy")):
+        return None
+    files = _theme_files(src_files, r"\b(?:createTheme|extendTheme|experimental_extendTheme)\s*\(",
+                         r"\bmain\s*:\s*['\"]#|\bpalette\b|\bcolorSchemes\b|\bMui[A-Z]\w+\s*:\s*\{")
+    code = "\n".join(_no_comments(read(p, 200_000)) for p in files)
+    colors = []
+    for role in ("primary", "secondary", "info", "success", "warning", "error"):
+        for m in re.finditer(r"(?<![\w$])" + role + r"\s*:\s*\{", code):
+            mm = re.search(r"\bmain\s*:\s*['\"]([^'\"]+)['\"]", _balanced(code, m.end() - 1))
+            if mm:
+                colors.append((role, mm.group(1)))
+                break
+    bg = _obj_block(code, "background") or ""
+    extra = [(f"background {k}", _lit(v)) for k, v in _fields(bg).items() if k in ("default", "paper") and _lit(v)]
+    txt = next((b for b in (_obj_block(code, "text"),) if b and "primary" in b), "") or ""
+    extra += [(f"text {k}", _lit(v)) for k, v in _fields(txt).items() if k in ("primary", "secondary") and _lit(v) and re.match(COLOR_LIT, _lit(v) or "")]
+    schemes = []
+    cs = _obj_block(code, "colorSchemes")
+    if cs is not None:
+        schemes = [k for k in ("light", "dark") if re.search(r"(?<![\w$])" + k + r"\s*[:,}]", cs)]
+    mode = re.search(r"\bmode\s*:\s*['\"](light|dark)['\"]", code)
+    toggled = re.search(r"\bmode\s*:\s*(?:\w+\s*\?|\w+\s*,|\w+\s*\})", code) is not None or re.search(r"\bmode\s*,", code) is not None
+    radius = re.search(r"shape\s*:\s*\{\s*borderRadius\s*:\s*([\d.]+)", code)
+    fonts = []
+    for m in re.finditer(r"fontFamily\s*:\s*(\{[^}]*\}|(['\"`])(?:(?!\2).)+\2)", code):
+        v = m.group(1)
+        strs = re.findall(r"(['\"`])((?:(?!\1).)+)\1", v) if v.startswith("{") else [(m.group(2), v[1:-1])]
+        for _q, s2 in strs:
+            fam = s2.split(",")[0].strip().strip("'\"")
+            if fam and not fam.startswith("$") and fam not in fonts:
+                fonts.append(fam)
+    overrides = list(dict.fromkeys(re.findall(r"\b(Mui[A-Z][A-Za-z]+)\s*:\s*\{", code)
+                                   + re.findall(r"(?:const|let)\s+(Mui[A-Z][A-Za-z]+)\s*[:=]", code)))
+    selector = re.search(r"colorSchemeSelector\s*:\s*['\"]([^'\"]+)['\"]", code)
+    uses = _react_kit_uses(src_files, ("@mui/material", "@mui/lab", "@mui/joy"))
+    sx = sum(1 for p in _code_files(src_files, (".tsx", ".jsx")) if "sx={" in read(p, 200_000))
+    styled = sum(1 for p in _code_files(src_files) if re.search(r"\bstyled\(", read(p, 200_000)))
+    setter = next((rel(root, p) for p in _code_files(src_files, (".tsx", ".jsx", ".ts", ".js"))
+                   if re.search(r"\buseColorScheme\(\)", read(p, 200_000))), None)
+    valued = [p for p in files if re.search(r"\bmain\s*:\s*['\"]|\bcreateTheme\s*\(|\bextendTheme\s*\(", read(p, 200_000))]
+    return {"kit": "MUI", "version": deps.get("@mui/material") or deps.get("@mui/joy"),
+            "files": [rel(root, p) for p in valued or files][:3], "colors": colors + extra, "schemes": schemes,
+            "mode": mode.group(1) if mode else None, "toggled": toggled, "radius": radius.group(1) if radius else None,
+            "fonts": fonts[:4], "overrides": overrides[:14], "overridesCount": len(overrides),
+            "selector": selector.group(1) if selector else None, "uses": uses, "setter": setter,
+            "styling": ", ".join(x for x in (f"`sx` in {sx} files" if sx else "", f"`styled()` in {styled}" if styled else "") if x)}
+
+
+def chakra_theme(root: Path, src_files: list[Path], deps: dict) -> dict | None:
+    v = deps.get("@chakra-ui/react")
+    if not v:
+        return None
+    major = int((re.findall(r"\d+", v) or ["2"])[0])
+    files = _theme_files(src_files, r"\b(?:extendTheme|createSystem|defineConfig|extendBaseTheme)\s*\(",
+                         r"@chakra-ui|\bcolors\s*:\s*\{|\bcomponents\s*:\s*\{")
+    code = "\n".join(_no_comments(read(p, 200_000)) for p in files)
+    scales = []
+    for m in re.finditer(r"(?<![\w$])colors\s*:\s*\{", code):
+        for name, val in _fields(_balanced(code, m.end() - 1)).items():
+            if not val.startswith("{"):
+                continue
+            steps = dict(re.findall(r"(\d{2,3})\s*:\s*(?:\{\s*value\s*:\s*)?['\"](#[0-9a-fA-F]{3,8})['\"]", val))
+            if steps:
+                mid = steps.get("500") or steps[sorted(steps, key=int)[len(steps) // 2]]
+                if name not in [s for s, _ in scales]:
+                    scales.append((name, mid))
+    fonts = []
+    fb = _obj_block(code, "fonts")
+    if fb:
+        fonts += [(_lit(v) or "").split(",")[0].strip("'\" ") for v in _fields(fb).values() if _lit(v)]
+    fonts += [m.split(",")[0].strip() for m in re.findall(r"fontFamily\s*:\s*['\"]([^'\"]+)['\"]", code)]
+    overrides = []
+    for m in re.finditer(r"(?<![\w$])components\s*:\s*\{", code):
+        overrides += [k for k in _fields(_balanced(code, m.end() - 1)) if re.match(r"^[A-Z]", k)]
+    init = re.search(r"initialColorMode\s*:\s*['\"](\w+)", code)
+    system = re.search(r"useSystemColorMode\s*:\s*(true)", code)
+    mode_files = sum(1 for p in _code_files(src_files, (".tsx", ".jsx", ".js", ".ts"))
+                     if re.search(r"\buseColorModeValue\(|\buseColorMode\(\)", read(p, 200_000)))
+    return {"kit": "Chakra UI", "version": v, "major": major, "files": [rel(root, p) for p in files][:4], "scales": scales[:10],
+            "fonts": list(dict.fromkeys(f for f in fonts if f))[:3], "overrides": list(dict.fromkeys(overrides))[:14],
+            "initial": init.group(1) if init else None, "system": bool(system), "modeFiles": mode_files,
+            "uses": _react_kit_uses(src_files, ("@chakra-ui/react",))}
+
+
+def antd_theme(root: Path, src_files: list[Path], deps: dict) -> dict | None:
+    v = deps.get("antd")
+    if not v:
+        return None
+    cands = list(dict.fromkeys(_code_files(src_files) + [f for f in (root / "config" / "config.ts", root / "config" / "defaultSettings.ts",
+                                                                    root / ".umirc.ts", root / "config" / "config.js", root / ".umirc.js") if f.is_file()]))
+    tokens, files, comps, algos = [], [], [], set()
+    for p in cands:
+        t = read(p, 200_000)
+        if "token" not in t and "Algorithm" not in t and "colorPrimary" not in t:
+            continue
+        code = _no_comments(t)
+        hit = False
+        for m in re.finditer(r"(?<![\w$])token\s*:\s*\{", code):
+            for k, val in _fields(_balanced(code, m.end() - 1)).items():
+                lv = _lit(val)
+                if lv and k not in [x for x, _ in tokens]:
+                    tokens.append((k, lv))
+                    hit = True
+        cm = re.search(r"theme\s*:\s*\{[\s\S]{0,400}?(?<![\w$])components\s*:\s*\{", code)
+        if cm:
+            comps += [k for k in _fields(_balanced(code, cm.end() - 1)) if re.match(r"^[A-Z]", k)]
+            hit = True
+        for a in re.findall(r"\b(dark|compact)Algorithm\b", code):
+            algos.add(a)
+            hit = True
+        if p.name.startswith("defaultSettings"):                   # Ant Design Pro's ProLayout settings
+            for k in ("colorPrimary", "navTheme", "layout"):
+                mm = re.search(r"(?<![\w$])" + k + r"\s*:\s*['\"]([^'\"]+)['\"]", code)
+                if mm and k not in [x for x, _ in tokens]:
+                    tokens.append((k, mm.group(1)))
+                    hit = True
+        if hit and rel(root, p) not in files:
+            files.append(rel(root, p))
+    styling = []
+    n_style = sum(1 for p in _code_files(src_files) if re.search(r"\bcreateStyles\(|\buseStyles\(|antd-style", read(p, 200_000)))
+    if n_style:
+        styling.append(f"`createStyles` (antd-style) in {n_style} files")
+    less = [c for c in iter_files(root) if c.suffix == ".less"]
+    if less:
+        styling.append(f"{len(less)} `.less` file" + ("s" if len(less) != 1 else ""))
+    fonts = [x.split(",")[0].strip() for k2, x in tokens if k2 == "fontFamily"]
+    return {"kit": "Ant Design", "version": v, "files": files[:4], "tokens": tokens[:12], "components": list(dict.fromkeys(comps))[:10], "fonts": fonts,
+            "algorithms": sorted(algos), "pro": "@ant-design/pro-components" in deps or "@ant-design/pro-layout" in deps,
+            "uses": _react_kit_uses(src_files, ("antd", "@ant-design/pro-components", "@ant-design/pro-layout", "@ant-design/pro-table",
+                                                "@ant-design/pro-form")),
+            "styling": ", ".join(styling)}
+
+
+def styled_theme(root: Path, src_files: list[Path], deps: dict) -> dict | None:
+    libs = [k for k in ("styled-components", "@emotion/styled", "@emotion/react") if k in deps]
+    if not libs:
+        return None
+    code_files = _code_files(src_files, (".tsx", ".jsx", ".ts", ".js"))
+    styled_files, globals_, theme_keys = [], [], collections.Counter()
+    direct = ("styled-components", "@emotion/styled", "@emotion/react", "@emotion/css")
+    for p in code_files:
+        t = read(p, 200_000)
+        if not any(f"'{k}'" in t or f'"{k}"' in t for k in direct):
+            continue
+        styled_files.append(p)
+        if re.search(r"\bcreateGlobalStyle\b|<Global\b", t):
+            globals_.append(rel(root, p))
+        theme_keys.update(re.findall(r"\btheme\.(\w+)", t))
+    kit_engine = any(k in deps for k in ("@mui/material", "@mui/joy", "@chakra-ui/react"))
+    if not styled_files or (kit_engine and "styled-components" not in deps and len(styled_files) < 5):
+        return None                                             # Emotion as MUI's or Chakra's engine, not the project's own
+    best, best_n = None, 0
+    for p in code_files:                                      # the theme: the styles/theme file with the most colour literals
+        dirs = {x.lower() for x in p.parts[:-1]}
+        if not (dirs & {"theme", "themes", "styles", "style"} or re.search(r"theme", p.stem, re.I)):
+            continue
+        t = _no_comments(read(p, 200_000))
+        n = len(re.findall(r"['\"](?:" + COLOR_LIT + r")['\"]", t))
+        if n > best_n:
+            best, best_n = p, n
+    colors, darks = [], []
+    if best:
+        t = _no_comments(read(best, 200_000))
+        for k, val in re.findall(r"(?<![\w$])([A-Za-z_]\w*)\s*:\s*['\"](" + COLOR_LIT + r")['\"]", t):
+            if k not in [x for x, _ in colors]:
+                colors.append((k, val))
+        used = {k for k, _ in theme_keys.most_common(20)}
+        semantic = re.compile(r"accent|primary|secondary|brand|danger|error|warning|success|info|text|background|surface|border|link", re.I)
+        colors.sort(key=lambda kv: (kv[0] not in used, not semantic.search(kv[0]), len(kv[0])))
+        darks = list(dict.fromkeys(re.findall(r"(?:const|function|let)\s+(\w*[Dd]ark\w*)", t)))
+    return {"kit": " / ".join("styled-components" if k == "styled-components" else "Emotion" for k in libs if k != "@emotion/react"
+                              or "@emotion/styled" not in libs) or "Emotion",
+            "files": len(styled_files), "globals": globals_[:3], "theme": rel(root, best) if best else None,
+            "colors": colors[:12], "darkThemes": darks[:3], "themeKeys": theme_keys.most_common(8)}
+
+
+def css_modules(root: Path, src_files: list[Path], css_files: list[Path]) -> dict | None:
+    mods = [c for c in css_files if re.search(r"\.module\.(?:css|scss|sass|less)$", c.name)]
+    if len(mods) < 2:
+        return None
+    importers = []
+    for p in _code_files(src_files, (".tsx", ".jsx", ".ts", ".js")):
+        m = re.search(r"import\s+(\w+)\s+from\s*['\"]([^'\"]+\.module\.(?:css|scss|sass|less))['\"]", read(p, 200_000))
+        if m:
+            importers.append((p, m.group(2)))
+    example = next(((rel(root, p), spec) for p, spec in importers if p.stem.lower() not in {"page", "index", "layout"}), None) \
+        or ((rel(root, importers[0][0]), importers[0][1]) if importers else None)
+    glob = [rel(root, c) for c in css_files if ".module." not in c.name and re.search(r":root\s*\{[^}]*--", read(c))]
+    return {"modules": len(mods), "importers": len(importers), "example": example, "globals": glob[:2]}
+
+
+def element_theme(root: Path, src_files: list[Path], css_files: list[Path], deps: dict) -> dict | None:
+    v = deps.get("element-plus")
+    if not v:
+        return None
+    code = "\n".join(read(p, 200_000) for p in _code_files(src_files, (".ts", ".js", ".mjs", ".vue")))
+    default_css = re.search(r"element-plus/(?:dist/index\.css|theme-chalk/index\.css|theme-chalk/src/index\.scss)", code) is not None
+    dark_vars = re.search(r"element-plus/theme-chalk/dark/css-vars\.css", code) is not None
+    colors = []
+    for c in css_files:                                        # --el-color-primary in :root, or the SCSS map passed to @forward
+        t = read(c)
+        for k, val in re.findall(r"--el-color-(primary|success|warning|danger|error|info)\s*:\s*([^;}\n]+)", t):
+            if k not in [x for x, _ in colors]:
+                colors.append((k, val.strip()))
+        for k, val in re.findall(r"['\"](primary|success|warning|danger|error|info)['\"]\s*:\s*\(\s*['\"]base['\"]\s*:\s*(#[0-9a-fA-F]{3,8})", t):
+            if k not in [x for x, _ in colors]:
+                colors.append((k, val))
+    runtime = next((rel(root, p) for p in _code_files(src_files, (".ts", ".js", ".vue"))
+                    if re.search(r"setProperty\(\s*[`'\"]--el-color-|--el-color-\$\{", read(p, 200_000))
+                    or re.search(r"--el-color-primary", read(p, 200_000)) and "setProperty" in read(p, 200_000)), None)
+    loc = re.search(r"element-plus/(?:es|lib|dist)/locale/lang/([\w-]+)", code)
+    size = re.search(r"use\(\s*ElementPlus\s*,\s*\{[^}]*\bsize\s*:\s*['\"](\w+)", code)
+    return {"kit": "Element Plus", "version": v, "defaultCss": default_css, "darkVars": dark_vars, "colors": colors[:6],
+            "runtime": runtime, "locale": loc.group(1) if loc else None, "size": size.group(1) if size else None,
+            "uses": _vue_kit_uses(src_files, "el")}
+
+
+def vuetify_theme(root: Path, src_files: list[Path], deps: dict) -> dict | None:
+    v = deps.get("vuetify")
+    if not v:
+        return None
+    files = _theme_files(src_files, r"\bcreateVuetify\s*\(|ThemeDefinition", None)
+    code = "\n".join(_no_comments(read(p, 200_000)) for p in files)
+    default = re.search(r"defaultTheme\s*:\s*['\"]([\w-]+)['\"]", code)
+    themes = []
+    for m in re.finditer(r"(?:const|let)\s+(\w+)\s*(?::\s*ThemeDefinition)?\s*=\s*\{", code):
+        body = _balanced(code, m.end() - 1)
+        if re.search(r"(?<![\w$])colors\s*:\s*\{", body):
+            dark = re.search(r"(?<![\w$])dark\s*:\s*(true|false)", body)
+            cols = [(k, _lit(val)) for k, val in _fields(_obj_block(body, "colors") or "").items()
+                    if k in ("primary", "secondary", "error", "warning", "info", "success", "surface", "background") and _lit(val)]
+            themes.append({"name": m.group(1), "dark": dark.group(1) == "true" if dark else False, "colors": cols[:8]})
+    tb = _obj_block(code, "themes")
+    if tb:                                                     # themes: { light: { dark: false, colors: {...} } } inline
+        for k, val in _fields(tb).items():
+            if val.startswith("{") and k not in [t["name"] for t in themes]:
+                body = _balanced(val, 0)
+                dark = re.search(r"(?<![\w$])dark\s*:\s*(true|false)", body)
+                cols = [(kk, _lit(vv)) for kk, vv in _fields(_obj_block(body, "colors") or "").items()
+                        if kk in ("primary", "secondary", "error", "surface", "background") and _lit(vv)]
+                themes.append({"name": k, "dark": dark.group(1) == "true" if dark else k == "dark", "colors": cols[:8]})
+    defaults = []
+    db = _obj_block(code, "defaults")
+    if db:
+        for comp, val in _fields(db).items():
+            if val.startswith("{"):
+                inner = ", ".join(f"{k} {_lit(x)}" for k, x in _fields(_balanced(val, 0)).items() if _lit(x))
+                if inner:
+                    defaults.append(f"{comp} {inner}")
+    switch = next((rel(root, p) for p in _code_files(src_files, (".ts", ".js", ".vue"))
+                   if re.search(r"theme\.global\.name(?:\.value)?\s*=|\.change\(\s*['\"`]?\w|theme\.global\.name\.value\s*===", read(p, 200_000))), None)
+    return {"kit": "Vuetify", "version": v, "files": [rel(root, p) for p in files][:3], "default": default.group(1) if default else None,
+            "themes": themes[:4], "defaults": defaults[:8], "switch": switch, "uses": _vue_kit_uses(src_files, "v")}
+
+
+def runtime_routes(root: Path, src_files: list[Path]) -> str | None:
+    """Routes added at runtime from a menu the backend sends (RuoYi, vue-element-admin): a new page needs a server-side entry."""
+    adders = [p for p in _code_files(src_files, (".ts", ".js", ".vue", ".tsx", ".jsx")) if re.search(r"\brouter\.addRoutes?\(", read(p, 200_000))]
+    if not adders:
+        return None
+    api = None
+    for p in _code_files(src_files):
+        m = re.search(r"export\s+(?:const|function|async\s+function)\s+(\w*(?:[Rr]outers?|[Rr]outes|[Mm]enus?)\w*)[\s\S]{0,300}?url\s*:\s*['\"`]([^'\"`]+)",
+                      read(p, 200_000))
+        if m:
+            api = (m.group(1), m.group(2), rel(root, p))
+            break
+    return (f"routes are also added at runtime: `{rel(root, adders[0])}` calls `router.addRoute`"
+            + (f" with the menu the backend returns (`{api[0]}` → `{api[1]}` in `{api[2]}`); those pages are loaded by the menu's "
+               "`component` names, so a new page also needs a menu entry on the server, and without the backend only the static routes render"
+               if api else ""))
+
+
+def hash_history(root: Path, src_files: list[Path]) -> str | None:
+    """A router on hash history serves every page at /#/<route>: a render of /dashboard shows the home page."""
+    for p in _code_files(src_files, (".ts", ".js", ".tsx", ".jsx", ".mjs")):
+        t = read(p, 200_000)
+        if re.search(r"\bcreateWebHashHistory\(|\bcreateHashRouter\(|<HashRouter\b", t):
+            return f"`{rel(root, p)}` routes on the URL's hash: render `http://localhost:PORT/#/<route>`, not `/<route>`"
+    return None
+
+
+def kit_start(root: Path, src_files: list[Path], css_files: list[Path], deps: dict) -> dict:
+    """Every kit the project styles itself with, read."""
+    found = [k for k in (mui_theme(root, src_files, deps), chakra_theme(root, src_files, deps), antd_theme(root, src_files, deps),
+                         element_theme(root, src_files, css_files, deps), vuetify_theme(root, src_files, deps)) if k]
+    return {"kits": found, "styled": styled_theme(root, src_files, deps), "modules": css_modules(root, src_files, css_files)}
+
+
+def _theme_storage_key(root: Path, src_files: list[Path]) -> str | None:
+    """The localStorage key an app keeps its theme choice under: getItem('theme'), or a THEME_STORAGE_KEY constant."""
+    for p in _code_files(src_files, (".ts", ".tsx", ".js", ".jsx", ".mjs", ".vue")):
+        t = read(p, 200_000)
+        if "localStorage" not in t and "Storage" not in t:
+            continue
+        m = re.search(r"localStorage\.(?:get|set)Item\(\s*['\"]([^'\"]*(?:theme|mode|scheme)[^'\"]*)['\"]", t, re.I) \
+            or re.search(r"(?:const|let)\s+\w*THEME\w*KEY\w*\s*=\s*['\"]([\w.:-]+)['\"]", t)
+        if m:
+            return m.group(1)
+    return None
+
+
+def kit_dark(k: dict, root: Path, src_files: list[Path]) -> tuple[str | None, bool | None]:
+    """How the kit's dark mode switches: (the theme line, whether there is a dark mode at all); (None, None) when no kit says."""
+    for kit in k["kits"]:
+        name = kit["kit"]
+        if name == "MUI":
+            if "dark" in kit["schemes"]:
+                sel = kit["selector"]
+                where = ("`.dark` on `<html>`" if sel == "class" else "`[data-dark]` on `<html>`" if sel == "data"
+                         else f"`[{sel}=dark]` on `<html>`" if sel and sel.startswith("data-") else f"`{sel}`" if sel
+                         else "the OS scheme (`prefers-color-scheme`) until one is chosen")
+                return (f"MUI's dark color scheme applies under {where} — `{kit['files'][0]}`; "
+                        + (f"`useColorScheme()` in `{kit['setter']}` switches it and keeps" if kit["setter"] else "`useColorScheme()` keeps")
+                        + " the choice in localStorage `mui-mode`: render dark with `--dark-storage mui-mode=dark`", True)
+            if kit["toggled"] or kit["mode"] == "dark":
+                key = _theme_storage_key(root, src_files)
+                return (f"MUI's `palette.mode` is chosen in JS (`{kit['files'][0]}`)"
+                        + (f"; the app keeps the choice in localStorage `{key}`: render dark with `--dark-storage {key}=dark`" if key
+                           else ": render dark through the app's own switch"), True)
+            return (None, False)
+        if name == "Chakra UI" and kit["major"] < 3 and (kit["modeFiles"] or kit["initial"] == "dark" or kit["system"]):
+            return (f"Chakra's color mode (`useColorModeValue` or `useColorMode` in {kit['modeFiles']} files; starts `{kit['initial'] or 'light'}`"
+                    + (", follows the OS" if kit["system"] else "") + "): kept in localStorage `chakra-ui-color-mode`, shown as `.chakra-ui-dark` "
+                    "on `<body>` and `data-theme` on `<html>`: render dark with `--dark-storage chakra-ui-color-mode=dark`", True)
+        if name == "Ant Design":
+            if "dark" in kit["algorithms"]:
+                return ("Ant Design's `darkAlgorithm`, switched in JS by the app: render dark through the app's own switch", True)
+            return (None, False)
+        if name == "Vuetify":
+            darks = [t["name"] for t in kit["themes"] if t["dark"]]
+            if not darks:
+                return (None, False)
+            key = _theme_storage_key(root, src_files)
+            return (f"Vuetify's theme `{darks[0]}` (dark) beside `{kit['default'] or 'light'}`"
+                    + (f", switched in `{kit['switch']}`" if kit["switch"] else "")
+                    + (f"; the app keeps the choice in localStorage `{key}`: render dark with `--dark-storage {key}=dark`" if key else ""), True)
+    st = k.get("styled")
+    if st and st["darkThemes"]:
+        key = _theme_storage_key(root, src_files)
+        return (f"a dark theme (`{st['darkThemes'][0]}` in `{st['theme']}`) goes to the `ThemeProvider` at runtime"
+                + (f"; the app keeps the choice in localStorage `{key}`: render dark with `--dark-storage {key}=dark`" if key
+                   else ": render dark through the app's own switch"), True)
+    return (None, None)
+
+
+KIT_MATCH = {
+    "MUI": "A match task builds with these and the theme's values (`color=\"primary\"`, `sx={{ color: 'text.secondary', borderRadius: 1 }}`), not hex values or pixel radii.",
+    "Chakra UI": "A match task builds with these and the theme's scales (`colorScheme`, `color=\"brand.500\"`, `useColorModeValue` for both modes), not hex values.",
+    "Ant Design": "A match task builds with these and the theme's tokens (`theme.useToken()`), not hand-picked colours.",
+    "Element Plus": "A match task builds with these (`type=\"primary\"`, `size`), not hand-rolled controls; colours come from the `--el-color-*` variables.",
+    "Vuetify": "A match task builds with these and the theme's colours (`color=\"primary\"`, `bg-surface`), not hex values; the defaults apply to every instance.",
+}
+
+
+def md_kit_lines(k: dict) -> list[str]:
+    """Start-here lines: each kit's components by use, how the code styles itself, and what a match task builds with."""
+    out = []
+    for kit in k.get("kits") or []:
+        if kit.get("uses"):
+            word = "templates" if kit["kit"] in ("Element Plus", "Vuetify") else "files"
+            pro = " (with Pro components: pages start from `PageContainer`)" if kit.get("pro") else ""
+            out.append(f"- {kit['kit']}{pro} — its components by use (counted by the {word} that use them): "
+                       + " · ".join(f"{n} ×{c}" for n, c in kit["uses"])
+                       + (f"; styled through {kit['styling']}" if kit.get("styling") else "") + ". " + KIT_MATCH[kit["kit"]])
+    st = k.get("styled")
+    if st:
+        keys = " · ".join(f"{n} ×{c}" for n, c in st["themeKeys"])
+        out.append(f"- {st['kit']} in {st['files']} files" + (f" (global styles in {', '.join(f'`{g}`' for g in st['globals'])})" if st["globals"] else "")
+                   + (f"; they read the theme as `theme.x`, most used: {keys}" if keys else "")
+                   + ". A new component is a styled component that takes its colours from the theme, not literals.")
+    mo = k.get("modules")
+    if mo:
+        ex = f" (e.g. `{mo['example'][0]}` imports `{mo['example'][1]}`)" if mo["example"] else ""
+        out.append(f"- CSS Modules: {mo['modules']} `.module.*` files, imported by {mo['importers']} components{ex}. A new component gets its own module"
+                   + (f"; colours and spacing come from the variables in {', '.join(f'`{g}`' for g in mo['globals'])}, not literals" if mo["globals"] else "")
+                   + ". The class names are local to each module, so the vocabulary below leaves them out.")
+    return out
+
+
+def md_kit_tokens(k: dict) -> list[str]:
+    """Declared-tokens sections for the kits' themes."""
+    out = []
+    for kit in k.get("kits") or []:
+        name = kit["kit"]
+        if name == "MUI":
+            out.append(f"### MUI theme" + (" — " + ", ".join(f"`{f}`" for f in kit["files"]) if kit["files"] else ""))
+            if kit["colors"]:
+                out.append("- palette: " + " · ".join(f"{r} {v}" for r, v in kit["colors"]))
+            else:
+                out.append(f"- palette: MUI's defaults (primary {KIT_DEFAULT_PRIMARY['MUI']})")
+            bits = ([f"shape.borderRadius {kit['radius']}"] if kit["radius"] else []) + ([f"fonts {', '.join(kit['fonts'])}"] if kit["fonts"] else []) \
+                + ([f"color schemes: {', '.join(kit['schemes'])}" + (f" (selector `{kit['selector']}`)" if kit["selector"] else "")] if kit["schemes"] else [])
+            if bits:
+                out.append("- " + " · ".join(bits))
+            if kit["overrides"]:
+                out.append(f"- component overrides ({kit['overridesCount']}): " + ", ".join(kit["overrides"]) + (" …" if kit["overridesCount"] > len(kit["overrides"]) else ""))
+        elif name == "Chakra UI":
+            out.append(f"### Chakra UI theme (v{kit['major']})" + (" — " + ", ".join(f"`{f}`" for f in kit["files"][:3]) if kit["files"] else ""))
+            out.append("- colour scales (500 or middle step): " + (" · ".join(f"{n} {v}" for n, v in kit["scales"]) if kit["scales"]
+                                                                    else f"Chakra's defaults ({KIT_DEFAULT_PRIMARY['Chakra UI']})"))
+            bits = ([f"fonts {', '.join(kit['fonts'])}"] if kit["fonts"] else []) + ([f"component styles: {', '.join(kit['overrides'])}"] if kit["overrides"] else [])
+            if bits:
+                out.append("- " + " · ".join(bits))
+        elif name == "Ant Design":
+            out.append("### Ant Design theme" + (" — " + ", ".join(f"`{f}`" for f in kit["files"]) if kit["files"] else ""))
+            out.append("- tokens: " + (" · ".join(f"{k2} {v}" for k2, v in kit["tokens"]) if kit["tokens"] else f"the defaults (colorPrimary {KIT_DEFAULT_PRIMARY['Ant Design']})"))
+            if kit["components"]:
+                out.append("- component tokens: " + ", ".join(kit["components"]))
+            if kit["algorithms"]:
+                out.append("- algorithms: " + ", ".join(kit["algorithms"]))
+        elif name == "Element Plus":
+            out.append("### Element Plus theme")
+            src = "the default theme (`element-plus/dist/index.css`)" if kit["defaultCss"] else "its own build of the theme"
+            out.append(f"- {src}" + (": " + " · ".join(f"{k2} {v}" for k2, v in kit["colors"]) if kit["colors"] else f", primary {KIT_DEFAULT_PRIMARY['Element Plus']}")
+                       + (f" · locale {kit['locale']}" if kit["locale"] else "") + (f" · size {kit['size']}" if kit["size"] else ""))
+            if kit["runtime"]:
+                out.append(f"- `{kit['runtime']}` sets the `--el-color-*` variables at runtime (a theme picker): a colour change goes there too")
+        elif name == "Vuetify":
+            out.append("### Vuetify theme" + (" — " + ", ".join(f"`{f}`" for f in kit["files"]) if kit["files"] else ""))
+            for t in kit["themes"]:
+                out.append(f"- `{t['name']}` ({'dark' if t['dark'] else 'light'}{', the default' if t['name'] == kit['default'] else ''}): "
+                           + (" · ".join(f"{k2} {v}" for k2, v in t["colors"]) or "no colours of its own"))
+            if not kit["themes"]:
+                out.append(f"- the default themes (primary {KIT_DEFAULT_PRIMARY['Vuetify']})")
+            if kit["defaults"]:
+                out.append("- component defaults: " + " · ".join(kit["defaults"]))
+    st = k.get("styled")
+    if st and st["theme"]:
+        out.append(f"### {st['kit']} theme — `{st['theme']}`")
+        if st["colors"]:
+            out.append("- colours: " + " · ".join(f"{n} {v}" for n, v in st["colors"]))
+        if st["darkThemes"]:
+            out.append("- dark theme: " + ", ".join(f"`{d}`" for d in st["darkThemes"]))
+    return out
+
+
+def page_signatures(root: Path, src_files: list[Path], vocab_names: list[str], framework: str | None = None, deps: dict | None = None) -> dict:
     pages, routes = [], []
     is_next, is_nuxt = framework == "Next.js", framework == "Nuxt"
     is_kit, is_astro = framework == "SvelteKit", framework == "Astro"
@@ -3152,12 +4042,43 @@ def page_signatures(root: Path, src_files: list[Path], vocab_names: list[str], f
     comps = nuxt_components(root) if is_nuxt else {}
     # SvelteKit and Astro name their pages by convention: take them from the route readers.
     candidates = [root / f for r, f in file_routes if not r.endswith("(endpoint)")] if (is_kit or is_astro) else src_files
+    # A React app with a route table: the files it names are the pages, with their routes, layouts and guards.
+    by_file: dict[Path, list[dict]] = {}
+    table = None
+    if (deps or {}).get("react") and not (is_next or is_nuxt or is_kit or is_astro) and framework not in ("Vue", "Angular", "Laravel"):
+        table = react_route_table(root, src_files, deps or {})
+        for r in table["routes"]:
+            if r["file"] and r["file"].suffix in {".tsx", ".jsx", ".ts", ".js"} and r["file"].is_file():
+                by_file.setdefault(r["file"], []).append(r)
+    route_mode = len(by_file) >= 2
+    shown_by: dict[Path, str] = {}
+    if route_mode:
+        # Screens outside the table (a sign-in App shows before any route) stay pages; a tab a routed page imports,
+        # a file under a routed page's folder, or a component folder's file does not.
+        routed_dirs = [f.parent for f in by_file if f.stem == "index"]
+        routed_text = "\n".join(read(f, 200_000) for f in by_file)
+        code = [q for q in src_files if q.suffix in {".tsx", ".jsx", ".ts", ".js"} and not re.search(r"\.(test|spec|stories)$", q.stem)]
+        for c in src_files:
+            if c in by_file or c.suffix not in {".tsx", ".jsx"} or re.search(r"\.(test|spec|stories)$", c.stem):
+                continue
+            dirs = [x.lower() for x in c.relative_to(root).parts[:-1]]
+            if not set(dirs) & {"pages", "views", "screens"} or set(dirs) & {"components", "utils", "hooks", "sections", "_components"}:
+                continue
+            if any(d in c.parents for d in routed_dirs):
+                continue
+            imp = re.compile(r"from\s*['\"][^'\"]*[/'\"]" + re.escape(c.stem) + r"(?:\.\w+)?['\"]|import\(\s*['\"][^'\"]*/" + re.escape(c.stem) + r"['\"]")
+            if imp.search(routed_text):
+                continue
+            who = next((q for q in code if q != c and q not in by_file and imp.search(read(q, 200_000))), None)
+            if who:
+                shown_by[c] = rel(root, who)
+        candidates = sorted(by_file) + sorted(shown_by)
     for p in candidates:
         if p.suffix not in {".tsx", ".jsx", ".vue", ".svelte", ".astro", ".md", ".mdx"}:
             continue
         rp = p.relative_to(root)
         dirs = [x.lower() for x in rp.parts[:-1]]
-        if not (is_kit or is_astro):
+        if not (is_kit or is_astro or route_mode):
             if not (set(dirs) & page_dirs) or re.search(r"\.(test|spec|stories)$", p.stem) or p.suffix == ".md":
                 continue
             if is_next and "app" in dirs and p.stem != "page":          # Next.js App Router: page files only
@@ -3176,12 +4097,28 @@ def page_signatures(root: Path, src_files: list[Path], vocab_names: list[str], f
             page_comps = [t for t in component_tags(_markup(text)) if not rendered or t != rendered["name"]]
         for names in re.findall(r"import\s*\{([^}]+)\}\s*from\s*['\"][^'\"]*components/[^'\"]+['\"]", text):
             page_comps += [x.strip().split(" as ")[0] for x in names.split(",") if x.strip() and not x.strip().startswith("type ")]
-        pages.append({
+        rec = {
             "file": str(rp), "lines": text.count("\n") + 1, "signals": signals,
             "classes": [f"{n} ×{c}" for n, c in used if c][:3], "components": list(dict.fromkeys(page_comps))[:6], "renders": rendered,
-        })
+        }
+        if route_mode and p in shown_by:
+            rec["route"] = f"no route: `{shown_by[p]}` shows it"
+        elif route_mode:
+            rs = by_file[p]
+            paths = list(dict.fromkeys(r["path"] for r in rs))
+            rec["route"] = ", ".join(f"`{x}`" for x in paths[:3]) + (f" and {len(paths) - 3} more" if len(paths) > 3 else "")
+            lay = next((r["layout"] for r in rs if r["layout"] and r["layout"]["name"] not in ("App", "Root", "Providers", "AppProviders")), None)
+            if lay:
+                lt = read(lay["file"], 200_000) if lay.get("file") else ""
+                rec["inside"] = {"name": lay["name"], "file": rel(root, lay["file"]) if lay.get("file") else None, "lines": lt.count("\n") + 1,
+                                 "holder": "`<Outlet />`" if "<Outlet" in lt else "`children`"}
+            rec["routeGuards"] = list(dict.fromkeys(g for r in rs for g in r["guards"]))
+        pages.append(rec)
     pages.sort(key=lambda x: x["file"])
-    for p in src_files:
+    if route_mode:                                   # the page lines carry the rest: redirects and unresolved routes only
+        routes += [(r["path"], f"(redirect → `{r['redirect']}`)" if r["redirect"] else r["name"] or "?")
+                   for r in table["routes"] if r["redirect"] or not r["file"]]
+    for p in ([] if route_mode else src_files):
         if p.suffix in {".tsx", ".jsx"}:
             text = read(p, 200_000)
             if "<Route" in text:
@@ -3200,7 +4137,7 @@ def page_signatures(root: Path, src_files: list[Path], vocab_names: list[str], f
                 continue
             segs = [x for x in pg.relative_to(app_dir).parent.parts if not (x.startswith("(") and x.endswith(")"))]
             routes.append(("/" + "/".join(segs), rel(root, pg)))
-    return {"pages": pages[:24], "routes": routes[:30]}
+    return {"pages": pages[:32 if route_mode else 24], "routes": routes[:30]}
 
 
 def copy_mechanism(root: Path, src_files: list[Path], deps: dict) -> dict:
@@ -3293,7 +4230,7 @@ def storage_keys(root: Path, src_files: list[Path]) -> list[str]:
     # The store's own file names the key best; an error boundary that also reads it comes later.
     ranked = sorted(src_files, key=lambda p: (0 if re.search(r"stor(e|age)|persist|db", str(p), re.I) else 1, str(p)))
     for p in ranked:
-        if p.suffix not in {".ts", ".tsx", ".js", ".jsx", ".vue", ".svelte"}:
+        if p.suffix not in {".ts", ".tsx", ".js", ".jsx", ".vue", ".svelte"} or re.search(r"\.(test|spec|stories)$", p.stem):
             continue
         t = read(p, 200_000)
         if "localStorage" not in t and "sessionStorage" not in t and "indexedDB" not in t and "openDB(" not in t:
@@ -3319,7 +4256,8 @@ def gates(root: Path, src_files: list[Path]) -> list[str]:
     if idx.exists() and re.search(r"<script>(?:(?!</script>).)*?(matchMedia|localStorage|data-?theme|dataset\.theme)", read(idx), re.S):
         out.append("`index.html` decides the theme in an inline script at boot (`data-theme`); the dark pass reloads for it")
     for p in src_files:
-        if SPLASH_STEM.match(p.stem) and p.suffix in {".tsx", ".jsx", ".vue", ".svelte"}:
+        if SPLASH_STEM.match(p.stem) and p.suffix in {".tsx", ".jsx", ".vue", ".svelte"} \
+                and not {x.lower() for x in p.relative_to(root).parts[:-1]} & {"pages", "views", "screens"}:
             t = read(p, 100_000)
             key = None
             for name, value in re.findall(r"const\s+(\w+)\s*=\s*['\"]([\w.:-]+)['\"]", t):
@@ -3331,7 +4269,10 @@ def gates(root: Path, src_files: list[Path]) -> list[str]:
             out.append(f"`{rel(root, p)}` covers the first paint ({lifts}" + (f"; storage key `{key}`" if key else "") + ")")
     for p in src_files:
         if p.stem in {"App", "app", "layout", "_app", "Root", "root"} and p.suffix in {".tsx", ".jsx"}:
-            conds = re.findall(r"\n[ \t]*if\s*\(([^)\n]{1,80})\)\s*\{\s*\n[ \t]*return\b", read(p, 200_000))
+            t = read(p, 200_000)
+            if re.search(r"export\s+(?:async\s+)?(?:const|function)\s+(?:getInitialState|layout|rootContainer)\b", t):
+                continue                                # umi's runtime config, not an App component
+            conds = re.findall(r"\n[ \t]*if\s*\(([^)\n]{1,80})\)\s*\{\s*\n[ \t]*return\b", t)
             if conds:
                 out.append(f"`{rel(root, p)}` returns early on, in order: " + " → ".join(f"`{c.strip()}`" for c in conds[:6]))
     return out[:6]
@@ -3359,9 +4300,9 @@ def start_here(root: Path, src_files: list[Path], css_files: list[Path], stack: 
         texts += ng["inlineTemplates"]
         vocab = css_vocabulary(root, [c for c in css_files if c not in ng["scopedCss"]], texts, skip=r"(?:mat|mdc|cdk)-")
         sig = {"pages": ng["pages"], "routes": ng["routes"]}
-    else:
-        vocab = css_vocabulary(root, css_files, texts)
-        sig = page_signatures(root, src_files, [v["name"] for v in vocab], stack.get("framework"))
+    else:                   # a CSS Module's classes are local to its component: not a shared vocabulary
+        vocab = css_vocabulary(root, [c for c in css_files if not re.search(r"\.module\.\w+$", c.name)], texts)
+        sig = page_signatures(root, src_files, [v["name"] for v in vocab], stack.get("framework"), deps)
     is_next = stack.get("framework") == "Next.js"
     is_nuxt = stack.get("framework") == "Nuxt"
     is_kit, is_astro = stack.get("framework") == "SvelteKit", stack.get("framework") == "Astro"
@@ -3371,6 +4312,12 @@ def start_here(root: Path, src_files: list[Path], css_files: list[Path], stack: 
              "Eleventy": "references/stacks/static.md"}.get(stack.get("framework") or "") or ("references/stacks/static.md" if site else None)
     dev = dev_setup(root)
     theme = theme_mechanism(root, css_files, stack, src_files)
+    kits = kit_start(root, src_files, css_files, deps) if not (ng or lv or site) else {"kits": [], "styled": None, "modules": None}
+    dyn = runtime_routes(root, src_files) if not (ng or lv or site) else None
+    hashed = hash_history(root, src_files) if not (ng or lv or site) else None
+    kit_line, kit_dark_on = kit_dark(kits, root, src_files)
+    if kit_line and not (theme and "--dark-storage" in theme):
+        theme = kit_line
     if ng:
         dev["proxies"] = ng["proxies"] + dev["proxies"]
     return {
@@ -3381,7 +4328,7 @@ def start_here(root: Path, src_files: list[Path], css_files: list[Path], stack: 
                     else astro_layouts(root, src_files) if is_astro else ng["layouts"] if ng else site["layouts"] if site
                     else lv["layouts"] if lv else []),
         "stackBefore": (sveltekit_before(root, deps) if is_kit else astro_before(root, deps) if is_astro else ng["stackBefore"] if ng
-                        else site["stackBefore"] if site else lv["stackBefore"] if lv else []),
+                        else site["stackBefore"] if site else lv["stackBefore"] if lv else []) + ([dyn] if dyn else []) + ([hashed] if hashed else []),
         "bladeUsed": lv["used"] if lv else [],
         "bladeKit": lv["kit"] if lv else None,
         "laravel": {"router": lv["router"]} if lv else None,
@@ -3395,8 +4342,13 @@ def start_here(root: Path, src_files: list[Path], css_files: list[Path], stack: 
         "nuxtBefore": nuxt_before(root, deps, src_files) if is_nuxt else [],
         "nuxt": is_nuxt,
         "vite": "vite" in deps and not is_next and not is_nuxt and not is_astro and not ng and not lv,
+        "umi": stack.get("framework") == "Umi",
         "stackNotes": notes,
         "theme": theme,
+        "kits": kits,
+        "kitDark": kit_dark_on,
+        "kitLook": bool(kits["kits"] or kits["styled"] or kits["modules"]),     # with Tailwind barely used, the kit is the look
+        "kitNotes": "references/stacks/kits.md" if (kits["kits"] or kits["styled"] or kits["modules"]) else None,
         "middleware": middleware_line(root) if is_next else None,
         "locale": locale_routing(root, src_files, sig["routes"]),
         "next": is_next,
@@ -3460,6 +4412,7 @@ def md_start_here(sh: dict) -> list[str]:
     if sh.get("bladeUsed"):
         out.append("- Used most (Blade components, counted by the views that use them): " + " · ".join(
             f"`{rel_s(u['file'])}` `<{u['tag']}>` ({u['views']}" + (f"; props {', '.join(u['props'])}" if u["props"] else "") + ")" for u in sh["bladeUsed"]))
+    out += md_kit_lines(sh.get("kits") or {})
     if sh.get("ngUsed"):
         out.append("- Used most (by selector, counted by the templates that use them): " + " · ".join(
             f"`{u['file']}` `<{u['selector']}>` ({u['templates']}" + (f"; inputs {', '.join(u['inputs'])}" if u["inputs"] else "")
@@ -3485,6 +4438,14 @@ def md_start_here(sh: dict) -> list[str]:
                 bits.append(", ".join(pg["classes"]))
             if pg["components"]:
                 bits.append((f"{pg['usesWord']} " if pg.get("usesWord") else "uses " if pg["file"].endswith((".vue", ".svelte", ".astro", ".md", ".mdx")) or pg.get("route") else "imports ") + ", ".join(pg["components"]))
+            ins = pg.get("inside")
+            if ins:
+                bits.append(f"inside {ins['name']}" + ("" if not ins.get("file") or ins["file"] in wrappers_named
+                                                        else f" (`{ins['file']}` · {ins['lines']} lines: the chrome, its {ins['holder']} holds the page)"))
+                if ins.get("file"):
+                    wrappers_named.add(ins["file"])
+            if pg.get("routeGuards"):
+                bits.append("behind " + ", ".join(pg["routeGuards"]))
             r = pg.get("renders")
             if r and r.get("wrapper"):
                 bits.append(f"inside {r['name']}" + ("" if r["file"] in wrappers_named else f" (`{r['file']}` · {r['lines']} lines: the chrome, its "
@@ -3563,6 +4524,8 @@ def md_start_here(sh: dict) -> list[str]:
         elif sh.get("ng"):
             port = sh["ng"].get("port")
             line += f" — `ng serve` listens on :{port} (`angular.json`)" if port else " — `ng serve` listens on :4200 unless `--port` says otherwise"
+        elif sh.get("umi"):
+            line += " — `max dev` listens on :8000 unless `PORT` says otherwise, and answers `/api` from `mock/` unless `MOCK=none`"
         elif sh.get("vite"):
             line += " — Vite listens on :5173 unless `--port` or `server.port` says otherwise"
         before.append(line)
@@ -3571,11 +4534,15 @@ def md_start_here(sh: dict) -> list[str]:
         out += [f"  - {ln}" for ln in before]
     if sh.get("stackNotes"):
         out.append(f"- Stack notes: `{sh['stackNotes']}` in the skill folder — how this stack serves a page, switches theme and names its components")
+    if sh.get("kitNotes"):
+        out.append(f"- Kit notes: `{sh['kitNotes']}` in the skill folder, the section for this kit — where its theme is, its dark mode, and the defaults the render will flag")
     if sh["pages"] or sh["vocabulary"]:
         thin = any(pg.get("renders") and not pg["renders"].get("wrapper") for pg in sh["pages"])
         out.append("- Read next: " + (("the page above whose signals match yours" + (" (a thin page: the file it renders)" if thin else "") if sh["pages"] else "the vocabulary lines")
                    + (" and the vocabulary lines" if sh["pages"] and sh["vocabulary"] else ""))
                    + ". Not the CSS file, not the store.")
+    elif (sh.get("kits") or {}).get("kits") or (sh.get("kits") or {}).get("styled") or (sh.get("kits") or {}).get("modules"):
+        out.append("- Read next: the kit lines above and one component that already uses them. Not the CSS file, not the store.")
     else:
         out.append("- Nothing to read first: no pages or component classes yet — see the verdict below.")
     out.append("")
@@ -3647,7 +4614,9 @@ def md(data: dict) -> str:
             out += [f"### Sass variables in {file}", "```scss", *items[:40], *(["…"] if len(items) > 40 else []), "```"]
     for key, snippet in t["configExtend"].items():
         out += [f"### tailwind.config `extend.{key}`", "```js", snippet, "```"]
-    if not (t["theme"] or t["root"] or t.get("sass") or t["configExtend"]):
+    kit_md = md_kit_tokens((data.get("startHere") or {}).get("kits") or {})
+    out += kit_md
+    if not (t["theme"] or t["root"] or t.get("sass") or t["configExtend"] or kit_md):
         out.append("- none declared (no @theme, :root vars, Sass variables, or config extend)")
     out.append("")
 
@@ -3663,6 +4632,12 @@ def md(data: dict) -> str:
         out.append("- @font-face: " + ", ".join(f["fontFace"]))
     for name, value in f["tokenFonts"]:
         out.append(f"- token {name}: {value}")
+    for kit in ((data.get("startHere") or {}).get("kits") or {}).get("kits") or []:
+        if kit.get("fonts"):
+            out.append(f"- {kit['kit']} theme: " + ", ".join(kit["fonts"]))
+    fontsource = sorted(k for k in (s.get("deps") or {}) if k.startswith("@fontsource"))
+    if fontsource:
+        out.append("- loaded from npm (no network needed): " + ", ".join(f"`{k}`" for k in fontsource))
     if u["fontClasses"]:
         out.append("- classes in use: " + ", ".join(f"font-{k} ×{n}" for k, n in u["fontClasses"]))
     if len(out) and out[-1] == "## Fonts":
@@ -3682,7 +4657,11 @@ def md(data: dict) -> str:
     # Usage
     out.append(f"## What the code actually uses ({u['scannedFiles']} source files)")
     total = u["rawTotal"] + u["semanticTotal"]
-    if total:
+    if (data.get("startHere") or {}).get("kitLook") and (not s.get("tailwind") or total < 10):   # counts would match props (shadow="hover")
+        out.append("- not a Tailwind project: the look is the kit's theme and components above; class counts are left out")
+        u = {**u, "radius": [], "shadow": [], "textSize": [], "spacing": [], "arbitraryTotal": 0}
+        total = -1
+    if total > 0:
         out.append("- color families: " + ", ".join(f"{k} {n}" for k, n in u["colorFamilies"]) +
                    f"  → raw {u['rawTotal']} / semantic {u['semanticTotal']}")
         if u["colorTokens"]:
@@ -3691,7 +4670,7 @@ def md(data: dict) -> str:
             out.append("- semantic tokens: " + ", ".join(f"{k} {n}" for k, n in u["semantic"]))
         if u["neutrals"]:
             out.append("- neutrals: " + ", ".join(f"{k} {n}" for k, n in u["neutrals"]))
-    else:
+    elif total == 0:
         out.append("- no Tailwind color classes found")
     if u["radius"]:
         out.append("- radius: " + ", ".join(f"rounded{'' if k == 'default' else '-' + k} {n}" for k, n in u["radius"]))
@@ -3701,7 +4680,8 @@ def md(data: dict) -> str:
         out.append("- text sizes: " + ", ".join(f"text-{k} {n}" for k, n in u["textSize"]))
     if u["spacing"]:
         out.append("- spacing steps: " + ", ".join(f"{k} ×{n}" for k, n in u["spacing"]))
-    out.append(f"- `dark:` variants: {u['dark']}")
+    if total != -1:
+        out.append(f"- `dark:` variants: {u['dark']}")
     if u["arbitraryTotal"]:
         out.append(f"- arbitrary values: {u['arbitraryTotal']} — " + ", ".join(f"{k} ×{n}" for k, n in u["arbitrary"][:6]))
     out.append("")

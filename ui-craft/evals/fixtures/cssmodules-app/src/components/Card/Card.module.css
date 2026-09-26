@@ -1,0 +1,2 @@
+.card { background: #fff; border-radius: var(--radius); padding: var(--space); }
+.title { color: var(--accent); margin: 0; }

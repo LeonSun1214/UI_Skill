@@ -28,7 +28,11 @@ The render names each stylesheet and script that another host failed to serve (`
 
 ## The theme is set by a script at boot (`data-theme`)
 
-Nothing: the dark pass reloads the page under the dark scheme when in-place emulation changes nothing, and the report names the mode (`media`, `class`, `attribute`, `color-scheme`). When the switch is a theme service that does more than a class on `<html>` (a class on `<body>` too, a stored setting read at boot), render dark through it: `--dark-storage KEY=dark` sets the stored choice and reloads. The inspector prints that flag when it finds the service; the render suggests it when the dark pass left the page background where it was.
+Nothing: the dark pass reloads the page under the dark scheme when in-place emulation changes nothing, and the report names the mode (`media`, `class`, `attribute`, `color-scheme`). When the switch is a theme service that does more than a class on `<html>` (a class on `<body>` too, a stored setting read at boot), render dark through it: `--dark-storage KEY=dark` sets the stored choice and reloads. The inspector prints that flag when it finds the service; the render suggests it when the dark pass left the page background where it was. A component kit usually switches from its own stored choice: MUI's `mui-mode`, Chakra's `chakra-ui-color-mode`, VueUse's `vueuse-color-scheme` (Element Plus apps), or a key the app names (the inspector's theme line gives it). When a dark pass moves nothing at all (Vuetify's app root carries its own theme; Ant Design's `darkAlgorithm` is chosen in JS), the render says so once and does not report the light findings again as dark ones.
+
+## The first render times out
+
+A dev server's first request can reload the page while it compiles (Vite optimising newly found dependencies): the load never finishes in time. The render tries once more and says so (`loaded on a second try`). A second timeout is real: the server is not answering.
 
 ## The task is one component, not a page
 

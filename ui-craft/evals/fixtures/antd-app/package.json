@@ -1,0 +1,17 @@
+{
+  "name": "antd-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "max dev",
+    "dev": "cross-env MOCK=none max dev",
+    "build": "max build"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "antd": "^5.26.0",
+    "@ant-design/pro-components": "^2.8.0",
+    "@umijs/max": "^4.4.0"
+  }
+}

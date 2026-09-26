@@ -1,0 +1,11 @@
+:root {
+  --ink: #1d1b16;
+  --muted: #5f5a50;
+  --paper: #fbf8f2;
+  --accent: #9a3412;
+  --radius: 12px;
+  --space: 16px;
+}
+body { margin: 0; background: var(--paper); color: var(--ink); font-family: Georgia, serif; }
+.page { max-width: 960px; margin: 0 auto; padding: var(--space); }
+.page-title { font-size: 2rem; margin: 0 0 var(--space); }

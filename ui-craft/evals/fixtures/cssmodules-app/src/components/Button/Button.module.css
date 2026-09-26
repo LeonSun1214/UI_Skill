@@ -1,0 +1,1 @@
+.button { background: var(--accent); color: #fff; border: 0; border-radius: var(--radius); min-height: 44px; padding: 0 var(--space); }

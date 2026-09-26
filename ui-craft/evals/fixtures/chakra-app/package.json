@@ -1,0 +1,19 @@
+{
+  "name": "chakra-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0",
+    "@chakra-ui/react": "2.10.4",
+    "@emotion/react": "^11.13.0",
+    "@emotion/styled": "^11.13.0",
+    "framer-motion": "^11.11.0",
+    "react-scripts": "5.0.1"
+  }
+}

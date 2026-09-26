@@ -1,5 +1,70 @@
 # Changelog
 
+## 0.16.0 — Component kits: MUI, Ant Design, Chakra, Element Plus, Vuetify, styled-components, CSS Modules
+
+The third part of the first tier: React and Vue projects whose look is a kit's theme, not
+utility classes. The inspector knew these kits by name and read none of their themes. It
+found no tokens in the MUI kit, called Horizon UI (Chakra) greenfield with dark mode "not
+used" though 58 files call `useColorModeValue`, and read Element Plus's `shadow="hover"`
+props as Tailwind shadows. Its React pages were folders: a route helper counted as a page,
+and a page's component folder counted as more pages. Rendering the kits showed the
+renderer blind to MUI's focus ripple and Vuetify's focus overlay. It also ran dark passes
+on apps with no dark mode, and counted every light finding a second time. Checked on
+material-kit-react (MUI 7), Horizon UI (Chakra 2), Ant Design Pro (antd 6, umi), Outline
+(styled-components), vue-manage-system and RuoYi-Vue3 (Element Plus), Berry (Vuetify 4),
+and on seven fixtures. Notes: `evals/notes/stacks-kits.md`.
+
+- `inspect.py`, the kits: MUI's theme (the palette's `main` colours, background and text,
+  `shape.borderRadius`, fonts, color schemes and their selector, component overrides);
+  Ant Design's tokens from `ConfigProvider`, umi's `antd` config and ProLayout's settings,
+  with the dark and compact algorithms; Chakra's `extendTheme` scales, fonts and component
+  styles; Element Plus's default or customised theme, a runtime theme picker, the locale;
+  Vuetify's themes with their colours and dark flag, and the component defaults; a
+  styled-components or Emotion theme object with the keys components read. Each kit's
+  components by use, how the code styles itself (`sx`, `styled()`, `createStyles`, CSS
+  Modules), and what a match task builds with. For a kit project without Tailwind, the
+  Tailwind class counts are left out, since they matched the kit's props.
+- `inspect.py`, dark mode through the kit: MUI's `useColorScheme` (`mui-mode`), Chakra's
+  color mode (`chakra-ui-color-mode`), VueUse's `useDark` (`vueuse-color-scheme`), Element
+  Plus's dark variables, a styled-components dark theme and the key the app stores its
+  choice under, each with the `--dark-storage` flag.
+- `inspect.py`, React routes: the route table in objects (`createBrowserRouter`,
+  `useRoutes`, a `RouteObject[]`, a `routes.js` menu with `layout` prefixes), in `<Route>`
+  elements (v6 `element=`, v5 `component=`, computed paths shown as `{…}`) and in umi's
+  `config/routes.ts`, followed through lazy imports, namespace imports and barrels. Each
+  page line gives its route, the layout around it (and what holds the page: `<Outlet />`
+  or `children`) and its guards (`RequireAuth`, umi's `access`). A screen that `App` shows
+  before any route stays a page, and a tab or a component folder does not. A thin page
+  that renders a view through a barrel names the view.
+- `inspect.py`, Vue routes: extensionless and webpack-commented imports resolve to their
+  `.vue` file. Hash-history routers get a line saying renders need `/#/<route>`. Routes
+  a backend menu adds at runtime (RuoYi's `getRouters` → `router.addRoute`) get a line
+  saying a new page needs a server-side entry. umi is a framework: its dev server is
+  :8000 and answers `/api` from `mock/`.
+- `render.mjs`, focus: a layer that appears inside a control on focus (MUI's ripple) and an
+  inner element whose own opacity rises (Vuetify's overlay) are measured, and reported as
+  a faint ring when they are. The walk waits two frames after each Tab, so a focus a
+  framework draws in an effect has been drawn when it is measured. Something covering a
+  focused control is named by the layer it belongs to (`behind nav.v-navigation-drawer`);
+  a widget's own parts over its input are not a cover.
+- `render.mjs`, dark mode: a lone widget rule under `.dark` (Element Plus's colour picker)
+  and a light-only `[data-color-scheme]` rule (MUI with no dark scheme) no longer count
+  as dark support. A class that only sets `color-scheme: dark` counts only with its
+  variables. A dark pass that moves nothing (Vuetify's app root keeps its own theme) is
+  said once, and its findings are not counted as dark ones.
+- `render.mjs`, measurements: an icon-only button whose fill melts into its card, but whose
+  icon stands out from the fill, is a weak surface (warned), not a failure. A grid of
+  items of different widths (a dashboard's spans, wrapping chips) is not a ragged row. A
+  font whose stylesheet host failed is counted as not loaded. A first load that times out
+  (a dev server still compiling) is retried once, and the output says so. A saved session
+  with no cookie and no storage says the app keeps its session elsewhere.
+- `references/stacks/kits.md`: each kit's theme, dark mode, and the defaults the render
+  flags with the one-line fix (MUI's ripple, Ant Design's `#91caff` focus ring and 3.36:1
+  secondary text, Element Plus's `#409eff` at 2.78:1, Vuetify's 12% overlay).
+- CI runs the inspector on seven fixtures (45 assertions); the self-test gains a kit page
+  (a ripple, an overlay, a widget dark rule, a light-only scheme, a tonal icon button, a
+  layout grid, a drawer over the header, a select) and an echo page (36 checks).
+
 ## 0.15.0 — Laravel, hand-written HTML, Eleventy and Jekyll
 
 The last two stacks of the first tier: server-rendered Blade, and sites with no framework

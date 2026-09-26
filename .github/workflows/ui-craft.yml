@@ -146,6 +146,68 @@ jobs:
           grep -q "gem install jekyll jekyll-feed jekyll-seo-tag webrick kramdown-parser-gfm" /tmp/inspect-jekyll.txt
           grep -q "### Sass variables in _sass/_base.scss" /tmp/inspect-jekyll.txt
           grep -q "Established conventions detected" /tmp/inspect-jekyll.txt
+          # MUI: a createBrowserRouter table (a guard, a layout, a thin page through a barrel), the theme's palette,
+          # radius, fonts, overrides and color schemes, useColorScheme's key, no Tailwind counts
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/mui-app | tee /tmp/inspect-mui.txt | head -5
+          grep -q "MUI — its components by use" /tmp/inspect-mui.txt
+          grep -q "settings.tsx. · ./settings. · 19 lines · inside DashboardLayout · behind RequireAuth" /tmp/inspect-mui.txt
+          grep -q "dashboard.tsx. · ./. .*renders DashboardView (.src/sections/overview/overview-view.tsx" /tmp/inspect-mui.txt
+          grep -q "palette: primary #0f766e · secondary #b45309" /tmp/inspect-mui.txt
+          grep -q "shape.borderRadius 10 · fonts Inter · color schemes: light, dark (selector .class.)" /tmp/inspect-mui.txt
+          grep -q "component overrides (1): MuiButton" /tmp/inspect-mui.txt
+          grep -q "render dark with .--dark-storage mui-mode=dark." /tmp/inspect-mui.txt
+          grep -q "not a Tailwind project" /tmp/inspect-mui.txt
+          grep -q "loaded from npm (no network needed): .@fontsource/inter." /tmp/inspect-mui.txt
+          # Ant Design Pro on umi: config/routes.ts (access, a redirect, layout: false), tokens from the umi config and
+          # ProLayout settings, darkAlgorithm, umi's dev server; a page's component folder is not a page
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/antd-app | tee /tmp/inspect-antd.txt | head -5
+          grep -q "Umi · React" /tmp/inspect-antd.txt
+          grep -q "Ant Design (with Pro components" /tmp/inspect-antd.txt
+          grep -q "admin/users/index.tsx. · ./admin/users. · 13 lines · inside the umi layout (ProLayout) · behind access canAdmin" /tmp/inspect-antd.txt
+          grep -q "(redirect → ./welcome.)" /tmp/inspect-antd.txt
+          grep -q "tokens: colorPrimary #7c3aed · navTheme light · layout mix · borderRadius 8" /tmp/inspect-antd.txt
+          grep -q "Ant Design's .darkAlgorithm." /tmp/inspect-antd.txt
+          grep -q "max dev. listens on :8000" /tmp/inspect-antd.txt
+          if grep -q "components/UpdateForm.tsx. · " /tmp/inspect-antd.txt; then echo "a component folder is not a page"; exit 1; fi
+          # Chakra v2: a routes.js menu table under splat layouts, the theme's scales and component styles, the color mode key
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/chakra-app | tee /tmp/inspect-chakra.txt | head -5
+          grep -q "views/admin/default/index.jsx. · ./admin/default. · 21 lines · inside AdminLayout" /tmp/inspect-chakra.txt
+          grep -q "views/auth/signIn/index.jsx. · ./auth/sign-in." /tmp/inspect-chakra.txt
+          grep -q "colour scales (500 or middle step): brand #422AFB" /tmp/inspect-chakra.txt
+          grep -q "component styles: Button" /tmp/inspect-chakra.txt
+          grep -q "render dark with .--dark-storage chakra-ui-color-mode=dark." /tmp/inspect-chakra.txt
+          grep -q "references/stacks/kits.md" /tmp/inspect-chakra.txt
+          # styled-components: v5 <Route component>, the theme object, the keys components read, the dark theme and its key
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/styled-app | tee /tmp/inspect-styled.txt | head -5
+          grep -q "styled-components in 7 files (global styles in .src/styles/GlobalStyle.ts.)" /tmp/inspect-styled.txt
+          grep -q "scenes/Settings.tsx. · ./settings." /tmp/inspect-styled.txt
+          grep -q "styled-components theme — .src/styles/theme.ts." /tmp/inspect-styled.txt
+          grep -q "a dark theme (.darkTheme. in .src/styles/theme.ts.)" /tmp/inspect-styled.txt
+          grep -q "render dark with .--dark-storage theme=dark." /tmp/inspect-styled.txt
+          # CSS Modules: one module per component, the global variables, module classes left out of the vocabulary
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/cssmodules-app | tee /tmp/inspect-cssm.txt | head -5
+          grep -q "CSS Modules: 3 .\.module\.\*. files, imported by 3 components" /tmp/inspect-cssm.txt
+          grep -q "colours and spacing come from the variables in .src/index.css." /tmp/inspect-cssm.txt
+          grep -q "Read next: the kit lines above" /tmp/inspect-cssm.txt
+          # Element Plus: hash routes, extensionless and commented imports, routes the backend adds, useDark's key,
+          # the dark variables, a runtime primary, the locale
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/element-app | tee /tmp/inspect-element.txt | head -5
+          grep -q "Element Plus — its components by use" /tmp/inspect-element.txt
+          grep -q ".dashboard. → src/views/dashboard.vue" /tmp/inspect-element.txt
+          grep -q ".\/login. → src/views/login.vue" /tmp/inspect-element.txt
+          grep -q "routes on the URL's hash" /tmp/inspect-element.txt
+          grep -q "routes are also added at runtime" /tmp/inspect-element.txt
+          grep -q "Element Plus's dark variables" /tmp/inspect-element.txt
+          grep -q "render dark with .--dark-storage vueuse-color-scheme=dark." /tmp/inspect-element.txt
+          grep -q "sets the .--el-color-\*. variables at runtime" /tmp/inspect-element.txt
+          grep -q "locale zh-cn" /tmp/inspect-element.txt
+          # Vuetify: both themes with their colours, the component defaults, the switch and its key
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/vuetify-app | tee /tmp/inspect-vuetify.txt | head -5
+          grep -q "Vuetify — its components by use" /tmp/inspect-vuetify.txt
+          grep -q ".light. (light, the default): primary #00695c" /tmp/inspect-vuetify.txt
+          grep -q ".dark. (dark): primary #4db6ac" /tmp/inspect-vuetify.txt
+          grep -q "component defaults: VBtn variant flat, rounded lg" /tmp/inspect-vuetify.txt
+          grep -q "render dark with .--dark-storage app-theme=dark." /tmp/inspect-vuetify.txt
           # Laravel: routes to views (Route::view, controllers, a Livewire page, Fortify), middleware from groups and
           # controllers (except, only), @extends and component layouts, Blade components, Flux, Inertia, @vite
           python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/laravel-app | tee /tmp/inspect-laravel.txt | head -5

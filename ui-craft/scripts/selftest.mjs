@@ -308,6 +308,25 @@ try {
     expect(!(v(r).audit.ragged || []).length, `the sidebar/header/main grid was read as a row of cards: ${JSON.stringify(v(r).audit.ragged)}`);
   });
 
+  await check('kit defaults: a focus ripple, an overlay tint, widget dark rules, a tonal icon button, a layout grid, a cover', async () => {
+    const r = await render(`${base}/kits.html`, join(work, 'kits'));
+    const f = v(r).focus, a = v(r).audit, ring = f.lowContrastRing.join(' | ');
+    expect(/#rippled \(ripple inside it/.test(ring), `the ripple MUI mounts on focus was not read: ${ring} · invisible ${f.invisible.join(', ')}`);
+    expect(/#tinted \(tint on an inner layer/.test(ring), `the overlay Vuetify fades in was not read: ${ring}`);
+    expect(!a.darkSupport.any && !v(r).dark, `a widget's dark rule or a light-only scheme read as dark mode: ${JSON.stringify(a.darkSupport)}`);
+    expect(!a.nonText.failures.length && a.nonText.weak.some((w) => /icon/.test(w.selector)), `the tonal icon button failed: ${JSON.stringify(a.nonText.failures)}`);
+    expect(!a.ragged.length, `a layout grid read as a ragged row: ${JSON.stringify(a.ragged)}`);
+    expect(f.obscured.some((x) => /#under \(behind p\.drawer\)/.test(x)) && !f.obscured.some((x) => /pick/.test(x)),
+      `covers: ${f.obscured.join(', ')}`);
+    return `${ring} · ${f.obscured.join(', ')}`;
+  });
+  await check('a dark pass that changes nothing is not counted twice', async () => {
+    const r = await render(`${base}/echo-dark.html`, join(work, 'echo'));
+    expect(v(r).dark && v(r).dark.echo, `not marked: ${JSON.stringify({ dark: !!v(r).dark, changed: v(r).dark && v(r).dark.themeChanged })}`);
+    expect(!v(r).fails.some((x) => /^dark /.test(x)), `dark findings counted: ${v(r).fails.join(' | ')}`);
+    expect(/the pass moved nothing on the page/.test(r.stdout), 'the Verified block does not say so');
+    return v(r).fails.join(' | ');
+  });
   await check('--dismiss Escape lifts the splash', async () => {
     const a = await render(`${base}/splash.html`, join(work, 's0'));
     const b = await render(`${base}/splash.html`, join(work, 's1'), '--dismiss', 'Escape');
