@@ -270,7 +270,7 @@ def main() -> int:
         print(__doc__); return 0
     opt = lambda flag, default=None: a[a.index(flag) + 1] if flag in a else default
     it = Path(a[1]).resolve()
-    model = opt("--model", "claude-fable-5-1")
+    model = opt("--model")  # none: the claude CLI's own model
     global DARK, RUBRIC, DRY_RUN
     DARK = "--dark" in a
     DRY_RUN = "--dry-run" in a

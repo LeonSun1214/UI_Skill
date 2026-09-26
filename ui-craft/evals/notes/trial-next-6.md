@@ -126,4 +126,4 @@ What it shows:
 
 Cost: 25 judge calls, $3.58 ($1.59 for the generic rubric, $1.99 for the match rubric and
 the archive page). The earlier generic verdicts, from the other model, are kept beside the
-new ones as `judge-fable.json` and `judge-pairs-fable.json`.
+new ones as `judge-earlier.json` and `judge-pairs-earlier.json`.
