@@ -20,6 +20,11 @@ const work = mkdtempSync(join(tmpdir(), 'ui-craft-selftest-'));
 const MIME = { '.html': 'text/html', '.js': 'application/javascript', '.json': 'application/json', '.css': 'text/css' };
 const server = createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
+  if (url.pathname === '/limited.html') { // a rate limit: the page answers 429 with its own error page
+    res.writeHead(429, { 'content-type': 'text/html' });
+    res.end('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Too Many Requests</title></head><body><h1>Too Many Requests</h1></body></html>');
+    return;
+  }
   if (url.pathname === '/api/items') {
     const authed = /^Bearer\s+\S+/.test(req.headers.authorization || '') || /(^|;\s*)session=ok(;|$)/.test(req.headers.cookie || '');
     res.writeHead(authed ? 200 : 401, { 'content-type': 'application/json' });
@@ -272,6 +277,35 @@ try {
     expect(d && d.themeChanged && (d.storage || []).join() === 'look=night', `the stored choice did not switch the theme: ${JSON.stringify(d && { themeChanged: d.themeChanged, storage: d.storage })}`);
     expect(/switched through the app's own storage \(look=night\)/.test(b.stdout), 'the output does not say how it switched');
     return `without: no dark pass · with: bg ${v(b).audit.pageColors.background} → ${d.pageColors.background}`;
+  });
+
+  // 3h. what stands between a render and the page it meant: a kit from a host that does not answer, a
+  // sign-in done once and reused, a rate limit that answers with an error page, a layout grid
+  await check('a kit that did not load, then from a local copy', async () => {
+    const a = await render(`${base}/cdn.html`, join(work, 'cdn0'));
+    expect((v(a).failedAssets || []).some((x) => /kit\.min\.css/.test(x)), `the missing stylesheet was not recorded: ${JSON.stringify(v(a).failedAssets)}`);
+    expect(/did not load \(blocked or offline\): stylesheet 127\.0\.0\.1:9\/kit\/kit\.min\.css/.test(a.stdout), 'the output does not name the stylesheet that did not load');
+    const b = await render(`${base}/cdn.html`, join(work, 'cdn1'), '--mock', `**/kit.min.css=${join(pages, 'kit.min.css')}`);
+    expect(!(v(b).failedAssets || []).length && v(b).audit.pageColors.background === 'rgb(1, 2, 3)', `the local copy did not style the page: ${v(b).audit.pageColors.background}`);
+    return `without: named as not loaded · with --mock: body ${v(b).audit.pageColors.background}`;
+  });
+  await check('--save-state keeps a sign-in for later renders', async () => {
+    const state = join(work, 'signed-in.json');
+    const a = await render(`${base}/signin.html`, join(work, 'si0'), '--act', 'type:#email=a@example.com', '--act', 'click:#go', '--act', 'wait:h1:has-text("Dashboard")', '--save-state', state);
+    expect(v(a).actsNavigated && existsSync(state) && /session saved to/.test(a.stdout), `the session was not saved: ${JSON.stringify({ navigated: v(a).actsNavigated, saved: existsSync(state) })}`);
+    const b = await render(`${base}/gated.html`, join(work, 'si1'), '--storage-state', state);
+    expect(/^Dashboard/.test(h1(b)), `the saved session did not open the gated page: h1=${h1(b)}`);
+    return `signed in once, then h1=${h1(b)}`;
+  });
+  await check('an error page is named, not measured as the page', async () => {
+    const r = await render(`${base}/limited.html`, join(work, 'lim'));
+    expect(v(r).warns.includes('page answered 429'), `no warning for the 429: ${v(r).warns.join(' | ')}`);
+    expect(/the page was "Too Many Requests" \(HTTP 429/.test(r.stdout), 'the output does not say the page was an error page');
+    return '429 named on the output';
+  });
+  await check('a layout grid is not a ragged row', async () => {
+    const r = await render(`${base}/app-shell.html`, join(work, 'shell'));
+    expect(!(v(r).audit.ragged || []).length, `the sidebar/header/main grid was read as a row of cards: ${JSON.stringify(v(r).audit.ragged)}`);
   });
 
   await check('--dismiss Escape lifts the splash', async () => {

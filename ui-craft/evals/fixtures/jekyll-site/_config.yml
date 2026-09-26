@@ -1,0 +1,12 @@
+title: Tidewater Journal
+description: Notes on boats and weather
+permalink: pretty
+plugins:
+  - jekyll-feed
+  - jekyll-seo-tag
+defaults:
+  - scope:
+      path: ""
+      type: "posts"
+    values:
+      layout: "post"

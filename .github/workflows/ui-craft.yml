@@ -119,3 +119,46 @@ jobs:
           grep -q "proxy.conf.json. proxies ./api. → .http://localhost:3000." /tmp/inspect-ng.txt
           grep -q "ng serve. listens on :4200" /tmp/inspect-ng.txt
           grep -q "references/stacks/angular.md" /tmp/inspect-ng.txt
+          # A hand-written site: its pages, the chrome copied into each, the kit from a CDN, the boot theme script
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/static-site | tee /tmp/inspect-static.txt | head -5
+          grep -q "static HTML · Bootstrap 5.3.3 (CDN) · Alpine.js" /tmp/inspect-static.txt
+          grep -q "4 pages in the root, no templates: shared markup is copied into each page" /tmp/inspect-static.txt
+          grep -q "the header .header.site-header. is in 4 of 4 pages, identical in all" /tmp/inspect-static.txt
+          grep -q "the footer .footer.site-footer. is in 4 of 4 pages, identical in 3" /tmp/inspect-static.txt
+          grep -q "contact.html. · ./contact.html. · “Contact · Harbor Coffee” · 45 lines · form, 3 fields" /tmp/inspect-static.txt
+          grep -q "python3 -m http.server 8000" /tmp/inspect-static.txt
+          grep -q "references/stacks/static.md" /tmp/inspect-static.txt
+          grep -q "UI kit: .*Bootstrap 5.3.3 (CDN).* build with its classes" /tmp/inspect-static.txt
+          # Eleventy: dir config, permalinks, directory data (layout and tags), layout chains, site data, not the feed
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/eleventy-site | tee /tmp/inspect-11ty.txt | head -5
+          grep -q "Eleventy: pages from .src/., layouts in .src/_includes/." /tmp/inspect-11ty.txt
+          grep -q "src/about.md. · ./about-us/." /tmp/inspect-11ty.txt
+          grep -q "first-light.md. · ./blog/first-light/. · “First light” · 6 lines · tag .posts. · inside layouts/post.njk → layouts/base.njk" /tmp/inspect-11ty.txt
+          grep -q "site data: .site." /tmp/inspect-11ty.txt
+          if grep -q "feed.xml" /tmp/inspect-11ty.txt; then echo "the feed is not a page"; exit 1; fi
+          # Jekyll: pretty permalinks for posts and pages, defaults, layout chains, includes, Sass with front matter, gems,
+          # Sass variables as the declared tokens, and a site with layouts is matched, not greenfield
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/jekyll-site | tee /tmp/inspect-jekyll.txt | head -5
+          grep -q "reefing-early.md. · ./2026/04/11/reefing-early/. · “Reefing early” · 5 lines · inside post.html → default.html" /tmp/inspect-jekyll.txt
+          grep -q "about.md. · ./about/." /tmp/inspect-jekyll.txt
+          grep -q "styles: .assets/main.scss., which Jekyll compiles" /tmp/inspect-jekyll.txt
+          grep -q "_layouts/default.html. wraps 3 pages: chrome header.html, footer.html" /tmp/inspect-jekyll.txt
+          grep -q "gem install jekyll jekyll-feed jekyll-seo-tag webrick kramdown-parser-gfm" /tmp/inspect-jekyll.txt
+          grep -q "### Sass variables in _sass/_base.scss" /tmp/inspect-jekyll.txt
+          grep -q "Established conventions detected" /tmp/inspect-jekyll.txt
+          # Laravel: routes to views (Route::view, controllers, a Livewire page, Fortify), middleware from groups and
+          # controllers (except, only), @extends and component layouts, Blade components, Flux, Inertia, @vite
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/laravel-app | tee /tmp/inspect-laravel.txt | head -5
+          grep -q "Laravel .12.10 (Blade; Livewire 3, Inertia, Fortify; routes in .routes/web.php.)" /tmp/inspect-laravel.txt
+          grep -q "reports/index.blade.php. · ./reports. · 11 lines · uses x-card · inside layouts.guest" /tmp/inspect-laravel.txt
+          grep -q "reports/show.blade.php. · ./reports/{report}. · 6 lines · middleware auth" /tmp/inspect-laravel.txt
+          grep -q "admin/users.blade.php. · ./admin/users. · 5 lines · middleware auth, can:manage-users" /tmp/inspect-laravel.txt
+          grep -q "livewire/settings.blade.php. · ./settings. · 8 lines · form, Livewire page, middleware auth, verified" /tmp/inspect-laravel.txt
+          grep -q "inside components.layouts.app → app-layout" /tmp/inspect-laravel.txt
+          grep -q "auth/login.blade.php. · ./login. · 11 lines · form, Fortify view" /tmp/inspect-laravel.txt
+          grep -q "card.blade.php. .<x-card>. (3; props title, padded)" /tmp/inspect-laravel.txt
+          grep -q "Flux — its components by use: flux:input ×7" /tmp/inspect-laravel.txt
+          grep -q "./analytics. → Inertia .Analytics." /tmp/inspect-laravel.txt
+          grep -q "render dark through it: .--dark-storage flux.appearance=dark." /tmp/inspect-laravel.txt
+          grep -q "Vite manifest not found" /tmp/inspect-laravel.txt
+          grep -q "references/stacks/laravel.md" /tmp/inspect-laravel.txt

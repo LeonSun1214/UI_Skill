@@ -29,7 +29,7 @@ from pathlib import Path
 SKIP_DIRS = {
     "node_modules", ".next", ".nuxt", ".svelte-kit", "dist", "build", "out", ".git",
     "coverage", ".turbo", ".vercel", ".cache", "storybook-static", ".ui-craft",
-    "__pycache__", ".venv", "venv",
+    "__pycache__", ".venv", "venv", "vendor",
 }
 SRC_EXT = {".tsx", ".jsx", ".ts", ".js", ".mjs", ".mdx", ".astro", ".vue", ".svelte", ".html"}
 CSS_EXT = {".css", ".scss", ".pcss"}
@@ -41,7 +41,7 @@ KNOWN_FRAMEWORKS = [
     ("react-router-dom", "React Router"), ("@tanstack/react-router", "TanStack Router"),
     ("nuxt", "Nuxt"), ("@sveltejs/kit", "SvelteKit"), ("@angular/core", "Angular"),
     ("astro", "Astro"), ("gatsby", "Gatsby"), ("vue", "Vue"), ("svelte", "Svelte"), ("solid-js", "Solid"),
-    ("vite", "Vite"), ("react-scripts", "Create React App"),
+    ("@11ty/eleventy", "Eleventy"), ("vite", "Vite"), ("react-scripts", "Create React App"),
 ]
 KNOWN_UI = {
     "@radix-ui/react-dialog": "Radix primitives", "@radix-ui/react-slot": "Radix primitives",
@@ -145,7 +145,7 @@ def detect_stack(root: Path) -> dict:
 
     # Workspace / monorepo: the app's package.json may carry no deps of its own.
     deps_source = "package.json"
-    if not any(key in deps for key, _ in KNOWN_FRAMEWORKS) and "tailwindcss" not in deps:
+    if pkg_path.exists() and not any(key in deps for key, _ in KNOWN_FRAMEWORKS) and "tailwindcss" not in deps:
         for up in (root.parent, root.parent.parent):
             pp = up / "package.json"
             if not pp.exists() or pp == pkg_path:
@@ -191,6 +191,9 @@ def detect_stack(root: Path) -> dict:
     # backend/, an apps/ folder without a workspace file): look one and two levels down for
     # the packages that are apps, so the verdict can say where to run this instead.
     framework = next((label for key, label in KNOWN_FRAMEWORKS if key in deps), None)
+    laravel = laravel_app(root)
+    if laravel:
+        framework = "Laravel"
     if not workspace_apps and framework is None and "tailwindcss" not in deps:
         skip = {"node_modules", "dist", "build", "out", "coverage", "target", "vendor", ".venv", "venv"}
         candidates: list[Path] = []
@@ -255,7 +258,7 @@ def detect_stack(root: Path) -> dict:
         "react": deps.get("react"),
         "vue": deps.get("vue"),
         "svelte": deps.get("svelte"),
-        "frameworkVersion": next((deps.get(key) for key, label in KNOWN_FRAMEWORKS if label == framework and key in deps), None),
+        "frameworkVersion": laravel["version"] if laravel else next((deps.get(key) for key, label in KNOWN_FRAMEWORKS if label == framework and key in deps), None),
         "workspaceApps": workspace_apps,
         "integrations": astro_integrations(root) if framework == "Astro" else [],
         "tailwind": tw,
@@ -272,14 +275,82 @@ def detect_stack(root: Path) -> dict:
 
 
 # -------------------------------------------------------------------- tokens
+SASS_KIT_DIRS = {"bootstrap", "foundation", "foundation-sites", "bulma", "bourbon", "neat", "font-awesome", "fontawesome",
+                 "materialize", "uikit", "compass", "susy", "breakpoint"}
+SASS_VAR = re.compile(r"\$([\w-]+)\s*:\s*(.+?)\s*;?\s*$")
+
+
+def _scss_top_statements(text: str) -> list[str]:
+    """The statements of an SCSS file outside every rule and block, a value that runs over lines joined."""
+    out, buf, depth, paren, quote, i = [], [], 0, 0, "", 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            quote = "" if ch == quote else quote
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "#" and text[i + 1:i + 2] == "{":          # interpolation, not a block
+            j = text.find("}", i)
+            if depth == 0:
+                buf.append(text[i:j + 1] if j > 0 else ch)
+            i = j + 1 if j > 0 else i + 1
+            continue
+        elif ch == "{":
+            depth, buf = depth + 1, [] if depth == 0 else buf
+            i += 1
+            continue
+        elif ch == "}":
+            depth, buf = max(0, depth - 1), []
+            i += 1
+            continue
+        elif ch == "(":
+            paren += 1
+        elif ch == ")":
+            paren = max(0, paren - 1)
+        elif ch == ";" and depth == 0 and not paren:
+            out.append(" ".join("".join(buf).split()))
+            buf = []
+            i += 1
+            continue
+        if depth == 0:
+            buf.append(ch)
+        i += 1
+    return out
+
+
+def sass_variables(text: str, indented: bool = False) -> list[tuple[str, str]]:
+    """The top-level `$name: value` declarations of a Sass file: a project's tokens."""
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    text = "\n".join(re.sub(r"(?<!:)//.*$", "", line) for line in text.splitlines())
+    stmts = ([line.strip() for line in text.splitlines() if line[:1] == "$"] if indented
+             else _scss_top_statements(text))
+    out = []
+    for stmt in stmts:
+        m = SASS_VAR.match(stmt)
+        if not m:
+            continue
+        value = re.sub(r"\s*!(?:default|global)\b", "", m.group(2)).strip()
+        # a value: a colour, a length, a font stack, another variable, a colour function; not a map, not a
+        # module's call (a Material palette, which the theme line reads), not one cut off mid-expression
+        if value and not value.startswith("(") and value.count("(") == value.count(")") \
+                and not re.match(r"(?!color\.|math\.)[\w-]+\.[\w$-]+\(|map[-.]|mat-", value):
+            out.append((m.group(1), value))
+    return out
+
+
 def collect_tokens(root: Path, css_files: list[Path], stack: dict) -> dict:
     theme_vars: list[tuple[str, str, str]] = []   # (file, name, value)
     root_vars: list[tuple[str, str, str]] = []
+    sass_vars: list[tuple[str, str, str]] = []
     dark_block = False
     for p in css_files:
+        if p.name.endswith(".min.css") and p.with_name(p.name[:-8] + ".css").is_file():
+            continue                                   # the minified twin of a file read already
         text = read(p)
         if not text:
             continue
+        if p.suffix in {".scss", ".sass"} and not ({x.lower() for x in p.relative_to(root).parts[:-1]} & SASS_KIT_DIRS):
+            sass_vars += [(rel(root, p), f"${n}", v) for n, v in sass_variables(text, p.suffix == ".sass")]
         for m in re.finditer(r"@theme\b[^{]*", text):
             for name, value in CSS_VAR.findall(block_after(text, m.end())):
                 theme_vars.append((rel(root, p), name, value.strip()))
@@ -306,6 +377,7 @@ def collect_tokens(root: Path, css_files: list[Path], stack: dict) -> dict:
     return {
         "theme": theme_vars[:120],
         "root": root_vars[:120],
+        "sass": sass_vars[:120],
         "darkBlock": dark_block,
         "configExtend": config_extract,
     }
@@ -335,6 +407,10 @@ def collect_fonts(root: Path, src_files: list[Path], css_files: list[Path], toke
     token_fonts = [
         (n, v.split(",")[0].strip().strip("\"'"))
         for _, n, v in tokens["theme"] + tokens["root"] if n.startswith("--font")
+    ] + [
+        (n, v.split(",")[0].strip().strip("\"'"))
+        for _, n, v in tokens.get("sass", []) if not v.startswith("$")
+        and ("font" in n and "," in v or re.search(r",\s*(?:sans-serif|serif|monospace|system-ui|cursive)\s*$", v))
     ]
     icon_fonts |= {g for g in google if re.match(r"Material (Icons|Symbols)", g)}
     google -= icon_fonts
@@ -443,19 +519,27 @@ def find_docs(root: Path) -> list[str]:
 
 # ------------------------------------------------------------------- verdict
 def verdict(stack: dict, tokens: dict, fonts: dict, comps: dict, usage: dict, docs: list[str], sh: dict | None = None) -> dict:
-    tokens_declared = bool(tokens["theme"] or tokens["root"] or tokens["configExtend"])
-    ng = (sh or {}).get("ng")
-    mt = (sh or {}).get("material")
+    tokens_declared = bool(tokens["theme"] or tokens["root"] or tokens.get("sass") or tokens["configExtend"])
+    sh = sh or {}
+    ng, mt, site, lv = sh.get("ng"), sh.get("material"), sh.get("site"), sh.get("laravel")
+    pages = len(sh.get("pages") or [])
     established = (
         usage["rawTotal"] + usage["semanticTotal"] >= 25
         or len(comps["primitives"]) + len(comps["composed"]) >= 4
         or tokens_declared
         or bool(ng and (ng["components"] >= 4 or (mt and (mt["file"] or mt["prebuilt"]))))
+        # pages that share a kit, a layout, copied chrome or a stylesheet's classes have a look to match
+        or bool(site and pages >= 2 and (site["kits"] or site["copies"] or sh.get("layouts") or len(sh.get("vocabulary") or []) >= 5))
+        or bool(lv and pages >= 2 and (sh.get("bladeUsed") or sh.get("bladeKit") or sh.get("layouts")))
     )
     lines = []
     if mt and (mt["file"] or mt["prebuilt"]):
         cols = ", ".join(f"{k} {v}" for k, v in list(mt["colors"].items())[:2])
         lines.append(f"UI kit: **Angular Material** ({mt['kind'] or 'prebuilt'} theme" + (f", {cols}" if cols else "") + ") — build with its components, not hand-rolled ones")
+    if site and site["kits"]:
+        lines.append(f"UI kit: **{site['kits']}** — build with its classes, not new CSS")
+    if sh.get("bladeKit"):
+        lines.append(f"UI kit: **{sh['bladeKit']['name']}** — build with its components, not hand-rolled ones")
     total_color = usage["rawTotal"] + usage["semanticTotal"]
     if total_color:
         sem_pct = round(100 * usage["semanticTotal"] / total_color)
@@ -738,7 +822,7 @@ def theme_mechanism(root: Path, css_files: list[Path], stack: dict, src_files: l
                        else "the OS scheme (`prefers-color-scheme`)" if "media" in v else f"`{v[:40]}`")
                 where = f"`{cfg}` (`darkMode: {v[:40]}`)"
                 break
-    uses_dark = any("dark:" in read(p, 200_000) for p in src_files[:MAX_SRC_FILES] if p.suffix in {".tsx", ".jsx", ".vue", ".svelte", ".astro", ".html", ".mdx"})
+    uses_dark = any("dark:" in read(p, 200_000) for p in src_files[:MAX_SRC_FILES] if p.suffix in {".tsx", ".jsx", ".vue", ".svelte", ".astro", ".html", ".mdx"} or p.name.endswith(".blade.php"))
     deps = stack.get("deps") or {}
     color_mode = None
     if any(k in deps for k in ("@nuxtjs/color-mode", "@nuxt/ui", "@nuxt/ui-pro")):
@@ -753,12 +837,12 @@ def theme_mechanism(root: Path, css_files: list[Path], stack: dict, src_files: l
             where = "the class @nuxtjs/color-mode sets" + (" (Nuxt UI brings it)" if nuxt_ui_on else "")
     plain = False
     ng_setter = None
-    if how is None and stack.get("framework") == "Angular":
+    if how is None and stack.get("framework") in ("Angular", "Laravel", None, "Eleventy", "Jekyll", "Hugo", "static HTML"):
         found = angular_dark(root, css_files)
         if found:
             cls, where_ = found
             ng_setter = angular_dark_setter(root, src_files, cls)
-            on = "`<html>`" if ng_setter and re.search(r"documentElement|htmlElement|\bhtml\b", read(root / ng_setter.split("`")[1], 200_000)) else "an ancestor"
+            on = "`<html>`" if ng_setter and ("`<html class>`" in ng_setter or re.search(r"documentElement|htmlElement|\bhtml\b", read(root / ng_setter.split("`")[1], 200_000))) else "an ancestor"
             scheme = any(re.search(r"\." + re.escape(cls) + r"\b[^{]*\{[^}]*color-scheme\s*:\s*dark", read(c)) for c in css_files)
             how = f"`.{cls}` on {on}" + (" (`color-scheme: dark`: Material's `light-dark()` colours follow it)" if scheme and "@angular/material" in deps else "")
             where, plain = f"`{where_}`", True
@@ -798,6 +882,8 @@ def theme_mechanism(root: Path, css_files: list[Path], stack: dict, src_files: l
                     break
             if setter:
                 break
+    if setter is None and stack.get("framework") == "Laravel" and any("@fluxAppearance" in read(p, 100_000) for p in src_files if p.name.endswith(".blade.php")):
+        setter = "set before paint by Flux's `@fluxAppearance` (localStorage `flux.appearance`: light, dark or system); render dark through it: `--dark-storage flux.appearance=dark`"
     if setter is None and stack.get("framework") == "Angular":   # a theme service: classList.add('dark')
         cm = re.search(r"`\.([\w-]+)`", how)
         setter = angular_dark_setter(root, src_files, cm.group(1)) if cm else None
@@ -2036,7 +2122,7 @@ def angular_dark(root: Path, css_files: list[Path]) -> tuple[str, str] | None:
         t = read(c)
         dark_vars |= set(re.findall(r"\$([\w-]+)\s*:\s*(?:mat\.)?(?:m2-)?(?:define-dark-theme|mat-dark-theme)\(", t))
         dark_vars |= {v for v, body in re.findall(r"\$([\w-]+)\s*:\s*mat\.define-theme\(\s*\((.*?)\)\s*\)\s*;", t, re.S) if re.search(r"theme-type\s*:\s*dark", body)}
-    for c in css_files:
+    for c in sorted(css_files, key=lambda c: -read(c).count(".dark")):
         t = read(c)
         for m in re.finditer(r"(?m)^[ \t]*((?:html|body|:root)?\.([\w-]+))(?![\w.:#\[-])[^{};]*\{", t):
             cls, block = m.group(2), block_after(t, m.start())
@@ -2048,7 +2134,13 @@ def angular_dark(root: Path, css_files: list[Path]) -> tuple[str, str] | None:
 
 
 def angular_dark_setter(root: Path, src_files: list[Path], cls: str) -> str | None:
-    """The TypeScript that puts the theme class on the page, and the storage key it remembers the choice in."""
+    """What puts the theme class on the page: a server template writing it into <html class> (a Blade layout),
+    or a script (a theme service), with the storage key it remembers the choice in."""
+    for f in src_files:
+        if f.name.endswith(".blade.php"):
+            hm = re.search(r"<html\b(?:(?<=[-=])>|[^>])*?\bclass\s*=\s*\"[^\"]*" + re.escape(cls), read(f, 100_000))   # `->` inside {{ }} is not the tag's end
+            if hm and re.search(r"\{\{|@if|@class", hm.group(0)):
+                return f"written into `<html class>` by the server in `{rel(root, f)}` from a setting: render dark signed in with it on, or with `--dark`"
     for f in src_files:
         if f.suffix != ".ts" or re.search(r"\.(spec|test)\.ts$", f.name):
             continue
@@ -2198,6 +2290,853 @@ def angular_start(root: Path, src_files: list[Path], css_files: list[Path], deps
         "port": (ws or {}).get("port"), "proxies": angular_proxies(root, ws), "scopedCss": scoped, "components": len(comps),
         "inlineTemplates": [c["template"] for c in comps if not c["templateFile"] and c["template"]],
     }
+
+
+# ------------------------------------------------- static sites and site generators
+# A site with no framework: hand-written HTML pages, or templates a generator (Eleventy, Jekyll,
+# Hugo) turns into pages. What a match task needs is the same as elsewhere (the page to copy, what
+# wraps it, where the styles are, how to serve it) plus one thing only hand-written sites have:
+# the header, nav or footer copied into every page, where one change is an edit to every file.
+SITE_SKIP = {"vendor", "vendors", "lib", "libs", "bower_components", "third-party", "third_party", "_site", "public/build"}
+STATIC_KITS = [   # (pattern over a <link>/<script> URL or a vendored path, label, version group)
+    (r"cdn\.tailwindcss\.com", "Tailwind (Play CDN)", None),
+    (r"@tailwindcss/browser@?(\d[\w.]*)?", "Tailwind (browser build)", 1),
+    (r"tailwindcss@\^?(\d[\w.]*)[^\s\"']*?/tailwind(?:\.min)?\.css", "Tailwind (prebuilt CSS)", 1),
+    (r"bootstrap@\^?(\d[\w.]*)|/bootstrap/(\d[\w.]*)/|bootstrap(?:\.bundle)?(?:\.min)?\.(?:css|js)", "Bootstrap", 1),
+    (r"bulma@?(\d[\w.]*)?[^\s\"']*?bulma(?:\.min)?\.css|/bulma(?:\.min)?\.css", "Bulma", 1),
+    (r"@picocss/pico@?(\d[\w.]*)?|/pico(?:\.classless)?(?:\.min)?\.css", "Pico", 1),
+    (r"foundation(?:-sites)?@?(\d[\w.]*)?[^\s\"']*?foundation(?:\.min)?\.css", "Foundation", 1),
+    (r"uikit@?(\d[\w.]*)?[^\s\"']*?uikit(?:\.min)?\.css", "UIkit", 1),
+    (r"materialize(?:-css)?@?(\d[\w.]*)?[^\s\"']*?materialize(?:\.min)?\.css", "Materialize", 1),
+]
+STATIC_LIBS = [(r"jquery", "jQuery"), (r"alpinejs|/alpine(?:\.min)?\.js", "Alpine.js"), (r"htmx(?:\.org)?(?:@|/|\.min)", "htmx"),
+               (r"font-?awesome|fontawesome", "Font Awesome"), (r"chart\.js|/chart(?:\.umd)?(?:\.min)?\.js", "Chart.js"),
+               (r"bootstrap-icons", "Bootstrap Icons")]
+SITE_TEMPLATE_EXT = {".md", ".njk", ".liquid", ".html", ".webc", ".hbs", ".mustache", ".ejs", ".pug", ".markdown"}
+
+
+def site_generator(root: Path, deps: dict) -> str | None:
+    if "@11ty/eleventy" in deps or any((root / n).is_file() for n in ("eleventy.config.js", "eleventy.config.mjs", "eleventy.config.cjs", ".eleventy.js")):
+        return "Eleventy"
+    if (root / "_config.yml").is_file() and ((root / "_layouts").is_dir() or (root / "_posts").is_dir() or "jekyll" in read(root / "Gemfile").lower()):
+        return "Jekyll"
+    if any((root / n).is_file() for n in ("hugo.toml", "hugo.yaml", "hugo.json")) or ((root / "config.toml").is_file() and (root / "layouts").is_dir() and (root / "content").is_dir()):
+        return "Hugo"
+    return None
+
+
+def _site_files(root: Path) -> list[Path]:
+    return [p for p in iter_files(root) if not ({x.lower() for x in p.relative_to(root).parts[:-1]} & SITE_SKIP)]
+
+
+def front_matter(text: str) -> dict:
+    """Simple keys of a page's front matter: YAML (`layout: post`) or Eleventy's `---js` object."""
+    m = re.match(r"\s*---(js|json)?\s*\n(.*?)\n---", text, re.S)
+    if not m:
+        return {}
+    body = m.group(2)
+    if m.group(1):
+        return {k: v for k, v in re.findall(r"\b(layout|permalink|title|tags)\s*[:=]\s*['\"`]([^'\"`]+)", body)}
+    out = {}
+    for k, v in re.findall(r"(?m)^([\w-]+)\s*:\s*(.*)$", body):
+        out.setdefault(k, v.strip().strip("'\""))
+    return out
+
+
+def _page_title(text: str, fm: dict) -> str | None:
+    title = fm.get("title")
+    if not title:
+        m = re.search(r"<title>\s*([^<{]+?)\s*</title>", text) or re.search(r"<h1[^>]*>\s*([^<{]+?)\s*</h1>", text) or re.search(r"(?m)^#\s+(.+)$", text)
+        title = m.group(1) if m else None
+    return (title[:57].rstrip() + "…" if len(title) > 58 else title) if title else None
+
+
+def site_assets(root: Path, files: list[Path]) -> dict:
+    """The kits and libraries a site loads from a CDN or keeps vendored, with versions where they show."""
+    urls: list[str] = []
+    for f in files:
+        if f.suffix in SITE_TEMPLATE_EXT or f.suffix == ".htm":
+            t = read(f, 200_000)
+            urls += re.findall(r"<(?:link|script)\b[^>]*?(?:href|src)\s*=\s*['\"]([^'\"]+)['\"]", t)
+    vendored = [rel(root, d) for base in ("vendor", "vendors", "lib", "libs", "assets/vendor", "assets/lib") if (root / base).is_dir()
+                for d in sorted((root / base).iterdir()) if d.is_dir()]
+    kits, libs = {}, []
+    for pat, label, vg in STATIC_KITS:
+        for u in urls + vendored:
+            m = re.search(pat, u, re.I)
+            if m:
+                ver = next((g for g in m.groups() if g), None) if vg else None
+                where = ("vendored" if u in vendored or re.match(r"(\./)?(vendor|vendors|lib|libs)/", u)
+                         else "CDN" if re.match(r"(https?:)?//", u) else "local")
+                if label not in kits or (ver and not kits[label][0]):
+                    kits[label] = (ver, where, u)
+    if "Bootstrap" in kits and not kits["Bootstrap"][0]:                  # a vendored copy names its version in its header
+        for cand in [*root.glob("**/bootstrap*.css"), *root.glob("**/bootstrap*.js")]:
+            if "node_modules" in cand.parts:
+                continue
+            vm = re.search(r"Bootstrap v(\d[\d.]*)", read(cand, 2_000))
+            if vm:
+                kits["Bootstrap"] = (vm.group(1), kits["Bootstrap"][1], kits["Bootstrap"][2])
+                break
+    for pat, label in STATIC_LIBS:
+        if any(re.search(pat, u, re.I) for u in urls + vendored):
+            libs.append(label)
+    return {"kits": [(k, v, w) for k, (v, w, _) in kits.items()], "libs": libs}
+
+
+def _element_at(text: str, i: int) -> str:
+    """The outer HTML of the element whose start tag begins at text[i], nested same-name tags counted."""
+    m = re.match(r"<([a-zA-Z][\w-]*)", text[i:])
+    if not m:
+        return ""
+    tag, depth, j = m.group(1).lower(), 0, i
+    for t in re.finditer(r"<(/?)" + re.escape(tag) + r"\b[^>]*>", text[i:], re.I):
+        depth += -1 if t.group(1) else 1
+        if depth == 0:
+            return text[i:i + t.end()]
+    return text[i:i + 4000]
+
+
+def _chrome_blocks(text: str) -> dict[str, tuple[str, int, str]]:
+    """The page's header, nav, sidebar and footer: label → (normalised markup, line, how to find it)."""
+    out, raw = {}, {}
+    body = re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    cands = [("header", r"<header\b"), ("footer", r"<footer\b"),
+             ("sidebar", r"<(?:ul|div|nav|aside)\b[^>]*\b(?:id|class)\s*=\s*['\"][^'\"]*\bsidebar\b"),
+             ("nav", r"<nav\b"), ("modal", r"<div\b[^>]*\bclass\s*=\s*['\"][^'\"]*\bmodal\b|<dialog\b")]
+    for label, pat in cands:
+        m = re.search(pat, body, re.I)
+        if not m:
+            continue
+        el = _element_at(body, m.start())
+        if any(el and el in outer for outer in raw.values()):       # a nav inside the header is the header's
+            continue
+        raw[label] = el
+        head = re.match(r"<([a-zA-Z][\w-]*)([^>]*)>", el)
+        ident = head.group(1).lower() if head else label
+        if head:
+            idm = re.search(r"\bid\s*=\s*['\"]([^'\"]+)", head.group(2))
+            cm = re.search(r"\bclass\s*=\s*['\"]([^'\"]+)", head.group(2))
+            ident += f"#{idm.group(1)}" if idm else (f".{'.'.join(cm.group(1).split()[:2])}" if cm else "")
+        norm = _norm_chrome(el)
+        line = text[: text.find(el[:80]) if el[:80] in text else m.start()].count("\n") + 1
+        out[label] = (norm, line, ident)
+    return out
+
+
+CHROME_STATE = {"active", "show", "collapsed", "current", "is-active", "selected", "open"}
+
+
+def _norm_chrome(el: str) -> str:
+    """A block's markup with the page's own state set aside: which item is current, which menu is open."""
+    def attr(m: re.Match) -> str:
+        name, q, val = m.group(1), m.group(2), m.group(3)
+        if name.lower() in {"aria-current", "aria-expanded", "aria-selected"}:
+            return ""
+        toks = [x for x in val.split() if name.lower() != "class" or x not in CHROME_STATE]
+        return f" {name}={q}{' '.join(toks)}{q}"
+    s = re.sub(r"\s+", " ", el)
+    s = re.sub(r"\s+([\w:-]+)\s*=\s*([\"'])(.*?)\2", attr, s)
+    return re.sub(r"\s*>\s*", ">", s)
+
+
+def copied_chrome(root: Path, pages: list[Path]) -> list[str]:
+    """Blocks repeated across hand-written pages: each is one edit per page, not one edit."""
+    if len(pages) < 3:
+        return []
+    per: dict[str, list[tuple[Path, str, int, str]]] = collections.defaultdict(list)
+    for p in pages:
+        for label, (norm, line, ident) in _chrome_blocks(read(p, 300_000)).items():
+            per[label].append((p, norm, line, ident))
+    lines = []
+    for label in ("sidebar", "header", "nav", "footer", "modal"):
+        found = per.get(label, [])
+        if len(found) < 3:
+            continue
+        groups = collections.Counter(norm for _, norm, _, _ in found)
+        same = groups.most_common(1)[0][1]
+        typical = [x for x in found if x[1] == groups.most_common(1)[0][0]]
+        first = next((x for x in typical if x[0].name == "index.html"), typical[0])
+        lines.append(f"the {label} `{first[3]}` is in {len(found)} of {len(pages)} pages"
+                     + (", identical in all" if same == len(found) else f", identical in {same} once the current item is set aside" if same > 1 else ", different in each")
+                     + f" (`{rel(root, first[0])}:{first[2]}`)")
+    return lines
+
+
+def _without_chrome(text: str) -> str:
+    """A page less its header, nav, sidebar, footer and modals: what the page itself holds."""
+    body = re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    for _ in range(8):
+        m = None
+        for pat in (r"<header\b", r"<footer\b", r"<nav\b", r"<(?:ul|div|aside)\b[^>]*\b(?:id|class)\s*=\s*['\"][^'\"]*\bsidebar\b",
+                    r"<div\b[^>]*\bclass\s*=\s*['\"][^'\"]*\bmodal\b"):
+            m = re.search(pat, body, re.I)
+            if m:
+                el = _element_at(body, m.start())
+                body = body[:m.start()] + body[m.start() + len(el):]
+                break
+        if not m:
+            break
+    return body
+
+
+def static_pages(root: Path, files: list[Path], vocab_names: list[str]) -> tuple[Path, list[dict]]:
+    """Hand-written pages: every .html under the site's root folder, with its route and title."""
+    htmls = [p for p in files if p.suffix in {".html", ".htm"}]
+    roots = [d for d in (root, root / "public", root / "src", root / "docs", root / "site", root / "www", root / "html") if (d / "index.html").is_file()]
+    site = max(roots, key=lambda d: sum(1 for p in htmls if d in p.parents or p.parent == d), default=root)
+    pages = []
+    for p in sorted(htmls):
+        if not (site in p.parents or p.parent == site):
+            continue
+        t = read(p, 300_000)
+        if not re.search(r"<(?:html|body|head)\b", t, re.I):          # a fragment, not a page
+            continue
+        r_ = p.relative_to(site).as_posix()
+        route = "/" + (r_[:-len("index.html")] if r_.endswith("index.html") else r_)
+        css = [h for h in re.findall(r"<link\b[^>]*?href\s*=\s*['\"]([^'\"]+\.css)[^'\"]*['\"]", t) if not re.match(r"(https?:)?//", h)]
+        own = _without_chrome(t)
+        used = sorted(((n, _cls_uses(n, [own])) for n in vocab_names), key=lambda x: -x[1])
+        pages.append({"file": rel(root, p), "lines": t.count("\n") + 1, "signals": _signals(own), "route": f"`{route}`",
+                      "title": _page_title(t, {}), "classes": [f"{n} ×{c}" for n, c in used if c][:3], "components": [],
+                      "renders": None, "template": None, "css": css[:3]})
+    return site, pages
+
+
+def _site_layout_file(base: Path, name: str) -> Path | None:
+    for c in (base / name, *(base / f"{name}{e}" for e in (".njk", ".liquid", ".html", ".md", ".webc", ".hbs", ".11ty.js"))):
+        if c.is_file():
+            return c
+    return None
+
+
+def _layout_chain(base: Path, name: str | None, root: Path) -> list[Path]:
+    chain, seen = [], set()
+    while name and len(chain) < 5:
+        f = _site_layout_file(base, name)
+        if not f or f in seen:
+            break
+        seen.add(f)
+        chain.append(f)
+        name = front_matter(read(f, 50_000)).get("layout")
+    return chain
+
+
+def _template_code(text: str) -> str:
+    """A template without its comments ({# #}, {% comment %}, <!-- -->)."""
+    t = re.sub(r"\{#.*?#\}", "", text, flags=re.S)
+    t = re.sub(r"\{%-?\s*comment\s*-?%\}.*?\{%-?\s*endcomment\s*-?%\}", "", t, flags=re.S)
+    return re.sub(r"<!--.*?-->", "", t, flags=re.S)
+
+
+def _includes_of(text: str) -> list[str]:
+    found = re.findall(r"\{%-?\s*(?:include|render|includeCached)\s+['\"]?([\w./-]+?)['\"]?(?:\s|%)", _template_code(text))
+    return [x for x in dict.fromkeys(found) if not x.endswith((".css", ".js"))]
+
+
+def generator_site(root: Path, kind: str, files: list[Path], vocab_names: list[str]) -> dict:
+    """Eleventy and Jekyll: the pages the templates make, their routes, the layout chain each sits in."""
+    pages, layouts_used = [], collections.Counter()
+    dirs: dict = {}
+    if kind == "Eleventy":
+        cfg = next((root / n for n in ("eleventy.config.js", "eleventy.config.mjs", "eleventy.config.cjs", ".eleventy.js") if (root / n).is_file()), None)
+        ct = read(cfg) if cfg else ""
+        dm = re.search(r"\bdir\s*:\s*\{", ct)
+        d = dict(re.findall(r"(input|includes|layouts|data|output)\s*:\s*['\"]([^'\"]+)", block_after(ct, dm.start()))) if dm else {}
+        for key, fn in (("input", "setInputDirectory"), ("includes", "setIncludesDirectory"), ("layouts", "setLayoutsDirectory"), ("data", "setDataDirectory"), ("output", "setOutputDirectory")):
+            am = re.search(fn + r"\(\s*['\"]([^'\"]+)", ct)
+            if am:
+                d[key] = am.group(1)
+        inp = Path(os.path.normpath(root / d.get("input", ".")))
+        inc = Path(os.path.normpath(inp / d.get("includes", "_includes")))
+        lay = Path(os.path.normpath(inp / d["layouts"])) if d.get("layouts") else inc
+        data = Path(os.path.normpath(inp / d.get("data", "_data")))
+        dirs = {"input": inp, "includes": inc, "layouts": lay, "data": data, "output": d.get("output", "_site"), "config": cfg}
+        skip = {inc, lay, data, root / "node_modules", root / dirs["output"]}
+        dir_data: dict[Path, dict] = {}
+        for f in files:                                        # directory data: blog/blog.11tydata.js sets layout and tags for blog/
+            if re.search(r"\.11tydata\.(js|cjs|mjs|json)$", f.name):
+                t = read(f, 50_000)
+                vals = dict(re.findall(r"['\"]?(layout|permalink)['\"]?\s*:\s*['\"]([^'\"]+)", t))
+                tags = re.findall(r"['\"]?tags['\"]?\s*:\s*\[?\s*['\"]([^'\"]+)", t)
+                if tags:
+                    vals["tags"] = tags[0]
+                dir_data[f.parent if f.name.split(".")[0] == f.parent.name or f.name.startswith(f.parent.name) else f] = vals
+        for f in sorted(files):
+            if f.suffix not in SITE_TEMPLATE_EXT or not (inp in f.parents or f.parent == inp) or any(s in f.parents for s in skip):
+                continue
+            if f.name.startswith("_") or re.search(r"\.11tydata\.", f.name):
+                continue
+            t = read(f, 200_000)
+            fm = front_matter(t)
+            inherited: dict = {}
+            for anc in reversed([f.parent, *f.parent.parents]):
+                if anc in dir_data:
+                    inherited.update(dir_data[anc])
+                if anc == inp.parent:
+                    pass
+            vals = {**inherited, **fm}
+            if vals.get("permalink") in ("false", False):
+                continue
+            relp = f.relative_to(inp).with_suffix("")
+            parts = list(relp.parts)
+            if parts[-1] == "index" or (len(parts) > 1 and parts[-1] == parts[-2]):
+                parts = parts[:-1]
+            route = vals.get("permalink") or "/" + "/".join(parts) + ("/" if parts else "")
+            if not route.startswith("/"):
+                route = "/" + route
+            if re.search(r"\.(xml|json|txt|xsl|rss|atom)$", route) or re.search(r"\.(xml|json|txt)\.\w+$", f.name):
+                continue
+            tags = [x for x in re.findall(r"['\"]([^'\"]+)['\"]", fm.get("tags", "")) or ([fm["tags"]] if fm.get("tags") else [])]
+            if inherited.get("tags"):
+                tags = [inherited["tags"]] + [x for x in tags if x != inherited["tags"]]
+            vals["tags"] = ", ".join(tags) if tags else None
+            chain = _layout_chain(lay, vals.get("layout"), root)
+            for c in chain:
+                layouts_used[c] += 1
+            pages.append(_generator_page(root, f, t, route, chain, vals, vocab_names))
+    elif kind == "Jekyll":
+        cfg = read(root / "_config.yml")
+        permalink = (re.search(r"(?m)^permalink:\s*(\S+)", cfg) or [None, "date"])[1]
+        defaults = {}
+        dm = re.search(r"(?ms)^defaults:\s*\n(.*?)(?=^\S)", cfg + "\nEND")
+        if dm:
+            for scope, layout in re.findall(r"type:\s*['\"]?(\w+)['\"]?.*?layout:\s*['\"]?([\w-]+)", dm.group(1), re.S):
+                defaults[scope] = layout
+        lay = root / "_layouts"
+        dirs = {"input": root, "includes": root / "_includes", "layouts": lay, "data": root / "_data", "output": "_site", "config": root / "_config.yml"}
+        for f in sorted(files):
+            relp = f.relative_to(root)
+            if f.suffix not in {".md", ".html", ".markdown"} or relp.parts[0] in {"_site", "_layouts", "_includes", "_sass", "_data", "vendor", "node_modules"}:
+                continue
+            t = read(f, 200_000)
+            fm = front_matter(t)
+            post = relp.parts[0] == "_posts"
+            if not fm and not post:
+                continue                                          # no front matter: Jekyll copies it as it is
+            if relp.parts[0].startswith("_") and not post:
+                continue
+            if post:
+                pm = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})-(.+)$", f.stem)
+                slug = pm.group(4) if pm else f.stem
+                pat = {"pretty": "/:year/:month/:day/:title/", "date": "/:year/:month/:day/:title.html", "none": "/:title.html"}.get(permalink, permalink)
+                route = fm.get("permalink") or pat.replace(":title", slug).replace(":categories/", "").replace(":year", pm.group(1) if pm else "YYYY") \
+                    .replace(":month", (pm.group(2) if pm else "MM").zfill(2)).replace(":day", (pm.group(3) if pm else "DD").zfill(2))
+                layout = fm.get("layout") or defaults.get("posts")
+            else:
+                parts = list(relp.with_suffix("").parts)
+                pretty = permalink == "pretty" or permalink.endswith("/")          # pages get folder routes too
+                route = fm.get("permalink") or (("/" + "/".join(parts[:-1]) + "/").replace("//", "/") if parts[-1] == "index"
+                                                else "/" + "/".join(parts) + ("/" if pretty else ".html"))
+                layout = fm.get("layout") or defaults.get("pages")
+            chain = _layout_chain(lay, layout, root)
+            for c in chain:
+                layouts_used[c] += 1
+            pages.append(_generator_page(root, f, t, route, chain, fm, vocab_names))
+    return {"pages": pages, "dirs": dirs, "layoutsUsed": layouts_used}
+
+
+def _generator_page(root: Path, f: Path, t: str, route: str, chain: list[Path], vals: dict, vocab_names: list[str]) -> dict:
+    body = re.sub(r"^\s*---.*?\n---", "", t, count=1, flags=re.S)
+    used = sorted(((n, _cls_uses(n, [body])) for n in vocab_names), key=lambda x: -x[1])
+    renders = None
+    if chain:
+        renders = {"name": " → ".join(rel(chain[0].parent.parent if chain[0].parent.name == "layouts" else chain[0].parent, c) for c in chain),
+                   "file": rel(root, chain[0]), "lines": read(chain[0], 200_000).count("\n") + 1, "signals": [], "wrapper": True,
+                   "holder": "`{{ content }}`"}
+    sig = _signals(body)
+    if vals.get("tags"):
+        sig.append(f"tag `{vals['tags']}`")
+    return {"file": rel(root, f), "lines": t.count("\n") + 1, "signals": sig, "route": f"`{route}`", "title": _page_title(t, vals),
+            "classes": [f"{n} ×{c}" for n, c in used if c][:3], "components": _includes_of(body)[:4], "renders": renders, "template": None,
+            "usesWord": "includes"}
+
+
+def site_start(root: Path, src_files: list[Path], css_files: list[Path], stack: dict, deps: dict, vocab_names: list[str]) -> dict | None:
+    """Start-here pieces for a site without a framework: its pages, what wraps them, where the styles are, how to serve it."""
+    kind = site_generator(root, deps)
+    files = _site_files(root)
+    if not kind and not any(p.suffix in {".html", ".htm"} for p in files):
+        return None
+    assets = site_assets(root, files)
+    before: list[str] = []
+    layouts: list[dict] = []
+    if kind in ("Eleventy", "Jekyll"):
+        g = generator_site(root, kind, files, vocab_names)
+        pages, dirs = g["pages"], g["dirs"]
+        for lf, n in sorted(g["layoutsUsed"].items(), key=lambda kv: (-kv[1], str(kv[0]))):
+            t = _template_code(read(lf, 200_000))
+            parent = front_matter(t).get("layout")
+            css = re.findall(r"<link\b[^>]*?href\s*=\s*['\"]([^'\"{]+\.css)", t) + re.findall(r"\{%-?\s*include\s+['\"]([^'\"]+\.css)['\"]", t)
+            layouts.append({"file": rel(root, lf), "scopeText": f"wraps {n} page{'s' if n != 1 else ''}" + (f" (then sits in `{parent}`)" if parent else ""),
+                            "css": css[:3], "fonts": [], "providers": [], "chrome": _includes_of(t)[:6]})
+        where = {k: rel(root, v) for k, v in dirs.items() if isinstance(v, Path) and k != "config"}
+        src = "the root" if where.get("input") in (".", "") else f"`{where.get('input')}/`"
+        sass = [rel(root, f) for f in files if f.suffix in {".scss", ".sass"} and not f.name.startswith("_")
+                and not ({x for x in f.relative_to(root).parts} & {"_sass", "node_modules"}) and re.match(r"\s*---", read(f, 200))]
+        site_line = (f"{kind}: pages from {src}, layouts in `{where.get('layouts')}/`, includes in `{where.get('includes')}/`"
+                     + (f", data in `{where.get('data')}/`" if (root / where.get("data", "_data")).is_dir() else "") + f", built into `{dirs.get('output')}/`"
+                     + (f"; styles: {', '.join(f'`{s}`' for s in sass)}, which Jekyll compiles with the partials in `_sass/`" if kind == "Jekyll" and sass else ""))
+        data_files = sorted(p.stem for p in (dirs["data"].glob("*") if dirs.get("data") and dirs["data"].is_dir() else []) if p.suffix in {".js", ".json", ".yml", ".yaml", ".cjs", ".mjs"})
+        if data_files:
+            before.append(f"site data: {', '.join(f'`{d}`' for d in data_files[:6])} (`{where.get('data')}/`) — titles, nav and metadata come from there, not the templates")
+        if kind == "Eleventy":
+            serve = "`npx @11ty/eleventy --serve` builds and serves on :8080"
+        else:
+            cfg = read(root / "_config.yml")
+            listed = re.search(r"(?m)^(?:plugins|gems):\s*\n((?:[ \t]+-.*\n?)+)", cfg)          # the plugins _config.yml loads
+            gems = re.findall(r"-\s*(jekyll-[\w-]+)", listed.group(1)) if listed else []
+            serve = ("`bundle exec jekyll serve` builds and serves on :4000 (`bundle install` first)" if (root / "Gemfile").is_file()
+                     else "no Gemfile: `gem install jekyll" + (" " + " ".join(gems) if gems else "") + " webrick kramdown-parser-gfm` (the last two for Ruby 3), then `jekyll serve` builds and serves on :4000")
+        before.append(f"serve: {serve}; render the built page, not the template file")
+        copies = []
+    elif kind == "Hugo":
+        pages, copies = [], []
+        site_line = "Hugo: content in `content/`, templates in `layouts/` (and the theme's in `themes/<name>/layouts/`), built into `public/`"
+        before.append("serve: `hugo server` builds and serves on :1313")
+    else:
+        site, pages = static_pages(root, files, vocab_names)
+        copies = copied_chrome(root, [root / p["file"] for p in pages])
+        where = rel(root, site) if site != root else "the root"
+        builders = [n for n in ("gulpfile.js", "Gruntfile.js", "webpack.config.js", "vite.config.js", "vite.config.mjs") if (root / n).is_file()]
+        scss = [rel(root, d) for d in (root / "scss", root / "sass", root / "src" / "scss", root / "assets" / "scss") if d.is_dir()]
+        site_line = (f"static HTML: {len(pages)} page{'s' if len(pages) != 1 else ''} in {where if where == 'the root' else f'`{where}/`'}, no templates"
+                     + (": shared markup is copied into each page" if copies else "")
+                     + (f"; `{scss[0]}/` is compiled to CSS by `{builders[0]}`" if scss and builders else ""))
+        before.append(f"serve the folder: `python3 -m http.server 8000`" + (f" in `{where}/`" if where != "the root" else "")
+                      + " and render `http://localhost:8000/<page>.html` (a `file://` path works too, unless the pages link `/css/…` from the root)")
+    kits = ", ".join(f"{k}{f' {v}' if v else ''} ({w})" for k, v, w in assets["kits"])
+    return {"kind": kind or "static HTML", "siteLine": site_line, "kits": kits, "libs": assets["libs"], "pages": pages[:24],
+            "routes": [], "layouts": layouts[:6], "stackBefore": before, "copies": copies}
+
+
+# -------------------------------------------------------------------- Laravel
+# A Laravel page is a Blade view a route names, directly (Route::view), through a controller that
+# returns view('x.y'), as a Livewire page component, or as an Inertia page (a Vue or React file).
+# What wraps it is an @extends chain or a layout component (<x-layouts::app>, <x-app-layout>);
+# what guards it is the `auth` middleware on the route or its group.
+FORTIFY_PATHS = {"loginView": "/login", "registerView": "/register", "requestPasswordResetLinkView": "/forgot-password",
+                 "resetPasswordView": "/reset-password/{token}", "verifyEmailView": "/email/verify",
+                 "confirmPasswordView": "/user/confirm-password", "twoFactorChallengeView": "/two-factor-challenge"}
+
+
+def laravel_app(root: Path) -> dict | None:
+    cj = root / "composer.json"
+    if not (root / "artisan").is_file() or not cj.is_file():
+        return None
+    try:
+        c = json.loads(read(cj))
+    except json.JSONDecodeError:
+        return None
+    req = {**(c.get("require") or {}), **(c.get("require-dev") or {})}
+    if "laravel/framework" not in req:
+        return None
+    psr4 = {**((c.get("autoload") or {}).get("psr-4") or {})}
+    return {"version": req["laravel/framework"], "req": req, "psr4": psr4 or {"App\\": "app/"}, "scripts": c.get("scripts") or {}}
+
+
+def _php_code(t: str) -> str:
+    """PHP without comments; `#[Attribute]` and `//` inside strings are kept."""
+    t = re.sub(r"/\*.*?\*/", "", t, flags=re.S)
+    t = re.sub(r"(?<![:'\"\\w])//[^\n]*", "", t)
+    return re.sub(r"(?m)^\s*#(?!\[)[^\n]*", "", t)
+
+
+def _php_statements(body: str) -> list[str]:
+    """Top-level statements: split at `;` outside strings and brackets."""
+    out, cur, depth, quote, i = [], [], 0, None, 0
+    while i < len(body):
+        ch = body[i]
+        cur.append(ch)
+        if quote:
+            if ch == "\\" and i + 1 < len(body):
+                cur.append(body[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == ";" and depth == 0:
+            out.append("".join(cur[:-1]).strip())
+            cur = []
+        i += 1
+    if "".join(cur).strip():
+        out.append("".join(cur).strip())
+    return [s for s in out if s]
+
+
+def _php_uses(code: str) -> dict[str, str]:
+    """`use A\\B\\C;`, `use A\\B\\C as D;` and `use A\\{B, C};` → short name → full name."""
+    out = {}
+    for full, alias in re.findall(r"(?m)^\s*use\s+([\w\\]+)(?:\s+as\s+(\w+))?\s*;", code):
+        out[alias or full.split("\\")[-1]] = full
+    for prefix, names in re.findall(r"(?m)^\s*use\s+([\w\\]+)\\\{([^}]*)\}\s*;", code):
+        for n in names.split(","):
+            n = n.strip()
+            if n:
+                full, _, alias = n.partition(" as ")
+                out[(alias or full).strip().split("\\")[-1]] = prefix + "\\" + full.strip()
+    return out
+
+
+def _php_class_file(root: Path, app: dict, code: str, ref: str, namespace: str | None = None) -> Path | None:
+    """The file of a class named in `code`: through its `use` imports and composer's PSR-4 map."""
+    ref = ref.lstrip("\\")
+    uses = _php_uses(code)
+    head, _, rest = ref.partition("\\")
+    full = (uses[head] + ("\\" + rest if rest else "")) if head in uses else (f"{namespace}\\{ref}" if namespace and not rest else ref)
+    for prefix, base in sorted(app["psr4"].items(), key=lambda kv: -len(kv[0])):
+        if full.startswith(prefix):
+            bases = base if isinstance(base, list) else [base]
+            for b in bases:
+                f = root / b / (full[len(prefix):].replace("\\", "/") + ".php")
+                if f.is_file():
+                    return f
+    return None
+
+
+def blade_file(root: Path, name: str) -> Path | None:
+    """A view name as a file: `settings.profile`, `pages::settings.profile` (a namespace folder), `livewire.counter`."""
+    views = root / "resources" / "views"
+    ns, _, rest = name.rpartition("::")
+    path = rest.replace(".", "/")
+    cands = ([views / ns / f"{path}.blade.php", views / ns / path / "index.blade.php"] if ns else []) \
+        + [views / f"{path}.blade.php", views / path / "index.blade.php", views / "livewire" / f"{path}.blade.php",
+           views / "components" / f"{path}.blade.php"]
+    return next((c for c in cands if c.is_file()), None)
+
+
+def _route_target(root: Path, app: dict, f: Path, code: str, method: str, args: list[str]) -> dict:
+    """What a route shows: a view, a controller's view, a Livewire page, an Inertia page, or a redirect."""
+    if method == "redirect" or method == "permanentRedirect":
+        return {"redirect": _unquote(args[1]) if len(args) > 1 else None}
+    if method == "view" and len(args) > 1:
+        v = _unquote(args[1])
+        return {"view": v, "file": blade_file(root, v) if v else None}
+    if method in ("livewire",) or (method == "route" and len(args) > 1):              # Route::livewire / Volt::route
+        v = _unquote(args[1]) if len(args) > 1 else None
+        if v:
+            return {"view": v, "file": blade_file(root, v), "livewire": True}
+    if method == "inertia" and len(args) > 1:
+        return {"inertia": _unquote(args[1])}
+    if len(args) < 2:
+        return {}
+    target = args[1].strip()
+    body = None
+    cm = re.match(r"^\[\s*([\w\\]+)::class\s*,\s*['\"](\w+)['\"]\s*\]$", target)
+    im = re.match(r"^([\w\\]+)::class$", target)
+    if cm or im:
+        cls, meth = (cm.group(1), cm.group(2)) if cm else (im.group(1), "__invoke")
+        cf = _php_class_file(root, app, code, cls)
+        if not cf:
+            return {"controller": f"{cls}@{meth}"}
+        ct = _php_code(read(cf, 300_000))
+        if re.search(r"extends\s+(?:\\?Livewire\\)?Component\b", ct):          # a Livewire class page: its render()
+            mm = re.search(r"function\s+render\s*\([^)]*\)[^{]*\{", ct)
+            body = _balanced(ct, mm.end() - 1) if mm else ""
+            v = re.search(r"\bview\(\s*['\"]([^'\"]+)", body)
+            return {"view": v.group(1) if v else None, "file": blade_file(root, v.group(1)) if v else None, "livewire": True, "controller": rel(root, cf)}
+        mm = re.search(r"function\s+" + re.escape(meth) + r"\s*\([^)]*\)[^{]*\{", ct)
+        body = _balanced(ct, mm.end() - 1) if mm else ""
+        out = {"controller": f"{rel(root, cf)}@{meth}", "controllerFile": cf, "controllerMiddleware": _controller_middleware(ct, meth)}
+    elif target.startswith(("function", "fn")):
+        body = target
+        out = {}
+    else:
+        return {}
+    v = re.search(r"\b(?:view|View::make)\(\s*['\"]([^'\"]+)", body or "")
+    ir = re.search(r"Inertia::render\(\s*['\"]([^'\"]+)", body or "") or re.search(r"\binertia\(\s*['\"]([^'\"]+)", body or "")
+    if v:
+        out.update({"view": v.group(1), "file": blade_file(root, v.group(1))})
+    elif ir:
+        out["inertia"] = ir.group(1)
+    return out
+
+
+def _controller_middleware(ct: str, meth: str) -> list[str]:
+    """Middleware a controller applies to one of its methods: in its constructor, its static middleware(), or an attribute."""
+    out = []
+    def names(s: str) -> list[str]:
+        return [("auth" if (a or b) in ("Authenticate",) else (a or b)) for a, b in re.findall(r"['\"]([\w:.,-]+)['\"]|(\w+)::class", s)]
+    def applies(tail: str) -> bool:     # ->only([...]), only: [...], or the older ['except' => [...]] argument
+        only = re.search(r"only['\"]?\s*(?:=>|:|\()\s*(\[[^\]]*\]|['\"][^'\"]+['\"])", tail)
+        exc = re.search(r"except['\"]?\s*(?:=>|:|\()\s*(\[[^\]]*\]|['\"][^'\"]+['\"])", tail)
+        return (not only or meth in re.findall(r"['\"](\w+)['\"]", only.group(1))) and (not exc or meth not in re.findall(r"['\"](\w+)['\"]", exc.group(1)))
+    for m in re.finditer(r"\$this->middleware\(([^;]*?)\)((?:\s*->\s*(?:only|except)\([^)]*\))*)\s*;", ct):
+        args = _split_top(m.group(1))
+        if applies(m.group(2) + " " + " ".join(args[1:])):
+            out += names(args[0] if args else "")
+    sm = re.search(r"static\s+function\s+middleware\s*\(\s*\)[^{]*\{", ct)
+    if sm:
+        for item in _split_top(_balanced(_balanced(ct, sm.end() - 1), _balanced(ct, sm.end() - 1).find("["))) if "[" in _balanced(ct, sm.end() - 1) else []:
+            mw = re.match(r"(?:new\s+Middleware\(\s*)?(['\"][\w:.,-]+['\"]|\w+::class)(.*)", item.strip(), re.S)
+            if mw and applies(mw.group(2)):
+                out += names(mw.group(1))
+    for m in re.finditer(r"#\[Middleware\(([^\]]*)\)\]", ct):
+        out += names(m.group(1))
+    return list(dict.fromkeys(out))
+
+
+def laravel_routes(root: Path, app: dict) -> list[dict]:
+    """GET routes from routes/web.php and the files it requires, with the middleware and prefix of their groups."""
+    out: list[dict] = []
+
+    def walk(f: Path, body: str, ctx: dict, code: str, depth: int) -> None:
+        if depth > 6 or len(out) > 300:
+            return
+        for st in _php_statements(body):
+            rq = re.match(r"^require(?:_once)?\s*\(?\s*__DIR__\s*\.\s*['\"]/?([^'\"]+)['\"]", st)
+            if rq:
+                g = Path(os.path.normpath(f.parent / rq.group(1)))
+                if g.is_file():
+                    gc = _php_code(read(g, 300_000))
+                    walk(g, gc, ctx, gc, depth + 1)
+                continue
+            m = re.match(r"^(Route|Volt)::", st)
+            if not m:
+                continue
+            gm = re.search(r"->group\(\s*(?:function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?|fn\s*\(\)\s*=>\s*)\{", st) \
+                or re.search(r"->group\(\s*(?=['\"])", st)
+            if gm:                                                 # a group: its middleware, prefix and controller, then its body
+                head = st[:gm.start()]
+                sub = dict(ctx)
+                sub["middleware"] = ctx["middleware"] + _mw(head)
+                pm = re.search(r"prefix\(\s*['\"]([^'\"]*)", head)
+                if pm:
+                    sub["prefix"] = "/".join(x for x in (ctx["prefix"].strip("/"), pm.group(1).strip("/")) if x)
+                cm = re.search(r"controller\(\s*([\w\\]+)::class", head)
+                if cm:
+                    sub["controller"] = cm.group(1)
+                if st[gm.end() - 1] == "{":
+                    walk(f, _balanced(st, gm.end() - 1), sub, code, depth + 1)
+                else:
+                    gf = re.match(r"\s*['\"]([^'\"]+)", st[gm.end():])
+                    g = (root / gf.group(1)) if gf else None
+                    if g and g.is_file():
+                        gc = _php_code(read(g, 300_000))
+                        walk(g, gc, sub, gc, depth + 1)
+                continue
+            rm = re.match(r"^(?:Route|Volt)::(get|view|livewire|redirect|permanentRedirect|inertia|any|match|resource|route)\s*\(", st)
+            if not rm:
+                continue
+            method = rm.group(1)
+            args = _split_top(_balanced(st, rm.end() - 1))
+            if method == "match":
+                if "get" not in (args[0] if args else "").lower():
+                    continue
+                args = args[1:]
+                method = "get"
+            uri = _unquote(args[0]) if args else None
+            if uri is None:
+                continue
+            if method == "resource":
+                cls = args[1] if len(args) > 1 else ""
+                for suffix, meth in (("", "index"), ("/create", "create"), ("/{id}", "show"), ("/{id}/edit", "edit")):
+                    tgt = _route_target(root, app, f, code, "get", [args[0], f"[{cls.replace('::class', '')}::class, '{meth}']"])
+                    out.append({"uri": _join_uri(ctx["prefix"], uri + suffix), "method": "get",
+                                "middleware": list(dict.fromkeys(ctx["middleware"] + _mw(st[rm.end():]) + tgt.pop("controllerMiddleware", []))), **tgt})
+                continue
+            if ctx.get("controller") and len(args) > 1 and re.match(r"^['\"]\w+['\"]$", args[1].strip()):
+                args = [args[0], f"[{ctx['controller']}::class, {args[1]}]"]
+            tgt = _route_target(root, app, f, code, method, args)
+            out.append({"uri": _join_uri(ctx["prefix"], uri), "method": method,
+                        "middleware": list(dict.fromkeys(ctx["middleware"] + _mw(st[rm.end():]) + tgt.pop("controllerMiddleware", []))), **tgt})
+
+    web = root / "routes" / "web.php"
+    if web.is_file():
+        code = _php_code(read(web, 300_000))
+        walk(web, code, {"middleware": [], "prefix": "", "controller": None}, code, 0)
+    prov = next((p for p in (root / "app" / "Providers").glob("*.php") if "Fortify::" in read(p, 100_000)), None) if (root / "app" / "Providers").is_dir() else None
+    if prov:                                                       # Fortify registers the sign-in pages itself
+        pt = _php_code(read(prov, 100_000))
+        for fn, path in FORTIFY_PATHS.items():
+            m = re.search(r"Fortify::" + fn + r"\(\s*(?:fn\s*\(\)\s*=>|function\s*\(\)\s*\{\s*return)\s*view\(\s*['\"]([^'\"]+)", pt)
+            if m:
+                out.append({"uri": path, "method": "get", "middleware": ["guest"], "view": m.group(1), "file": blade_file(root, m.group(1)), "fortify": True})
+    return out
+
+
+def _mw(chain: str) -> list[str]:
+    """Middleware named in a route or group chain: ->middleware(['auth', 'verified']) or Route::middleware('auth')."""
+    out = []
+    for arg in re.findall(r"middleware\(\s*(\[[^\]]*\]|['\"][^'\"]+['\"]|[\w\\]+::class)", chain):
+        out += re.findall(r"['\"]([^'\"]+)['\"]", arg) or [re.sub(r"::class$", "", arg).split("\\")[-1]]
+    return [("auth" if x in ("Authenticate", "auth:sanctum", "auth:web") else x) for x in out]
+
+
+def _join_uri(prefix: str, uri: str) -> str:
+    return "/" + "/".join(x for x in (prefix.strip("/"), uri.strip("/")) if x)
+
+
+def blade_layout(root: Path, app: dict, view: Path) -> list[tuple[str, Path]]:
+    """The layout chain a view sits in: @extends('layouts.app'), or a layout component around it."""
+    chain, seen, cur = [], set(), view
+    while cur and cur not in seen and len(chain) < 5:
+        seen.add(cur)
+        t = read(cur, 200_000)
+        body = re.sub(r"\{\{--.*?--\}\}", "", re.sub(r"<\?php.*?\?>", "", t, flags=re.S), flags=re.S)
+        m = re.search(r"@extends\(\s*['\"]([^'\"]+)", body)
+        if m:
+            nxt, label = blade_file(root, m.group(1)), m.group(1)
+        else:
+            lm = re.match(r"\s*(?:@\w+[^\n]*\n\s*)*<x-([\w.:-]+)", body)       # the outermost tag is a component: a layout
+            if not lm or not re.search(r"layout", lm.group(1), re.I):
+                lay = re.search(r"#\[Layout\(\s*['\"]([^'\"]+)", t) or re.search(r"->layout\(\s*['\"]([^'\"]+)", t)
+                if not lay:
+                    break
+                nxt, label = blade_file(root, lay.group(1)), lay.group(1)
+            else:
+                label = lm.group(1)
+                nxt = blade_component_file(root, app, label)
+        if not nxt:
+            break
+        chain.append((label, nxt))
+        cur = nxt
+    return chain
+
+
+def blade_component_file(root: Path, app: dict, tag: str) -> Path | None:
+    """<x-app-layout> → a class in app/View/Components (its render() names the view) or components/app-layout.blade.php;
+    <x-layouts.app> → components/layouts/app.blade.php; <x-layouts::app> → the `layouts` namespace folder."""
+    views = root / "resources" / "views"
+    if "::" in tag:
+        ns, _, rest = tag.partition("::")
+        return next((c for c in (views / ns / f"{rest.replace('.', '/')}.blade.php", views / ns / rest.replace(".", "/") / "index.blade.php",
+                                 views / "components" / ns / f"{rest.replace('.', '/')}.blade.php") if c.is_file()), None)
+    path = tag.replace(".", "/")
+    cls = root / "app" / "View" / "Components" / ("/".join(_pascal(p) for p in path.split("/")) + ".php")
+    if cls.is_file():
+        v = re.search(r"\bview\(\s*['\"]([^'\"]+)", read(cls, 50_000))
+        if v and blade_file(root, v.group(1)):
+            return blade_file(root, v.group(1))
+    return next((c for c in (views / "components" / f"{path}.blade.php", views / "components" / path / "index.blade.php",
+                             views / "components" / path / f"{path.split('/')[-1]}.blade.php") if c.is_file()), None)
+
+
+def blade_components(root: Path, views: list[Path]) -> list[dict]:
+    """Anonymous components (resources/views/components) and class components, by how many views use them."""
+    comp_dir = root / "resources" / "views" / "components"
+    comps: dict[str, dict] = {}
+    for f in sorted(comp_dir.rglob("*.blade.php")) if comp_dir.is_dir() else []:
+        tag = f.relative_to(comp_dir).as_posix()[: -len(".blade.php")].replace("/", ".")
+        if tag.endswith(".index"):
+            tag = tag[: -len(".index")]
+        props = re.search(r"@props\(\s*\[(.*?)\]\s*\)", read(f, 50_000), re.S)
+        names = [re.match(r"\s*['\"]?([\w-]+)", x).group(1) for x in _split_top(props.group(1)) if re.match(r"\s*['\"]?[\w-]+", x)] if props else []
+        comps[tag] = {"tag": f"x-{tag}", "file": f, "props": names[:7]}
+    for f in sorted((root / "app" / "View" / "Components").rglob("*.php")) if (root / "app" / "View" / "Components").is_dir() else []:
+        parts = f.relative_to(root / "app" / "View" / "Components").with_suffix("").parts
+        tag = ".".join(re.sub(r"(?<!^)(?=[A-Z])", "-", p).lower() for p in parts)
+        ct = _php_code(read(f, 50_000))
+        cm = re.search(r"function\s+__construct\s*\(", ct)
+        names = re.findall(r"\$(\w+)", _balanced(ct, cm.end() - 1)) if cm else []
+        comps.setdefault(tag, {"tag": f"x-{tag}", "file": f, "props": names[:7]})
+    counts: collections.Counter = collections.Counter()
+    for v in views:
+        t = read(v, 200_000)
+        for tag in dict.fromkeys(re.findall(r"<x-([\w.:-]+)", t)):
+            if tag in comps and comps[tag]["file"] != v:
+                counts[tag] += 1
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [{**comps[t], "views": n} for t, n in ranked]
+
+
+def laravel_start(root: Path, src_files: list[Path], css_files: list[Path], deps: dict) -> dict:
+    app = laravel_app(root) or {"req": {}, "psr4": {"App\\": "app/"}, "version": "?", "scripts": {}}
+    req = app["req"]
+    routes = laravel_routes(root, app)
+    views = [p for p in src_files if p.name.endswith(".blade.php")]
+    pages: list[dict] = []
+    by_file: dict[Path, list[dict]] = {}
+    for r in routes:
+        if r.get("file"):
+            by_file.setdefault(r["file"], []).append(r)
+    lw_cfg = read(root / "config" / "livewire.php")
+    lw_major = int((re.search(r"(\d+)", req.get("livewire/livewire", "")) or [0, "0"])[1])
+    lw_default = (re.search(r"['\"](?:component_layout|layout)['\"]\s*=>\s*['\"]([^'\"]+)", lw_cfg) or [None, "layouts::app" if lw_major >= 4 else "components.layouts.app"])[1]
+    for vf, rs in by_file.items():
+        t = read(vf, 200_000)
+        chain = blade_layout(root, app, vf)
+        if not chain and any(r.get("livewire") for r in rs):
+            lf = blade_file(root, lw_default) or blade_component_file(root, app, lw_default)
+            if lf:
+                chain = [(lw_default, lf)] + blade_layout(root, app, lf)
+        body = re.sub(r"<\?php.*?\?>", "", t, flags=re.S)
+        tags = list(dict.fromkeys(re.findall(r"<(x-[\w.:-]+|flux:[\w.-]+|livewire:[\w.-]+)", body)))
+        tags = [x for x in tags if not chain or x != f"x-{chain[0][0]}"]
+        tags += [f"@include {i}" for i in dict.fromkeys(re.findall(r"@include(?:If|When)?\(\s*['\"]([^'\"]+)", body))][:2]
+        signals = _signals(body)
+        mw = sorted({m for r in rs for m in r["middleware"]})
+        kind = "Livewire page" if any(r.get("livewire") for r in rs) else "Fortify view" if any(r.get("fortify") for r in rs) else None
+        renders = {"name": " → ".join(lbl for lbl, _ in chain), "file": rel(root, chain[0][1]), "lines": read(chain[0][1], 200_000).count("\n") + 1,
+                   "signals": [], "wrapper": True, "holder": "`@yield`" if "@extends" in body else "`{{ $slot }}`"} if chain else None
+        pages.append({"file": rel(root, vf), "lines": t.count("\n") + 1, "signals": signals + ([kind] if kind else []) + ([f"middleware {', '.join(mw)}"] if mw else []),
+                      "route": ", ".join(f"`{u}`" for u in dict.fromkeys(r["uri"] for r in rs)), "classes": [], "components": tags[:6],
+                      "renders": renders, "template": None})
+    pages.sort(key=lambda p: p["file"])
+    shown = []
+    for r in routes:
+        if r.get("redirect") is not None:
+            shown.append((r["uri"], f"`{r['redirect']}` (redirect)"))
+        elif r.get("view"):
+            shown.append((r["uri"], f"view `{r['view']}`" + (" (Livewire)" if r.get("livewire") else "")))
+        elif r.get("inertia"):
+            shown.append((r["uri"], f"Inertia `{r['inertia']}`"))
+
+    layouts = []
+    seen: collections.Counter = collections.Counter()
+    for pg in pages:
+        if pg["renders"]:
+            seen[pg["renders"]["file"]] += 1
+    for lf, n in seen.most_common(6):
+        t = read(root / lf, 200_000)
+        vite = re.search(r"@vite\(\s*(\[[^\]]*\]|['\"][^'\"]+['\"])", t)
+        layouts.append({"file": lf, "scopeText": f"wraps {n} page{'s' if n != 1 else ''}",
+                        "css": re.findall(r"['\"]([^'\"]+\.(?:css|scss))['\"]", vite.group(1)) if vite else [], "fonts": [], "providers": [],
+                        "chrome": list(dict.fromkeys(re.findall(r"<(x-[\w.:-]+|flux:[\w.-]+|livewire:[\w.-]+)", t)))[:6]
+                        + [f"@include {i}" for i in dict.fromkeys(re.findall(r"@include\(\s*['\"]([^'\"]+)", t))][:3]})
+    before = []
+    guarded = [r["uri"] for r in routes if "auth" in r["middleware"] and (r.get("file") or r.get("inertia"))]
+    if guarded:
+        login = next((r["uri"] for r in routes if r["uri"] in ("/login", "/signin") or r.get("view", "").endswith("login")), "/login")
+        before.append(f"the `auth` middleware guards {', '.join(f'`{u}`' for u in guarded[:4])}" + (f" and {len(guarded) - 4} more" if len(guarded) > 4 else "")
+                      + f": a render there needs a signed-in session. Sign in once on `{login}` with `--act` and `--save-state`, then render with `--storage-state`"
+                      + " (a fresh install has no users: register one, or `php artisan tinker`)")
+    inertia = [r for r in routes if r.get("inertia")]
+    if inertia:
+        pdir = next((d for d in (root / "resources" / "js" / "pages", root / "resources" / "js" / "Pages") if d.is_dir()), None)
+        first = inertia[0]["inertia"] or "?"
+        found = next((f for f in ((pdir / f"{first}{e}") for e in (".vue", ".tsx", ".jsx", ".svelte")) if pdir and f.is_file()), None)
+        before.append(f"Inertia: {len(inertia)} route{'s render' if len(inertia) != 1 else ' renders'} a Vue or React page from `{rel(root, pdir) if pdir else 'resources/js/pages'}/` "
+                      f"(`{first}` → `{rel(root, found) if found else first + '.vue / .tsx'}`): those pages are components, read them as a Vue or React project")
+    vite_css = [c for lay in layouts for c in lay["css"]]
+    head = next((p for p in views if "@vite" in read(p, 100_000)), None)
+    if head:
+        before.append(f"`{rel(root, head)}` loads its assets through `@vite`: run `npm run dev` beside the server (or `npm run build` once) — without either the page fails with *Vite manifest not found*")
+    env = root / ".env"
+    if not env.is_file():
+        before.append("first run: `cp .env.example .env`, `php artisan key:generate`, then the database (`touch database/database.sqlite` and `php artisan migrate` with the default SQLite)")
+    dev = app["scripts"].get("dev")
+    before.append(("`composer run dev` starts the project's dev processes together (the server and Vite at least); " if dev else "")
+                  + "`php artisan serve` listens on :8000 unless `--port` says otherwise")
+    kit = None
+    if "livewire/flux" in req or "livewire/flux-pro" in req:
+        counts: collections.Counter = collections.Counter()
+        for v in views:
+            counts.update(re.findall(r"<(flux:[\w.-]+)", read(v, 200_000)))
+        kit = {"name": "Flux", "components": counts.most_common(12)}
+    mode = ", ".join(x for x in ("Livewire " + re.sub(r"[^\d.]", "", req["livewire/livewire"]).split(".")[0] if "livewire/livewire" in req else "",
+                                 "Inertia" if "inertiajs/inertia-laravel" in req else "", "Filament" if "filament/filament" in req else "",
+                                 "Fortify" if "laravel/fortify" in req else "") if x)
+    return {"pages": pages[:24], "routes": shown[:30], "layouts": layouts, "stackBefore": before,
+            "used": [{**u, "file": rel(root, u["file"])} for u in blade_components(root, views)[:10]], "kit": kit,
+            "router": "Blade" + (f"; {mode}" if mode else "") + "; routes in `routes/web.php`",
+            "version": re.sub(r"[^\d.]", "", app["version"]).split(".")[0] if app["version"] != "?" else None}
 
 
 def page_signatures(root: Path, src_files: list[Path], vocab_names: list[str], framework: str | None = None) -> dict:
@@ -2402,7 +3341,21 @@ def start_here(root: Path, src_files: list[Path], css_files: list[Path], stack: 
     ui_files = [p for p in src_files if p.suffix in {".tsx", ".jsx", ".vue", ".svelte", ".astro", ".html", ".mdx"}]
     texts = [read(p, 200_000) for p in ui_files[:MAX_SRC_FILES]]
     ng = angular_start(root, src_files, css_files, deps) if stack.get("framework") == "Angular" else None
-    if ng:      # a component's own stylesheet is scoped to it: only the global ones make a vocabulary
+    lv = laravel_start(root, src_files, css_files, deps) if stack.get("framework") == "Laravel" else None
+    site = None
+    if lv:
+        vocab = css_vocabulary(root, css_files, texts + [read(p, 200_000) for p in src_files if p.name.endswith(".blade.php")][:MAX_SRC_FILES])
+        sig = {"pages": lv["pages"], "routes": lv["routes"]}
+    elif not ng and stack.get("framework") in (None, "Eleventy") and (site_generator(root, deps) or not stack.get("framework")):
+        own_css = [c for c in css_files if not ({x.lower() for x in c.relative_to(root).parts[:-1]} & SITE_SKIP)]
+        templates = [read(p, 200_000) for p in iter_files(root) if p.suffix in {".njk", ".liquid", ".md", ".hbs", ".webc", ".markdown"}][:MAX_SRC_FILES]
+        vocab = css_vocabulary(root, own_css, texts + templates)
+        site = site_start(root, src_files, css_files, stack, deps, [v["name"] for v in vocab])
+    if lv:
+        pass
+    elif site:
+        sig = {"pages": site["pages"], "routes": site["routes"]}
+    elif ng:      # a component's own stylesheet is scoped to it: only the global ones make a vocabulary
         texts += ng["inlineTemplates"]
         vocab = css_vocabulary(root, [c for c in css_files if c not in ng["scopedCss"]], texts, skip=r"(?:mat|mdc|cdk)-")
         sig = {"pages": ng["pages"], "routes": ng["routes"]}
@@ -2414,18 +3367,25 @@ def start_here(root: Path, src_files: list[Path], css_files: list[Path], stack: 
     is_kit, is_astro = stack.get("framework") == "SvelteKit", stack.get("framework") == "Astro"
     notes = {"Nuxt": "references/stacks/nuxt.md", "Vue": "references/stacks/vue.md", "SvelteKit": "references/stacks/sveltekit.md",
              "Svelte": "references/stacks/sveltekit.md", "Astro": "references/stacks/astro.md",
-             "Angular": "references/stacks/angular.md"}.get(stack.get("framework") or "")
+             "Angular": "references/stacks/angular.md", "Laravel": "references/stacks/laravel.md",
+             "Eleventy": "references/stacks/static.md"}.get(stack.get("framework") or "") or ("references/stacks/static.md" if site else None)
     dev = dev_setup(root)
     theme = theme_mechanism(root, css_files, stack, src_files)
     if ng:
         dev["proxies"] = ng["proxies"] + dev["proxies"]
     return {
         "vocabulary": vocab,
-        "imported": [] if ng else import_fanin(root, src_files),
+        "imported": [] if ng or site or lv else import_fanin(root, src_files),
         **sig,
         "layouts": (next_layouts(root) if is_next else nuxt_layouts(root, src_files) if is_nuxt else sveltekit_layouts(root) if is_kit
-                    else astro_layouts(root, src_files) if is_astro else ng["layouts"] if ng else []),
-        "stackBefore": sveltekit_before(root, deps) if is_kit else astro_before(root, deps) if is_astro else ng["stackBefore"] if ng else [],
+                    else astro_layouts(root, src_files) if is_astro else ng["layouts"] if ng else site["layouts"] if site
+                    else lv["layouts"] if lv else []),
+        "stackBefore": (sveltekit_before(root, deps) if is_kit else astro_before(root, deps) if is_astro else ng["stackBefore"] if ng
+                        else site["stackBefore"] if site else lv["stackBefore"] if lv else []),
+        "bladeUsed": lv["used"] if lv else [],
+        "bladeKit": lv["kit"] if lv else None,
+        "laravel": {"router": lv["router"]} if lv else None,
+        "site": {k: site[k] for k in ("kind", "siteLine", "kits", "libs", "copies")} if site else None,
         "ngUsed": ng["ngUsed"] if ng else [],
         "material": ng["material"] if ng else None,
         "ng": {"port": ng["port"], "router": ng["router"], "components": ng["components"]} if ng else None,
@@ -2434,7 +3394,7 @@ def start_here(root: Path, src_files: list[Path], css_files: list[Path], stack: 
         "nuxtui": nuxt_ui(root, src_files, deps),
         "nuxtBefore": nuxt_before(root, deps, src_files) if is_nuxt else [],
         "nuxt": is_nuxt,
-        "vite": "vite" in deps and not is_next and not is_nuxt and not is_astro and not ng,
+        "vite": "vite" in deps and not is_next and not is_nuxt and not is_astro and not ng and not lv,
         "stackNotes": notes,
         "theme": theme,
         "middleware": middleware_line(root) if is_next else None,
@@ -2449,6 +3409,11 @@ def start_here(root: Path, src_files: list[Path], css_files: list[Path], stack: 
     }
 
 
+def rel_s(p) -> str:
+    """A path as the report prints it: relative strings pass through."""
+    return p if isinstance(p, str) else str(p)
+
+
 def md_start_here(sh: dict) -> list[str]:
     out = ["## Start here (a match task reads these, not the tree)"]
     if sh["vocabulary"]:
@@ -2461,6 +3426,14 @@ def md_start_here(sh: dict) -> list[str]:
         out.append("- Nuxt UI" + (f" — colours {cols}" + (f" (`{nu['config']}`)" if nu["config"] else "") if cols else "")
                    + (": its components by use, " + " · ".join(f"{n} ×{c}" for n, c in nu["components"]) if nu["components"] else "")
                    + ". A match task builds with these and the colour names, not hand-rolled Tailwind.")
+    st = sh.get("site")
+    if st:
+        out.append(f"- Site: {st['siteLine']}")
+        if st["kits"] or st["libs"]:
+            out.append("- Loads: " + " · ".join(x for x in (st["kits"], ", ".join(st["libs"])) if x)
+                       + (" — build with the kit's classes, not new CSS" if st["kits"] else ""))
+        if st["copies"]:
+            out.append("- Copied into each page (a change to it is an edit to every page): " + " · ".join(st["copies"]))
     mt = sh.get("material")
     if mt and (mt["file"] or mt["prebuilt"] or mt["components"]):
         bits = []
@@ -2480,6 +3453,13 @@ def md_start_here(sh: dict) -> list[str]:
                    + (": its components by use, " + " · ".join(f"{n} ×{c}" for n, c in mt["components"]) if mt["components"] else "")
                    + ". A match task builds with these components and " + ("the `--mat-sys-*` variables" if mt["kind"] == "M3" else "the theme's palettes")
                    + ", not hand-picked colours.")
+    bk = sh.get("bladeKit")
+    if bk and bk["components"]:
+        out.append(f"- {bk['name']} — its components by use: " + " · ".join(f"{n} ×{c}" for n, c in bk["components"])
+                   + ". A match task builds with these, not hand-rolled Tailwind.")
+    if sh.get("bladeUsed"):
+        out.append("- Used most (Blade components, counted by the views that use them): " + " · ".join(
+            f"`{rel_s(u['file'])}` `<{u['tag']}>` ({u['views']}" + (f"; props {', '.join(u['props'])}" if u["props"] else "") + ")" for u in sh["bladeUsed"]))
     if sh.get("ngUsed"):
         out.append("- Used most (by selector, counted by the templates that use them): " + " · ".join(
             f"`{u['file']}` `<{u['selector']}>` ({u['templates']}" + (f"; inputs {', '.join(u['inputs'])}" if u["inputs"] else "")
@@ -2495,18 +3475,20 @@ def md_start_here(sh: dict) -> list[str]:
         wrappers_named = set()  # a wrapper's path and role once; later pages say only "inside X"
         for pg in sh["pages"]:
             bits = [f"{pg['lines']} lines"]
-            if pg.get("route"):                     # Angular: the route, then the template the page draws with
-                bits = [pg["route"], (f"template `{pg['template']}`, " if pg["template"] not in (None, "inline") else "inline template, ") + f"{pg['lines']} lines"]
+            if pg.get("route"):                     # Angular and sites: the route first, then the template or the page's length
+                bits = [pg["route"]] + ([f"“{pg['title']}”"] if pg.get("title") else [])
+                bits.append((f"template `{pg['template']}`, " if pg["template"] not in (None, "inline") else "inline template, ") + f"{pg['lines']} lines"
+                            if pg.get("template") is not None else f"{pg['lines']} lines")
             if pg["signals"]:
                 bits.append(", ".join(pg["signals"]))
             if pg["classes"]:
                 bits.append(", ".join(pg["classes"]))
             if pg["components"]:
-                bits.append(("uses " if pg["file"].endswith((".vue", ".svelte", ".astro", ".md", ".mdx")) or pg.get("route") else "imports ") + ", ".join(pg["components"]))
+                bits.append((f"{pg['usesWord']} " if pg.get("usesWord") else "uses " if pg["file"].endswith((".vue", ".svelte", ".astro", ".md", ".mdx")) or pg.get("route") else "imports ") + ", ".join(pg["components"]))
             r = pg.get("renders")
             if r and r.get("wrapper"):
                 bits.append(f"inside {r['name']}" + ("" if r["file"] in wrappers_named else f" (`{r['file']}` · {r['lines']} lines: the chrome, its "
-                                                        + ("`<router-outlet>`" if r.get("outlet") else "slot") + " holds the page)"))
+                                                        + ("`<router-outlet>`" if r.get("outlet") else r.get("holder") or "slot") + " holds the page)"))
                 wrappers_named.add(r["file"])
             elif r:
                 bits.append(f"renders {r['name']} (`{r['file']}` · {r['lines']} lines" + (f" · {', '.join(r['signals'])}" if r["signals"] else "") + ")")
@@ -2609,7 +3591,10 @@ def md(data: dict) -> str:
     bits = []
     if s["framework"]:
         bits.append(s["framework"] + (f" ({s['router']})" if s["router"] else ""))
-    if s["framework"] in ("Nuxt", "Vue", "SvelteKit", "Svelte", "Astro", "Angular") and s.get("frameworkVersion"):
+    site = (data.get("startHere") or {}).get("site")
+    if site and (site["kits"] or site["libs"]):
+        bits.append(" · ".join(x for x in (site["kits"], ", ".join(site["libs"])) if x))
+    if s["framework"] in ("Nuxt", "Vue", "SvelteKit", "Svelte", "Astro", "Angular", "Laravel", "Eleventy") and s.get("frameworkVersion"):
         bits[-1] = bits[-1].replace(s["framework"], f"{s['framework']} {s['frameworkVersion']}", 1)
     if s["react"]:
         bits.append(f"React {s['react']}")
@@ -2654,10 +3639,16 @@ def md(data: dict) -> str:
             by_file[file].append(f"{name}: {value}")
         for file, items in by_file.items():
             out += [f"### `:root` in {file}", "```css", *items[:40], *(["…"] if len(items) > 40 else []), "```"]
+    if t.get("sass"):
+        by_file = collections.defaultdict(list)
+        for file, name, value in t["sass"]:
+            by_file[file].append(f"{name}: {value};")
+        for file, items in by_file.items():
+            out += [f"### Sass variables in {file}", "```scss", *items[:40], *(["…"] if len(items) > 40 else []), "```"]
     for key, snippet in t["configExtend"].items():
         out += [f"### tailwind.config `extend.{key}`", "```js", snippet, "```"]
-    if not (t["theme"] or t["root"] or t["configExtend"]):
-        out.append("- none declared (no @theme, :root vars, or config extend)")
+    if not (t["theme"] or t["root"] or t.get("sass") or t["configExtend"]):
+        out.append("- none declared (no @theme, :root vars, Sass variables, or config extend)")
     out.append("")
 
     # Fonts
@@ -2739,7 +3730,7 @@ def main() -> int:
         return 1
 
     files = list(iter_files(root))
-    src_files = [p for p in files if p.suffix in SRC_EXT]
+    src_files = [p for p in files if p.suffix in SRC_EXT or p.name.endswith(".blade.php")]
     css_files = [p for p in files if p.suffix in CSS_EXT]
 
     stack = detect_stack(root)
@@ -2751,6 +3742,10 @@ def main() -> int:
     sh = start_here(root, src_files, css_files, stack, stack.get("deps") or {}) if not stack.get("workspaceApps") else None
     if sh and sh.get("ng"):
         stack["router"] = sh["ng"]["router"]
+    if sh and sh.get("laravel"):
+        stack["router"] = sh["laravel"]["router"]
+    if sh and sh.get("site") and not stack.get("framework"):
+        stack["framework"] = sh["site"]["kind"]
     data = {
         "root": str(root), "stack": stack, "tokens": tokens, "fonts": fonts,
         "components": comps, "usage": usage, "docs": docs,

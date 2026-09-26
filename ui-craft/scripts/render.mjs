@@ -31,7 +31,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const USAGE = `usage: node render.mjs <url | path/to/page.html> [options]
@@ -40,6 +40,8 @@ const USAGE = `usage: node render.mjs <url | path/to/page.html> [options]
   --wait MS            extra settle time after load (default 500)
   --no-fold            skip the above-the-fold screenshots and contact sheets
   --dark / --no-dark   force or skip the dark-mode pass (default: auto — when the page has a dark rule)
+  --save-state F       after the --act steps, save the session (cookies, localStorage) to F: sign in once with --act,
+                       then render other pages with --storage-state F instead of signing in again (rate limits)
   --dark-storage K=V   for the dark pass, set localStorage K to V and reload: the app's own theme switch, for an
                        app whose theme service does more than a class on <html> (repeatable; implies --dark)
   --no-hover           skip the hover-feedback probe (done at the widest viewport only)
@@ -70,7 +72,7 @@ if (!argv.length || argv.includes('--help') || argv.includes('-h')) {
 }
 const opt = { out: '.ui-craft/latest', viewports: [375, 768, 1440], wait: 500, waitFor: null, fold: true, dark: 'auto', hover: true, strict: false,
   storageState: null, cookies: [], headers: {}, auth: null, initScript: null, mocks: [], compare: null, dismiss: null, acts: [], timings: false, serial: false,
-  darkStorage: [] };
+  darkStorage: [], saveState: null };
 let target = null;
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
@@ -94,6 +96,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--act') opt.acts.push(argv[++i]);
   else if (a === '--timings') opt.timings = true;
   else if (a === '--serial') opt.serial = true;
+  else if (a === '--save-state') opt.saveState = argv[++i];
   else if (a === '--dark-storage') { const v = argv[++i] || ''; const k = v.indexOf('='); if (k > 0) opt.darkStorage.push([v.slice(0, k), v.slice(k + 1)]); }
   else if (a.startsWith('--')) { console.error(`unknown option ${a}\n${USAGE}`); process.exit(1); }
   else target = a;
@@ -566,8 +569,11 @@ function domAudit(INTERACTIVE) {
     const grid = cs.display === 'grid' || cs.display === 'inline-grid';
     const wrap = (cs.display === 'flex' || cs.display === 'inline-flex') && cs.flexWrap === 'wrap';
     if (!grid && !wrap) continue;
+    if (el === document.body || el === document.documentElement) continue; // the page's own layout grid, not a row of cards
     const kids = [...el.children].filter((k) => { const r = k.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(k).position !== 'absolute'; });
     if (kids.length < 3) continue;
+    // A layout grid (sidebar, header, main) is not a set of items: its children are landmarks.
+    if (kids.some((k) => /^(main|aside|header|footer|nav)$/i.test(k.tagName) || /^(main|complementary|banner|contentinfo|navigation)$/.test(k.getAttribute('role') || '') || k.querySelector(':scope > main, :scope > nav'))) continue;
     const rows = [];
     for (const k of kids) { const top = Math.round(k.getBoundingClientRect().top); const row = rows.find((r) => Math.abs(r.top - top) < 4); if (row) row.n++; else rows.push({ top, n: 1 }); }
     if (rows.length < 2) continue;
@@ -1153,12 +1159,13 @@ const report = { target: url, generatedAt: new Date().toISOString(), viewports: 
 let anyFail = false;
 const folds = [];
 const darkFolds = [];
+let savedState = false; // --save-state wrote the session
 const widest = Math.max(...opt.viewports);
 
 // Requests a framework makes for itself: Next.js internals, RSC payloads and the dev overlay's stack
 // frames; Nuxt's build manifest, payloads, islands, icon sets and @nuxt/content's client database;
 // SvelteKit's route data and build assets; Astro's assets and dev toolbar; Vite's own endpoints.
-const FRAMEWORK_REQUEST = /^\/(_next\/|__nextjs|_nuxt\/|__nuxt|api\/_nuxt_icon\/|_app\/|_astro\/|__astro|@vite\/|@fs\/|@id\/|__vite)|\/_payload\.json(\?|$)|\/__data\.json(\?|$)|[?&]_rsc=/;
+const FRAMEWORK_REQUEST = /^\/(_next\/|__nextjs|_nuxt\/|__nuxt|api\/_nuxt_icon\/|_app\/|_astro\/|__astro|@vite\/|@fs\/|@id\/|__vite|livewire(?:-\w+)?\/)|\/_payload\.json(\?|$)|\/__data\.json(\?|$)|[?&]_rsc=/;
 async function renderViewport(width) {
   const t0 = Date.now(); let tPrev = t0; const timings = {};
   const lap = (name) => { const now = Date.now(); timings[name] = (timings[name] || 0) + (now - tPrev); tPrev = now; };
@@ -1187,7 +1194,11 @@ async function renderViewport(width) {
     if (/^\d{3}$/.test(m.file)) { status = Number(m.file); body = ''; type = 'text/plain'; }
     else if (existsSync(m.file)) {
       body = readFileSync(m.file);
-      type = /\.json$/i.test(m.file) ? 'application/json' : /\.html?$/i.test(m.file) ? 'text/html' : /\.js$/i.test(m.file) ? 'application/javascript' : /\.png$/i.test(m.file) ? 'image/png' : /\.svg$/i.test(m.file) ? 'image/svg+xml' : 'text/plain';
+      // A stylesheet has to arrive as text/css: the browser refuses one sent as text/plain.
+      const TYPES = { json: 'application/json', html: 'text/html', htm: 'text/html', js: 'application/javascript', mjs: 'application/javascript', css: 'text/css',
+        png: 'image/png', svg: 'image/svg+xml', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', avif: 'image/avif',
+        woff2: 'font/woff2', woff: 'font/woff', ttf: 'font/ttf', otf: 'font/otf' };
+      type = TYPES[(/\.([a-z0-9]+)$/i.exec(m.file) || [])[1]?.toLowerCase()] || 'text/plain';
     } else {
       body = m.file;
       type = /^\s*(?:[\[{"]|null\b|true\b|false\b|-?\d)/.test(m.file) ? 'application/json' : 'text/plain';
@@ -1198,6 +1209,7 @@ async function renderViewport(width) {
   const page = await context.newPage();
   const consoleErrors = [];
   const failedRequests = [];
+  const failedAssets = []; // stylesheets and scripts from other hosts that did not load
   const httpErrors = [];
   const requests = []; // every xhr/fetch the page made, with its status: what a second render would mock
   let recordRequests = true; // one load's worth: the dark pass below may reload the page
@@ -1213,8 +1225,17 @@ async function renderViewport(width) {
     if (why === 'net::ERR_ABORTED') return; // cut short by a navigation of ours (reload, next viewport), not a failure of the page
     const line = `${why} ${r.url().slice(0, 120)}`;
     if (!failedRequests.includes(line)) failedRequests.push(line);
+    // A stylesheet or script from another host that never arrived (a CDN the network blocks): the page
+    // renders without its kit, which the output has to say before anyone reads the screenshots.
+    const rt = r.resourceType();
+    if ((rt === 'stylesheet' || rt === 'script') && /^https?:/.test(r.url()) && !r.url().startsWith(origin) && !/fonts\.googleapis\.com/.test(r.url())) {
+      const key = `${rt} ${r.url().slice(0, 160)}`;
+      if (!failedAssets.includes(key)) failedAssets.push(key);
+    }
   });
+  let documentStatus = null; // the answer to the page itself (after --act, to where it navigated): an error page is not the page
   page.on('response', (r) => {
+    if (recordRequests && r.request().isNavigationRequest() && r.frame() === page.mainFrame()) documentStatus = { status: r.status(), text: r.statusText(), url: r.url().slice(0, 120) };
     if (r.status() >= 400 && !/\/favicon\.ico(\?|$)/.test(r.url())) httpErrors.push(`${r.status()} ${r.url().slice(0, 120)}`);
     const rt = r.request().resourceType();
     if (recordRequests && (rt === 'xhr' || rt === 'fetch') && requests.length < 40) {
@@ -1239,6 +1260,12 @@ async function renderViewport(width) {
   if (!loadError) await dismiss(page, opt.dismiss);
   const actErrors = [], darkActErrors = [];
   if (!loadError) await act(page, opt.acts, actErrors);
+  // Steps that navigated (a sign-in form that lands on the dashboard) are not replayed on a reload: the
+  // session is in the context now, and the form is gone from the page they led to.
+  const actsNavigated = !loadError && opt.acts.length > 0 && page.url().replace(/[#?].*$/, '') !== url.replace(/[#?].*$/, '');
+  if (!loadError && opt.saveState && !actErrors.length) {
+    try { await mkdir(dirname(resolve(opt.saveState)), { recursive: true }); await context.storageState({ path: opt.saveState }); savedState = true; } catch { /* reported below */ }
+  }
   await page.waitForTimeout(opt.wait);
 
   // Scroll through once so lazy / IntersectionObserver content mounts, then back to top.
@@ -1329,7 +1356,7 @@ async function renderViewport(width) {
         if (opt.waitFor) await page.waitForSelector(opt.waitFor, { timeout: 30000 });
       } catch { /* keep the in-place measurement below */ }
       await dismiss(page, opt.dismiss);
-      await act(page, opt.acts, darkActErrors);
+      if (!actsNavigated) await act(page, opt.acts, darkActErrors);
       await page.waitForTimeout(opt.wait);
       if (audit.darkSupport.class) await darkOn(audit.darkSupport.classes);
       await page.evaluate(async () => {
@@ -1368,7 +1395,8 @@ async function renderViewport(width) {
     }
     const dFocus = await focusAudit(page);
     restored += await keepDark();
-    const changed = !!(audit && dAudit.pageColors.background && audit.pageColors.background !== dAudit.pageColors.background);
+    // A background that turns into a gradient or an image (null: unverifiable) has moved too.
+    const changed = !!(audit && audit.pageColors.background !== dAudit.pageColors.background && (dAudit.pageColors.background || audit.pageColors.background));
     dark = {
       mode: audit && audit.darkSupport.class && !audit.darkSupport.media ? 'class'
         : audit && audit.darkSupport.attr && !audit.darkSupport.media && !audit.darkSupport.class ? 'attribute'
@@ -1447,6 +1475,7 @@ async function renderViewport(width) {
   if (darkActErrors.length) warns.push(`act failed on the dark reload: ${darkActErrors.join(' | ')}`);
   if (consoleErrors.length) warns.push(`console errors ${consoleErrors.length}`);
   if (failedRequests.length) warns.push(`failed requests ${failedRequests.length}`);
+  if (documentStatus && documentStatus.status >= 400) warns.push(`page answered ${documentStatus.status}`);
   if (httpErrors.length) warns.push(`http errors ${httpErrors.length}`);
   if (httpErrors.some((e) => /^403 .*\/_next\//.test(e))) warns.push('Next.js dev refused its own scripts (403 on /_next/*): the page was not hydrated — render it through http://localhost:PORT, or add this host to allowedDevOrigins in next.config');
 
@@ -1454,7 +1483,8 @@ async function renderViewport(width) {
   if (fails.length) anyFail = true;
   report.viewports[key] = {
     width, height, status, fails, warns, loadError,
-    console: consoleErrors.slice(0, 20), failedRequests: failedRequests.slice(0, 20), httpErrors: httpErrors.slice(0, 20), requests: requests.slice(0, 40), frameworkRequests,
+    console: consoleErrors.slice(0, 20), failedRequests: failedRequests.slice(0, 20), failedAssets: failedAssets.slice(0, 10), httpErrors: httpErrors.slice(0, 20),
+    documentStatus, actsNavigated, requests: requests.slice(0, 40), frameworkRequests,
     audit, focus, hover, dark, dialog, acts: opt.acts, actErrors, darkActErrors,
     walk: { touchedForms: walkTouchedForms, scrollRestored }, // what the Tab and hover walks changed, and what was put back
     screenshots: { fold: opt.fold ? `${key}-fold.png` : null, full: `${key}-full.png`, darkFold: dark && dark.screenshot },
@@ -1511,10 +1541,23 @@ if (first) {
   // say so, or "none declared" reads as a page that asked for none.
   const blocked = fontHostsFailed(report);
   console.log(`  fonts: ${line}; used: ${first.audit.fonts.used.join(', ')}${blocked.hosts.length ? ` — the font stylesheet from ${blocked.hosts.join(', ')} did not load (blocked or offline): the text shows in a fallback face${blocked.icons ? ', and the icon font\'s icons show as their names (`menu`)' : ''}; not a fault of the page where that host is reachable` : ''}`);
+  const assets = [...new Set(Object.values(report.viewports).flatMap((x) => x.failedAssets || []))];
+  if (assets.length) {
+    const shown = assets.slice(0, 4).map((a) => { const [kind, u] = a.split(' '); try { const x = new URL(u); return `${kind} ${x.host}${x.pathname.length > 40 ? '/…' + x.pathname.slice(-32) : x.pathname}`; } catch { return a; } });
+    const css = assets.some((a) => a.startsWith('stylesheet'));
+    console.log(`  did not load (blocked or offline): ${shown.join(' · ')}${assets.length > 4 ? ` · … ${assets.length - 4} more` : ''} — ${css ? 'the page renders without those styles, so the screenshots and measurements are of an unstyled page' : 'what those scripts draw or wire up is missing'}; not a fault of the page where that host is reachable. To render it here, answer each from a local copy: --mock '**/<file>=<copy>'`);
+  }
   // Which page this was: a session that did not stick lands on the sign-in page, and every number
   // below would then describe that page. Say so where it cannot be missed.
   const h1s = (first.audit.structure && first.audit.structure.headings || []).filter((h) => h.level === 1).map((h) => h.text);
   console.log(`  page: ${JSON.stringify(first.audit.pageTitle || '(no title)')}${h1s.length ? ` · h1 ${h1s.map((t) => JSON.stringify(t.slice(0, 40))).join(', ')}` : ' · no h1'}${(/sign ?in|log ?in|登录/i.test((first.audit.pageTitle || '') + ' ' + h1s.join(' ')) || (first.audit.passwordField && /sign ?in|log ?in|login|登录|password|密码/i.test((first.audit.bodyText || '').slice(0, 400)))) ? '  ← looks like a sign-in page: was the session passed? (--cookie / --storage-state)' : ''}`);
+  // A viewport that landed somewhere else (an error page, a rate limit, a redirect to sign-in): its numbers are of that page.
+  const odd = Object.entries(report.viewports).filter(([, x]) => x.audit && ((x.documentStatus && x.documentStatus.status >= 400) || x.audit.pageTitle !== first.audit.pageTitle));
+  for (const [w, x] of odd) {
+    const st = x.documentStatus && x.documentStatus.status >= 400 ? ` (HTTP ${x.documentStatus.status}${x.documentStatus.text ? ' ' + x.documentStatus.text : ''})` : '';
+    console.log(`  at ${w} the page was ${JSON.stringify(x.audit.pageTitle || '(no title)')}${st}, not the one above: what is measured there is that page${/429/.test(st) ? ' — a rate limit: sign in once with --save-state, then render with --storage-state' : ''}`);
+  }
+  if (savedState) console.log(`  session saved to ${opt.saveState}: render other pages with --storage-state ${opt.saveState} (no sign-in steps; the file holds live tokens: keep it out of git)`);
   const reqs = first.requests || [];
   const fw = first.frameworkRequests ? ` (${first.frameworkRequests} of the framework's own left out)` : '';
   if ((first.audit.alerts || []).length || first.audit.invalidFields) console.log(`  alerts: ${(first.audit.alerts || []).map((t) => JSON.stringify(t)).join(' · ') || 'none'}${first.audit.invalidFields ? ` · ${first.audit.invalidFields} field${first.audit.invalidFields > 1 ? 's' : ''} marked invalid` : ''}`);
@@ -1621,7 +1664,7 @@ const TOTAL = { // counts kept apart from lists that report.json caps
       const dw = darks.reduce((a, b) => (a.width > b.width ? a : b));
       const df = worst((v) => v.dark ? v.dark.contrast.failures.length : 0), dbf = worst((v) => v.dark ? v.dark.nonText.failures.length : 0);
       const dr = worst((v) => v.dark ? (v.dark.focus.counts ? v.dark.focus.counts.lowContrastRing : v.dark.focus.lowContrastRing.length) : 0);
-      L.push(`- Dark mode: rendered (${dw.dark.mode}${dw.dark.reloaded ? ', after a reload under the dark scheme' : ''}) · ${dw.dark.contrast.checked} text elements, ${df.n} below threshold${at(df)} · ${dw.dark.nonText.checked} boundaries, ${dbf.n} below 3:1 · ${dr.n} focus rings below 3:1 · background ${widest.audit.pageColors.background} → ${dw.dark.pageColors.background}${dw.dark.themeChanged ? '' : ' (unchanged!)'}`);
+      L.push(`- Dark mode: rendered (${dw.dark.mode}${dw.dark.reloaded ? ', after a reload under the dark scheme' : ''}) · ${dw.dark.contrast.checked} text elements, ${df.n} below threshold${at(df)} · ${dw.dark.nonText.checked} boundaries, ${dbf.n} below 3:1 · ${dr.n} focus rings below 3:1 · background ${widest.audit.pageColors.background || 'a gradient or image'} → ${dw.dark.pageColors.background || 'a gradient or image'}${dw.dark.themeChanged ? '' : ' (unchanged!)'}`);
     } else {
       L.push(`- Dark mode: ${widest.audit.darkSupport.any ? 'rule present but not rendered' : 'no dark rule — not rendered'}`);
     }

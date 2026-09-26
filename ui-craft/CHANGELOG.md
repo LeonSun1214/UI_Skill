@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.15.0 — Laravel, hand-written HTML, Eleventy and Jekyll
+
+The last two stacks of the first tier: server-rendered Blade, and sites with no framework
+at all. On these the inspector had nothing to go on. It read Laravel's `vendor/` as the
+project: the Livewire starter kit's vocabulary came from a package's docs stylesheet, its
+"imported most" from Livewire's own scripts, its strings from a test fixture, and it
+found no page and no route. BookStack and SB Admin 2 were "no recognised UI stack", and a
+Jekyll blog was greenfield. Rendering them found what the renderer did not say: a sign-in
+it replayed until the app answered *Too Many Requests*, and then measured that page as
+the dashboard; a page whose kit a blocked CDN never served, measured as if unstyled were
+its design. Checked on the Livewire starter kit (Laravel 13, Livewire 4, Flux, Fortify),
+laravel.io, BookStack, SB Admin 2 (Bootstrap, gulp, Sass), Tailwind Toolbox's landing
+page (Tailwind from unpkg), the Eleventy base blog and Jekyll Now, and on four fixtures.
+Notes: `evals/notes/stacks-static-laravel.md`.
+
+- `inspect.py`, Laravel: `routes/web.php` and the files it requires, with groups
+  (middleware, prefix), resource and controller routes, and Fortify's views. Each GET
+  route is followed to what it shows: a view (`Route::view`, a controller's `return
+  view(…)`), a Livewire page (`Route::livewire`, `pages::` names, a Livewire class), an
+  Inertia page. One line per view: its routes, its middleware (the route's, its group's,
+  and the controller's, `only` and `except` included), the Blade and Flux components it
+  uses, and the layout chain around it (`@extends`, a layout component, Livewire's
+  default layout). Blade components by use with their `@props`; Flux's components; the
+  `auth` pages and how to sign in once for them; `@vite` and what a first run needs;
+  `php artisan serve`. `vendor/` is no longer read as the project's code.
+- `inspect.py`, hand-written HTML: each page with its route and title; the kit and
+  libraries the pages load from a CDN or a vendored copy, with versions (Bootstrap,
+  Tailwind's Play CDN or prebuilt CSS, Bulma, Pico, Foundation, UIkit, Alpine, htmx,
+  jQuery, Font Awesome …); and the header, nav, sidebar, footer and modals copied into
+  every page, with how many copies are identical once the current item is set aside. A
+  page's signals leave its copied chrome out.
+- `inspect.py`, Eleventy and Jekyll: the config (Eleventy's directories, Jekyll's
+  `permalink` style and `defaults`), each template's route (`permalink`, directory data,
+  pretty URLs), its layout chain, its includes, site data, collections by tag; a feed or
+  a sitemap is not a page. The serve line names the gems a Jekyll site without a Gemfile
+  needs on Ruby 3. Hugo is detected.
+- `inspect.py`, every stack: Sass variables are declared tokens (`$primary: #4e73df;`,
+  a font stack), read at the top level of the project's own `.scss` and `.sass` files, not
+  a vendored kit's; a minified stylesheet next to its source is read once. A site whose
+  pages share a kit, a layout, copied chrome or a stylesheet's classes, and a Laravel app
+  with layouts or components, is matched, not greenfield; the verdict names the kit.
+- `render.mjs`, signing in: `--save-state FILE` keeps the session the `--act` steps made
+  (cookies and localStorage) when every step succeeded, for later renders with
+  `--storage-state FILE`. When the steps navigated away, the dark pass does not replay
+  them. A page that answers an error status is named (`page answered 429`), and a
+  viewport that got a different page from the others says which page it measured.
+- `render.mjs`, assets: a stylesheet or script from another host that did not load is
+  named before any measurement (`did not load (blocked or offline)`), with the `--mock`
+  line that answers it from a local copy; `--mock` serves fonts, images and scripts with
+  their content types.
+- `render.mjs`, measurements: a dark pass that changes the page background to a gradient
+  is no longer read as unchanged; a page-level grid (the body, or a container of `main`,
+  `aside`, `header`) is not a ragged row of cards; Livewire's requests are framework
+  traffic.
+- `references/stacks/laravel.md` and `references/stacks/static.md`; `real-projects.md`
+  gains signing in once with `--save-state` and a kit from a CDN that did not load.
+- CI runs the inspector on four fixtures (a static site, an Eleventy site, a Jekyll site,
+  a Laravel app; 33 assertions); the self-test gains a blocked kit and its local copy,
+  a saved sign-in, an error page and an app-shell grid (34 checks).
+
 ## 0.14.0 — Angular
 
 The third web stack after SvelteKit and Astro, and the first whose pages are not files:

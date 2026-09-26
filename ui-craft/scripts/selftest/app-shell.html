@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>App shell</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: #1a1a1a; background: #fff; }
+  /* The page's layout grid: a sidebar, a header and the main pane in two columns. Not a row of cards. */
+  .app { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+  .app aside { grid-row: span 2; background: #f4f4f5; padding: 16px; }
+  .app header { padding: 16px; border-bottom: 1px solid #d4d4d8; }
+  .app main { padding: 16px; }
+</style>
+</head>
+<body>
+  <div class="app">
+    <aside><p>Menu</p></aside>
+    <header><h1>Orders</h1></header>
+    <main><p>Nothing here yet.</p></main>
+  </div>
+</body>
+</html>

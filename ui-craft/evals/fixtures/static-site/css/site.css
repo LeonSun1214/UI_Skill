@@ -1,0 +1,9 @@
+:root { --harbor: #1f4e5f; --sand: #f5efe6; --ink: #1b1b1b; }
+[data-theme="dark"] { --sand: #14181b; --ink: #eceae6; }
+body { background: var(--sand); color: var(--ink); }
+.site-header { border-bottom: 1px solid rgba(0, 0, 0, 0.08); }
+.brand { font-weight: 700; color: var(--harbor); }
+.hero { padding: 4rem 0 2rem; }
+.card-tile { padding: 1.5rem; border-radius: 12px; background: #fff; }
+.muted { color: #5b5b5b; }
+.site-footer { margin-top: 4rem; padding: 2rem 0; border-top: 1px solid rgba(0, 0, 0, 0.08); }

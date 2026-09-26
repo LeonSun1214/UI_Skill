@@ -1,0 +1,7 @@
+:root { --paper: #fbf8f1; --ink: #232323; --accent: #a4462e; }
+@media (prefers-color-scheme: dark) { :root { --paper: #161513; --ink: #ecebe7; --accent: #e08a6d; } }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 17px/1.6 Georgia, serif; }
+.masthead { display: flex; justify-content: space-between; padding: 1rem 2rem; }
+.masthead__link { margin-left: 1rem; color: var(--accent); }
+.page { max-width: 42rem; margin: 0 auto; padding: 2rem; }
+.post__date { color: #6b6b6b; }

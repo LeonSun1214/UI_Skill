@@ -8,9 +8,15 @@ section you hit.
 
 The render output's first lines name the page that rendered (`page: "…" · h1 …`); a sign-in title there means the session did not stick. Then: ask the user to run `node <skill-dir>/scripts/login-state.mjs <login-url> --out .ui-craft/state.json` (a window opens, they log in with the app's own form, close the window, it saves the session), then render with `--storage-state .ui-craft/state.json`. Google and Microsoft sign-in refuse a browser under automation ("this browser or app may not be secure"): for an app whose only door is that button, the user copies the session cookie from their normal browser (DevTools → Application → Cookies) and passes `--cookie name=value`. A token you were given: `--header "Authorization: Bearer …"`.
 
+A test account you can type in (the app's own form, a user made with a seeder or a console) needs no window: sign in once from a render and keep the session. `render.mjs <app>/login --viewports 1440 --act 'type:input[name=email]=…' --act 'type:input[name=password]=…' --act 'click:button[type=submit]' --act 'wait:text=Dashboard' --save-state .ui-craft/state.json` fills the form, and when every step succeeded, saves the cookies and localStorage to the file; its output says `session saved to …`. Then render each guarded page with `--storage-state .ui-craft/state.json` and no steps. Signing in on every render trips the app's rate limit (Laravel's Fortify allows five a minute): the render then measures an error page. The output says so, with a `page answered 429` warning and a line naming the page it got instead. When the steps navigated away (a sign-in lands on the dashboard), the dark pass does not replay them. The file holds live tokens: keep it out of git.
+
 ## The page needs data a backend would provide
 
 The inspector's *Start here* section names the calls the store makes and the dev proxy's target: start that backend if a script does it (`dev.sh`, `compose.yaml`). Else `--mock`: a file (`'**/api/items=.ui-craft/items.json'`), an inline body (`'**/api/teams=[]'`, `'**/api/config={"demo_mode":false}'`) or a bare status (`'**/api/auth/me=401'`, a signed-out visitor). The render output's `requests` line lists every xhr/fetch the app made with its status, so the second render can mock all of them; the framework's own (`/_next/`, `/_nuxt/`, payloads) are counted, not listed. `--init-script .ui-craft/seed.js` runs before the app (localStorage under the key the inspector names, feature flags).
+
+## A stylesheet or script from a CDN did not load
+
+The render names each stylesheet and script that another host failed to serve (`did not load (blocked or offline): stylesheet cdn.jsdelivr.net/…/bootstrap.min.css`) before any measurement: a page without its kit renders unstyled, and its numbers are not the page's. Answer each from a local copy: `--mock '**/bootstrap.min.css=./bootstrap.min.css'` (`npm pack bootstrap@5.3.3` puts one in a tarball; a site that also ships a copy in `vendor/` has one already). The copy must be the version the page links, which the inspector's `Loads:` line names.
 
 ## Content appears after hydration or a fetch
 

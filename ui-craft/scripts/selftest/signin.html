@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in</title>
+<style>
+  body { margin: 0; padding: 32px; font: 16px/1.5 system-ui, sans-serif; color: #1a1a1a; background: #fff; }
+  input { display: block; min-height: 44px; margin: 8px 0 16px; padding: 0 12px; border: 1px solid #6b6b6b; border-radius: 6px; }
+  button { min-height: 44px; padding: 0 20px; background: #1d4ed8; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
+  button:hover { background: #1e40af; }
+  input:focus-visible, button:focus-visible { outline: 3px solid #1a1a1a; outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Sign in</h1>
+  <label for="email">Email</label><input id="email" type="email">
+  <label for="password">Password</label><input id="password" type="password">
+  <button type="button" id="go">Sign in</button>
+</main>
+<script>
+  // A sign-in form that keeps the session in localStorage and lands on the gated page, like an app's.
+  document.getElementById('go').addEventListener('click', () => {
+    if (!document.getElementById('email').value) return;
+    localStorage.setItem('token', 'from-signin');
+    location.href = 'gated.html';
+  });
+</script>
+</body>
+</html>

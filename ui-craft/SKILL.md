@@ -1,14 +1,14 @@
 ---
 name: ui-craft
 metadata:
-  version: 0.14.0
+  version: 0.15.0
 description: >-
-  Build, change, and review UI in web projects built with React, Vue, Svelte, Astro or Angular (Vite, Next.js, Nuxt, SvelteKit, Astro, Angular CLI; Tailwind, plain CSS or Angular Material) with a render → look → measure → fix loop, so what ships is checked against a real screenshot and real DOM measurements (contrast, tap targets, overflow, keyboard focus, hover, motion, dark mode) instead of guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even when they never say "design" or "UI". Also use it to inspect an existing project's design conventions before adding to it.
+  Build, change, and review UI in web projects (React, Vue, Svelte, Astro, Angular, Laravel Blade or plain HTML; Next.js, Nuxt, SvelteKit, Livewire, Eleventy, Jekyll; Tailwind, Bootstrap, plain CSS or Material) with a render → look → measure → fix loop, so what ships is checked against a real screenshot and real DOM measurements (contrast, tap targets, overflow, keyboard focus, hover, motion, dark mode) instead of guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even when they never say "design" or "UI". Also use it to inspect an existing project's design conventions before adding to it.
 ---
 
 # ui-craft
 
-Version 0.14.0. (An older copy of this file means the installed skill is behind the
+Version 0.15.0. (An older copy of this file means the installed skill is behind the
 repository: re-run `install.sh`; `doctor.mjs` says when that is the case.)
 
 UI work has a gap that code review can't close: the first draft always has two or
@@ -91,8 +91,10 @@ Decide which of these you're doing, because they start differently:
 - **Greenfield** (empty project, prototype, single page) → step 2, then 3.
 - **Review or fix** ("polish", "looks off", "is it accessible") → step 4 on the existing page, then fix.
 
-Never assume the stack. Check `package.json` for `next` / `nuxt` / `@sveltejs/kit` / `astro` / `@angular/core` / `vite` / `react-router` / `vue-router`
-and the Tailwind major (v4 is CSS-first with `@theme`; v3 uses `tailwind.config.*`).
+Never assume the stack. Check `package.json` for `next` / `nuxt` / `@sveltejs/kit` / `astro` / `@angular/core` / `@11ty/eleventy` / `vite` / `react-router` / `vue-router`
+and the Tailwind major (v4 is CSS-first with `@theme`; v3 uses `tailwind.config.*`). A `composer.json`
+with `artisan` beside it is Laravel; a `_config.yml` with `_layouts/` is Jekyll; `.html` files and no
+manifest are a hand-written site.
 
 ### 1. Inspect the project before touching it (existing projects)
 
@@ -118,7 +120,13 @@ actions, content collections), the islands, and the hooks or middleware and the 
 they guard; on Angular, the route table followed through lazy components and modules,
 the layouts with a `<router-outlet>`, each guard with the pages it covers and the session
 it reads, the requests each page's services make, components by selector with their
-inputs and outputs, and the Material theme. Each stack has notes to read once (`references/stacks/<stack>.md`, named
+inputs and outputs, and the Material theme; on Laravel, each GET route followed to its Blade
+view, Livewire page or Inertia page with its middleware (the route's, its group's and the
+controller's), the layout chain around it, the Blade components by use with their props, and
+Flux; on a hand-written site, each page with its route, the kit and libraries it loads (from a
+CDN or `vendor/`) and the header, nav and footer copied into every page, with how many copies
+are identical; on Eleventy and Jekyll, each template with its permalink, its layout chain and its
+includes. Each stack has notes to read once (`references/stacks/<stack>.md`, named
 in the output). Read the one page whose
 signals match yours (or the file it renders) and the vocabulary lines; that is
 the whole of the reading for a match task. Below it the report has the tokens the project
@@ -244,6 +252,8 @@ choice, then a reload: for a theme service that does more than a class) · `--no
 person does before the state you want measured — `click:SEL`, `type:SEL=TEXT`,
 `press:KEY`, `hover:SEL`, `focus:SEL`, `select:SEL=VALUE`, `wait:MS|SEL`; SEL is any
 Playwright selector, `text=Save` and `role=button[name="Delete"]` included) ·
+`--save-state FILE` (after the `--act` steps, keep the session they made for later renders
+with `--storage-state FILE`: sign in once, not on every render) ·
 `--serial` (the viewports render side by side by default; one at a time for a dev
 server that cannot take three page loads at once).
 
@@ -326,18 +336,19 @@ read only the section you hit.
 
 | Situation | Do this |
 |---|---|
-| Behind a login (the output's `page:` line names a sign-in page) | the user runs `scripts/login-state.mjs <login-url> --out .ui-craft/state.json`; render with `--storage-state .ui-craft/state.json`. Google or Microsoft sign-in: `--cookie name=value` copied from their browser. A token: `--header "Authorization: Bearer …"` |
+| Behind a login (the output's `page:` line names a sign-in page) | the user runs `scripts/login-state.mjs <login-url> --out .ui-craft/state.json`; render with `--storage-state .ui-craft/state.json`. A test account you can type: render the sign-in page once with `--act` steps and `--save-state .ui-craft/state.json`. Google or Microsoft sign-in: `--cookie name=value` copied from their browser. A token: `--header "Authorization: Bearer …"` |
+| A stylesheet or script from a CDN did not load (the output's `did not load` line) | `--mock '**/<file>=<local copy>'` for each, from `npm pack` or the project's own copy; never measure the unstyled page |
 | Needs data a backend provides | start the backend if a script does (`dev.sh`, `compose.yaml`); else `--mock 'PATTERN=X'` (X a file, an inline body or a bare status) for each call on the output's `requests` line; `--init-script` seeds localStorage |
 | Content appears after hydration or a fetch | `--wait-for SELECTOR` |
 | A splash or cookie bar covers the page | `--dismiss Escape` or `--dismiss SELECTOR` |
 | The theme is set by a script at boot | nothing: the dark pass reloads |
-| One component, not a page | `scripts/harness.mjs` (Vite + React); in Vue, Svelte, Astro or Angular, render a page that holds it |
+| One component, not a page | `scripts/harness.mjs` (Vite + React); in Vue, Svelte, Astro, Angular, Blade or plain HTML, render a page that holds it |
 | Changing a page that exists, or proving one did not change | render before touching it, `--compare` after; restore generated files (contentlayer, codegen) before each render |
 | A dialog, drawer, menu, dropdown, or form error | `--act 'click:text=Delete'`, `--act 'type:SEL=x' --act press:Enter`; render the closed state too |
 | The project has checks (`tsc`, lint, tests) | run them after the last render; revert what a `lint --fix` reformats |
 | Monorepo | inspect, serve and render the one app you change |
 | Next.js | render `http://localhost:PORT`, never `127.0.0.1`; `requests: none` means the data came with the HTML: start what `dev` starts instead of mocking |
-| Nuxt, Vue, SvelteKit, Astro or Angular | the stack notes the inspector names; a kit's own defaults (Nuxt UI's faint rings, Material's faint focus tint, Starlight's theme) are inherited |
+| Nuxt, Vue, SvelteKit, Astro, Angular, Laravel or a static site | the stack notes the inspector names; a kit's own defaults (Nuxt UI's faint rings, Material's faint focus tint, Starlight's theme) are inherited |
 
 ### 5. Report
 
@@ -371,7 +382,7 @@ never a temp directory.
 |---|---|
 | Starting on any existing codebase | run `scripts/inspect.py` — nothing else for a match task |
 | The page won't just render (a login, a backend, a splash, a dialog, Next.js) | that section of `references/real-projects.md` |
-| A Nuxt, Vue, SvelteKit, Astro or Angular project | `references/stacks/<stack>.md`, once (the inspector names it) |
+| A Nuxt, Vue, SvelteKit, Astro, Angular, Laravel or static-site project | `references/stacks/<stack>.md`, once (the inspector names it) |
 | Choosing a look, or the output feels generic | `references/anti-generic.md` |
 | Picking token values, light or dark | run `scripts/contrast.py` |
 | A project the user will keep building on (tokens to persist) | `scripts/direction.py` — brief.json → check --fix → write |

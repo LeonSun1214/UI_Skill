@@ -1,8 +1,8 @@
 # ui-craft
 
-A Claude Code skill for UI work in web projects built with React, Vue, Svelte, Astro or
-Angular (Vite, Next.js, Nuxt, SvelteKit, Astro, Angular CLI; Tailwind, plain CSS or Angular
-Material) that
+A Claude Code skill for UI work in web projects built with React, Vue, Svelte, Astro,
+Angular, Laravel Blade or plain HTML (Vite, Next.js, Nuxt, SvelteKit, Angular CLI, Livewire,
+Inertia, Eleventy, Jekyll; Tailwind, Bootstrap, plain CSS or Angular Material) that
 **renders what it built and measures it** before calling it done.
 
 Most UI skills give the model a database of styles and palettes. ui-craft gives it
@@ -127,9 +127,10 @@ Verified (render.mjs · .ui-craft/pricing-2):
 
 | Situation | What the skill does |
 |---|---|
-| Page behind a login | `node scripts/login-state.mjs <login-url>` opens a window, you log in, the session is saved; renders replay it with `--storage-state`. Or `--cookie`, `--header "Authorization: Bearer …"`, `--auth user:pass`. |
+| Page behind a login | `node scripts/login-state.mjs <login-url>` opens a window, you log in, the session is saved; renders replay it with `--storage-state`. With a test account, sign in once from the render itself: `--act` steps on the sign-in page and `--save-state state.json`, then `--storage-state state.json` on every other page (signing in on every render trips rate limits, and the output names the error page it got instead). Or `--cookie`, `--header "Authorization: Bearer …"`, `--auth user:pass`. |
 | A dialog, a menu, a form's error state | `--act 'click:text=Delete'`, `--act 'type:input[name=email]=x' --act press:Enter` put the page in that state first; a dialog gets its own audit (focus inside, Tab trapped when modal, a name, Escape, fits the phone) and the live region's text is quoted |
 | Page needs data | `--mock '**/api/items=fixture.json'` answers requests from a file, `'**/api/teams=[]'` inline, `'**/api/auth/me=401'` a bare status; the output lists every xhr/fetch the app made with its status (the framework's own are counted, not listed). `--init-script seed.js` runs before the app (localStorage, flags). |
+| A kit from a CDN did not load | the output's `did not load` line names each stylesheet and script another host failed to serve, before any measurement is read; `--mock '**/bootstrap.min.css=./bootstrap.min.css'` answers each from a local copy (`npm pack bootstrap@5.3.3`) |
 | A splash or cookie bar covers the page | `--dismiss Escape` or `--dismiss '.cookie-bar button'` |
 | SPA that hydrates late | `--wait-for '[data-loaded]'` |
 | One component, not a page | `node scripts/harness.mjs <project> --component src/ui/Button.tsx --states '[…]'` writes a Vite-served page that mounts it once per state (React) |
@@ -141,6 +142,9 @@ Verified (render.mjs · .ui-craft/pricing-2):
 | SvelteKit | `inspect.py` reads the file routes (route groups dropped), each `+layout.svelte` and the pages it wraps, what loads a page's data (`+page.ts`, `+page.server.ts`, form actions), `hooks.server.ts` and the paths it guards, `+server.ts` endpoints, props from `$props()` or `export let`, mode-watcher. Notes: `references/stacks/sveltekit.md` |
 | Astro | `inspect.py` reads the file routes and endpoints, the layout each page sits in, content collections and their folders, islands (`client:*`), middleware, integrations, Starlight's docs pages, and dark mode set by an inline script over plain CSS variables. The render hides Astro's dev toolbar. Notes: `references/stacks/astro.md` |
 | Angular | `inspect.py` follows the route table from `provideRouter` / `RouterModule.forRoot` through lazy components, lazy NgModules and default-export route files (tsconfig path aliases and barrels resolved), and prints one line per page with its route, template and the layout whose `<router-outlet>` holds it; each guard with the pages it covers, where it redirects and the storage key of the session it reads; each service's `HttpClient` requests, and on the page line the calls that page makes; components by selector with their inputs and outputs; the Angular Material theme (M3 or M2, palettes, `--mat-sys-*` use); the dark-theme class and the service that sets it. The render reads Material's focus where it draws it (a field's outline beside the input, a ring on an inner layer) and reports the faint state-layer tint Material shows by default. Notes: `references/stacks/angular.md` |
+| Laravel | `inspect.py` reads `routes/web.php` and the files it requires (groups, prefixes, resource routes, Fortify's views), follows each GET route to what it shows (a Blade view, a controller's `return view(…)`, a Livewire page, an Inertia page) with the middleware of the route, its group and the controller, and prints one line per view with the layout chain around it (`@extends` or a layout component, Livewire's default layout included); Blade components by use with their `@props`; Flux; `@vite` and what a first run needs. Notes: `references/stacks/laravel.md` |
+| Hand-written HTML | `inspect.py` lists each page with its route and title, the kit and libraries the pages load (Bootstrap, Tailwind's CDN build, Bulma, Alpine, htmx … from a CDN or `vendor/`, with versions), and the header, nav, sidebar and footer copied into every page: how many pages hold each and how many copies are identical once the current item is set aside, so a nav change is made in every copy. Notes: `references/stacks/static.md` |
+| Eleventy, Jekyll | `inspect.py` reads the config (Eleventy's directories, Jekyll's `permalink` and `defaults`), each template's route, its layout chain (through directory data files and `defaults`), its includes, and the site data; Hugo is detected. Notes: `references/stacks/static.md` |
 | A theme service switches dark mode | `--dark-storage theme=dark` sets the app's stored choice for the dark pass and reloads, so the app's own switch runs (a body class, a stored setting) instead of a class the render guesses; the inspector prints the flag when it finds the service |
 
 ## Scripts
@@ -163,7 +167,8 @@ All standard tools; the skill calls them, and so can you.
 (the defaults you reach for without noticing), `critique-rubric.md` (how to look at
 a screenshot), `constraints.md` (the rules with sources, marked measured or manual),
 `patterns.md` (what each page type owes the user), `real-projects.md` (a page that
-won't just render) and `stacks/` (what differs in a Nuxt, Vue, SvelteKit or Astro project).
+won't just render) and `stacks/` (what differs in a Nuxt, Vue, SvelteKit, Astro, Angular,
+Laravel or static-site project).
 
 ## Evals
 
@@ -179,13 +184,14 @@ git-ignored `ui-craft-workspace/`.
 
 ## Limits
 
-- Web only: React, Vue, Svelte and Astro. `render.mjs` works on any URL; `inspect.py`
-  understands Tailwind (v3 config or v4 `@theme`) and plain CSS variables, Next.js,
-  Nuxt, Vue + Vite, SvelteKit and Astro. The benchmark tasks are React and Nuxt;
-  SvelteKit and Astro are checked on fixtures and three real projects, not yet on a
-  full task. Not yet: server-rendered templates (Laravel, Rails, Django),
-  and the theme objects of CSS-in-JS kits (MUI, Chakra, styled-components). The
-  component harness is React only. No React Native, Flutter or SwiftUI.
+- Web only. `render.mjs` works on any URL; `inspect.py` understands Tailwind (v3 config
+  or v4 `@theme`), Bootstrap and plain CSS variables, Next.js, Nuxt, Vue + Vite, SvelteKit,
+  Astro, Angular, Laravel (Blade, Livewire, Inertia), Eleventy, Jekyll and hand-written
+  HTML. The benchmark tasks are React and Nuxt; the other stacks are checked on fixtures
+  and real projects, not yet on a full task. Not yet: Rails and Django templates, Hugo's
+  templates (detected, not read), and the theme objects of CSS-in-JS kits (MUI, Chakra,
+  styled-components). The component harness is React only. No React Native, Flutter or
+  SwiftUI.
 - It measures what the DOM exposes. Text over images and gradients is reported as
   unverifiable; colour-only meaning, zoom to 200%, dragging alternatives and flashing
   are listed in `constraints.md` as manual checks.

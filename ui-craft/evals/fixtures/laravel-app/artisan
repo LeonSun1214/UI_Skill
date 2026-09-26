@@ -1,0 +1,2 @@
+#!/usr/bin/env php
+<?php // the fixture stand-in for Laravel's console entry
