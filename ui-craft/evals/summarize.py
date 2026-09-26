@@ -32,11 +32,12 @@ def collect(it: Path):
                     continue
                 t = load(run / "timing.json") or {}
                 failed = [e["text"].split(":")[0] for e in g["expectations"] if not e["passed"]]
-                j = load(run / "judge.json") or {}
+                # a match task judged against its reference writes judge-match.json; that verdict wins
+                j = load(run / "judge-match.json") or load(run / "judge.json") or {}
                 rows.append((eval_dir.name, cfg.name, run.name, g["summary"]["passed"], g["summary"]["total"],
                              t.get("total_tokens"), t.get("total_duration_seconds"), failed,
                              t.get("total_tokens_comparable") or t.get("total_tokens_excl_resume"),
-                             j.get("overall"), j.get("distinctive")))
+                             j.get("overall"), j.get("distinctive"), j.get("rubric", "generic")))
     return rows
 
 
@@ -102,7 +103,9 @@ def table(rows):
     for c in cfgs:
         v = [r[9] for r in rows if r[1] == c and r[9] is not None]
         d = [r[10] for r in rows if r[1] == c and r[10] is not None]
-        looks.append(f"{statistics.mean(v):.2f} (distinctive {statistics.mean(d):.2f})" if v else "—")
+        nm = len([r for r in rows if r[1] == c and r[9] is not None and r[11] == "match"])
+        notes = ([f"distinctive {statistics.mean(d):.2f}"] if d else []) + ([f"{nm} by the match rubric"] if nm else [])
+        looks.append(f"{statistics.mean(v):.2f}" + (f" ({', '.join(notes)})" if notes else "") if v else "—")
     if any(l != "—" for l in looks):
         out.append("| visual judge, overall 1–5 | " + " | ".join(looks) + " |")
     out.append("")
@@ -112,7 +115,7 @@ def table(rows):
 
 def failures(rows):
     out = []
-    for ev, cfg, run, p, t, tok, sec, failed, _, _o, _d in rows:
+    for ev, cfg, run, p, t, tok, sec, failed, _, _o, _d, _rb in rows:
         if failed:
             out.append(f"- {ev} · {cfg}: " + ", ".join(failed))
     return "\n".join(out) or "- none"
@@ -156,9 +159,11 @@ def main():
         return 1
     md, cfgs = table(rows)
     print(md)
-    pairs = load(it / "judge-pairs.json")
-    if pairs:
-        print("\nVisual judge, pairwise (both image orders; 'split' = the two orders disagreed):")
+    for fname, label in (("judge-pairs.json", "generic rubric"), ("judge-pairs-match.json", "match rubric: against the page the brief names")):
+        pairs = load(it / fname)
+        if not pairs:
+            continue
+        print(f"\nVisual judge, pairwise, {label} (both image orders; 'split' = the two orders disagreed):")
         for key, res in pairs.items():
             if key.startswith("_") or "_vs_" not in key:
                 continue

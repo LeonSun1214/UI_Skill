@@ -24,7 +24,8 @@
         "hover-feedback: every button and standalone link changes at least one visible property on hover (the page must not exist in one state only)",
         "non-text-contrast: every control that is identified by its boundary — form fields, icon-only buttons, switches — reaches 3:1 against its surroundings in the light rendering (WCAG 1.4.11); a text-labelled button with a <3:1 surface is warned, not failed",
         "facts: verify.py finds no invented facts in the project — every imported package is installed, every icon name is exported by its package, every Google Fonts family and weight exists and @font-face files are present"
-      ]
+      ],
+      "task_type": "greenfield"
     },
     {
       "id": 2,
@@ -49,7 +50,8 @@
         "hover-feedback: every button and standalone link changes at least one visible property on hover (the page must not exist in one state only)",
         "non-text-contrast: every control that is identified by its boundary — form fields, icon-only buttons, switches — reaches 3:1 against its surroundings in the light rendering (WCAG 1.4.11); a text-labelled button with a <3:1 surface is warned, not failed",
         "facts: verify.py finds no invented facts in the project — every imported package is installed, every icon name is exported by its package, every Google Fonts family and weight exists and @font-face files are present"
-      ]
+      ],
+      "task_type": "match"
     },
     {
       "id": 3,
@@ -73,7 +75,8 @@
         "hover-feedback: every button and standalone link changes at least one visible property on hover (the page must not exist in one state only)",
         "non-text-contrast: every control that is identified by its boundary — form fields, icon-only buttons, switches — reaches 3:1 against its surroundings in the light rendering (WCAG 1.4.11); a text-labelled button with a <3:1 surface is warned, not failed",
         "facts: verify.py finds no invented facts in the project — every imported package is installed, every icon name is exported by its package, every Google Fonts family and weight exists and @font-face files are present"
-      ]
+      ],
+      "task_type": "redesign"
     },
     {
       "id": 4,
@@ -95,7 +98,8 @@
         "tokens-unchanged: the light @theme block in src/index.css keeps its values (dark values are added, light ones untouched)",
         "summary-dark-numbers: SUMMARY.md reports measured dark-mode numbers (contrast checked / failures), not just 'supports dark mode'",
         "facts: verify.py finds no invented facts in the project — every imported package is installed, every icon name is exported by its package, every Google Fonts family and weight exists and @font-face files are present"
-      ]
+      ],
+      "task_type": "match"
     },
     {
       "id": 5,
@@ -121,7 +125,8 @@
         "non-text-contrast: every control that is identified by its boundary — form fields, icon-only buttons, switches — reaches 3:1 against its surroundings in the light rendering (WCAG 1.4.11); a text-labelled button with a <3:1 surface is warned, not failed",
         "facts: verify.py finds no invented facts in the project — every imported package is installed, every icon name is exported by its package, every Google Fonts family and weight exists and @font-face files are present",
         "report-numbers: SUMMARY.md reports measured numbers for contrast and tap targets, not just adjectives"
-      ]
+      ],
+      "task_type": "review"
     }
   ]
 }
