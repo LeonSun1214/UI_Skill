@@ -214,6 +214,23 @@ try {
     return `${g[0].items} items in ${g[0].columns} columns, ${g[0].lastRow} alone · the four-card grid not flagged`;
   });
 
+  // 3f. what is drawn in layers: text on a positioned indicator, rings on ::before, shadow rings
+  // stacked the way Tailwind stacks them, fields outlined by an inset ring or recoloured on focus
+  await check('layers: backdrops and rings read as drawn', async () => {
+    const r = await render(`${base}/layers.html`, join(work, 'layers'));
+    const a = v(r).audit, f = v(r).focus;
+    const text = a.contrast.failures.map((x) => x.selector).sort();
+    expect(text.length === 2 && /covered/.test(text[0]) && /faint-caption/.test(text[1]), `expected the faint caption and the text under the veil: ${JSON.stringify(text)}`);
+    expect(a.contrast.positionedBackdrop >= 1, 'the tab on the indicator was not read against it');
+    expect(a.contrast.unverifiable === 1, `the text on the photo should be unverifiable: ${a.contrast.unverifiable}`);
+    const fields = a.nonText.failures;
+    expect(fields.length === 1 && /field-ringed$/.test(fields[0].selector) && fields[0].via === 'ring', `expected the faint ring field alone, via its ring: ${JSON.stringify(fields)}`);
+    const faint = f.lowContrastRing.join(' | ');
+    expect(f.invisible.length === 0, `rings counted invisible: ${JSON.stringify(f.invisible)}`);
+    expect(f.lowContrastRing.length === 2 && /nav-faint \(outline on ::before/.test(faint) && /ring-faint \(box-shadow/.test(faint), `expected the faint ::before ring and the faint shadow ring: ${faint}`);
+    return `${text.join(' and ')} fail, the tab on the indicator passes, the photo is unverifiable · ${fields[0].selector} via ring · faint rings: ${faint}`;
+  });
+
   await check('--dismiss Escape lifts the splash', async () => {
     const a = await render(`${base}/splash.html`, join(work, 's0'));
     const b = await render(`${base}/splash.html`, join(work, 's1'), '--dismiss', 'Escape');

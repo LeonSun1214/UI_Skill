@@ -50,11 +50,15 @@ KNOWN_UI = {
     "daisyui": "daisyUI", "flowbite-react": "Flowbite", "@heroui/react": "HeroUI",
     "@nextui-org/react": "NextUI", "@ark-ui/react": "Ark UI", "react-aria-components": "React Aria",
     "@base-ui-components/react": "Base UI",
+    "@nuxt/ui": "Nuxt UI", "@nuxt/ui-pro": "Nuxt UI Pro", "element-plus": "Element Plus", "vuetify": "Vuetify",
+    "primevue": "PrimeVue", "naive-ui": "Naive UI", "reka-ui": "Reka UI", "radix-vue": "Radix Vue",
+    "@headlessui/vue": "Headless UI", "ant-design-vue": "Ant Design Vue", "quasar": "Quasar",
 }
 KNOWN_ICONS = {
     "lucide-react": "Lucide", "@heroicons/react": "Heroicons", "@phosphor-icons/react": "Phosphor",
     "react-icons": "react-icons", "@tabler/icons-react": "Tabler", "@radix-ui/react-icons": "Radix Icons",
     "@iconify/react": "Iconify",
+    "lucide-vue-next": "Lucide", "@iconify/vue": "Iconify", "@heroicons/vue": "Heroicons", "@phosphor-icons/vue": "Phosphor",
 }
 KNOWN_MOTION = {
     "framer-motion": "Framer Motion", "motion": "Motion", "gsap": "GSAP",
@@ -203,6 +207,9 @@ def detect_stack(root: Path) -> dict:
             if any(key in ddeps for key, _ in KNOWN_FRAMEWORKS) or "tailwindcss" in ddeps:
                 workspace_apps.append(os.path.relpath(d, root))
     router = None
+    if framework == "Nuxt":
+        src = root / "app" if (root / "app" / "pages").is_dir() or (root / "app" / "app.vue").is_file() else root
+        router = f"file routes in {rel(root, src / 'pages')}/" if (src / "pages").is_dir() else None
     if framework == "Next.js":
         if (root / "app").is_dir() or (root / "src" / "app").is_dir():
             router = "App Router"
@@ -238,12 +245,15 @@ def detect_stack(root: Path) -> dict:
         "framework": framework,
         "router": router,
         "react": deps.get("react"),
+        "vue": deps.get("vue"),
+        "frameworkVersion": next((deps.get(key) for key, label in KNOWN_FRAMEWORKS if label == framework and key in deps), None),
         "workspaceApps": workspace_apps,
         "tailwind": tw,
         "tailwindMajor": tw_major,
         "tailwindConfigFiles": [rel(root, p) for p in config_files],
         "ui": sorted({label for key, label in KNOWN_UI.items() if key in deps}),
-        "icons": sorted({label for key, label in KNOWN_ICONS.items() if key in deps}),
+        "icons": sorted({label for key, label in KNOWN_ICONS.items() if key in deps}
+                        | {f"Iconify ({k.split('/', 1)[1]})" for k in deps if k.startswith("@iconify-json/")}),
         "motion": sorted({label for key, label in KNOWN_MOTION.items() if key in deps}),
         "shadcn": shadcn,
         "typescript": "typescript" in deps,
@@ -473,7 +483,7 @@ def css_vocabulary(root: Path, css_files: list[Path], src_texts: list[str]) -> l
         text = read(p)
         for m in re.finditer(r"(?m)^[ \t]*\.([a-zA-Z][\w-]*)\s*\{", text):
             name = m.group(1)
-            if name in vocab:
+            if name in vocab or name in {"dark", "light"}:      # a theme selector, not a class a page uses
                 continue
             decl = re.sub(r"/\*.*?\*/", "", block_after(text, m.start()), flags=re.S)
             decl = " ".join(decl.split()).strip()
@@ -505,11 +515,43 @@ def props_of(path: Path) -> list[str]:
             name = re.split(r"[=:]", part, 1)[0].strip()
             if name and re.match(r"^\.{0,3}\w+$", name):
                 names.append(name)
+    if not names and "defineProps" in t:                 # Vue: defineProps<{ … }>() or defineProps({ … })
+        dm = re.search(r"defineProps<\s*\{(.*?)\}\s*>", t, re.S)
+        if dm:
+            names = [m.group(1) for part in re.split(r"[;,\n]", dm.group(1))
+                     for m in [re.match(r"\s*['\"]?(\w+)['\"]?\??\s*:", part)] if m]
+        else:
+            om = re.search(r"defineProps\(\s*\{", t)
+            if om:
+                names = _top_level_keys(block_after(t, om.start()))
+            else:
+                am = re.search(r"defineProps\(\s*\[([^\]]*)\]", t)
+                if am:
+                    names = re.findall(r"['\"](\w+)['\"]", am.group(1))
     if not names:
         pm = re.search(r"(?:interface|type)\s+\w*Props\b[^{]*\{([^}]*)\}", t)
         if pm:
             names = [n for n in re.findall(r"^\s*(\w+)\??\s*:", pm.group(1), re.M)]
     return names[:9]
+
+
+def _top_level_keys(block: str) -> list[str]:
+    """Keys at depth 0 of an object literal's body: { title: String, size: { type: … } } → title, size."""
+    keys, depth, i = [], 0, 0
+    while i < len(block):
+        ch = block[i]
+        if ch in "{[(":
+            depth += 1
+        elif ch in "}])":
+            depth -= 1
+        elif depth == 0:
+            m = re.match(r"\s*['\"]?(\w+)['\"]?\s*:", block[i:])
+            if m and (i == 0 or block[i - 1] in ",{\n \t"):
+                keys.append(m.group(1))
+                i += m.end()
+                continue
+        i += 1
+    return list(dict.fromkeys(keys))
 
 
 def import_fanin(root: Path, src_files: list[Path]) -> list[dict]:
@@ -554,17 +596,21 @@ def _signals(text: str) -> list[str]:
     signals = []
     if re.search(r"export\s+default\s+async\s+function", text):
         signals.append("server component")
-    if "<form" in text:
+    if re.search(r"<(?:form|UForm|u-form|el-form|ElForm|v-form|VForm)\b", text):
         signals.append("form")
-    n_fields = len(re.findall(r"<(?:input|select|textarea)\b", text))
+    n_fields = len(re.findall(r"<(?:input|select|textarea)\b|<(?:U|u-|El|el-|V|v-)?(?:Input|input|Select|select|Textarea|textarea|SelectMenu|select-menu|InputNumber|Checkbox|Switch|RadioGroup)\b(?![\w-])", text))
     if n_fields:
         signals.append(f"{n_fields} field{'s' if n_fields > 1 else ''}")
-    if "<table" in text:
+    if re.search(r"<(?:table|UTable|u-table|el-table|ElTable|VDataTable|v-data-table)\b", text):
         signals.append("table")
-    elif ".map(" in text and re.search(r"<(?:li|article|tr)\b", text):
+    elif (".map(" in text and re.search(r"<(?:li|article|tr)\b", text)) or "v-for=" in text:
         signals.append("list")
-    if re.search(r'role="dialog"|<dialog\b|<Dialog\b', text):
+    if re.search(r'role="dialog"|<dialog\b|<Dialog\b|<(?:UModal|USlideover|u-modal|el-dialog|ElDialog|VDialog|v-dialog)\b', text):
         signals.append("dialog")
+    data = [f"content `{c}`" for c in dict.fromkeys(re.findall(r"queryCollection(?:Navigation)?\(\s*['\"](\w+)['\"]", text))]
+    data += [f"fetch `{u}`" for u in dict.fromkeys(re.findall(r"(?:useFetch|useLazyFetch|\$fetch)\(\s*['\"`]([^'\"`$]+)", text))]
+    if data:
+        signals.append("data: " + ", ".join(data[:3]))
     return signals
 
 
@@ -650,6 +696,18 @@ def theme_mechanism(root: Path, css_files: list[Path], stack: dict, src_files: l
                 where = f"`{cfg}` (`darkMode: {v[:40]}`)"
                 break
     uses_dark = any("dark:" in read(p, 200_000) for p in src_files[:MAX_SRC_FILES] if p.suffix in {".tsx", ".jsx", ".vue", ".svelte", ".astro", ".html", ".mdx"})
+    deps = stack.get("deps") or {}
+    color_mode = None
+    if any(k in deps for k in ("@nuxtjs/color-mode", "@nuxt/ui", "@nuxt/ui-pro")):
+        nuxt_ui_on = any(k in deps for k in ("@nuxt/ui", "@nuxt/ui-pro"))
+        cfg = "".join(read(c) for c in root.glob("nuxt.config.*"))
+        m = re.search(r"colorMode\s*:\s*\{", cfg)
+        opts = dict(re.findall(r"(\w+)\s*:\s*['\"]([^'\"]*)['\"]", block_after(cfg, m.start()))) if m else {}
+        color_mode = {"cls": "dark" + opts.get("classSuffix", "" if nuxt_ui_on else "-mode"), "pref": opts.get("preference", "system"),
+                      "key": opts.get("storageKey", "nuxt-color-mode"), "nuxtui": nuxt_ui_on}
+        if how is None:
+            how = f"`.{color_mode['cls']}` on `<html>`"
+            where = "the class @nuxtjs/color-mode sets" + (" (Nuxt UI brings it)" if nuxt_ui_on else "")
     if how is None:
         if not stack.get("tailwind") or not uses_dark:
             return None
@@ -678,6 +736,11 @@ def theme_mechanism(root: Path, css_files: list[Path], stack: dict, src_files: l
                           f"default `{dflt}`" + (f" from `{dsrc}`" if dsrc else "") + f", localStorage `{key.group(1) if key else 'theme'}`)")
                 break
         setter = setter or "next-themes is installed"
+    if color_mode:
+        setter = (f"set before paint by @nuxtjs/color-mode (preference `{color_mode['pref']}`, localStorage `{color_mode['key']}`)"
+                  + ("; Nuxt UI's components switch through their CSS variables" if color_mode["nuxtui"] else ""))
+        if color_mode["nuxtui"]:
+            uses_dark = True
     return f"`dark:` applies under {how} — {where}" + (f"; {setter}" if setter else "") + ("" if uses_dark else " — no `dark:` class uses it yet")
 
 
@@ -731,29 +794,254 @@ def locale_routing(root: Path, src_files: list[Path], routes: list) -> dict | No
     return None
 
 
-def page_signatures(root: Path, src_files: list[Path], vocab_names: list[str]) -> dict:
+# ------------------------------------------------------------------ Vue / Nuxt
+VUE_BUILTINS = {"Transition", "TransitionGroup", "KeepAlive", "Teleport", "Suspense", "Component", "Slot", "Template",
+                "RouterView", "RouterLink", "NuxtLink", "NuxtPage", "NuxtLayout", "NuxtRouteAnnouncer", "ClientOnly",
+                "NuxtLoadingIndicator", "NuxtImg", "NuxtPicture", "NuxtErrorBoundary", "ContentRenderer", "Icon"}
+
+
+def vue_template(text: str) -> str:
+    """The template of a single-file component: the first <template> to the last </template>."""
+    m = re.search(r"<template(?:\s[^>]*)?>", text)
+    if not m:
+        return ""
+    end = text.rfind("</template>")
+    return text[m.end():end] if end > m.end() else text[m.end():]
+
+
+def _pascal(tag: str) -> str:
+    return "".join(w[:1].upper() + w[1:] for w in re.split(r"[-_.]", tag) if w)
+
+
+def vue_tags(template: str) -> list[str]:
+    """Component tags in a template, in order of first use: <AppHeader>, <app-header> → AppHeader."""
+    tags = re.findall(r"<([A-Z][A-Za-z0-9]*)\b|<([a-z][a-z0-9]*-[a-z0-9-]+)\b", template)
+    return list(dict.fromkeys(_pascal(a or b) for a, b in tags))
+
+
+def nuxt_src(root: Path) -> Path:
+    """Nuxt 4 keeps the app in app/; Nuxt 3 at the root."""
+    return root / "app" if (root / "app" / "pages").is_dir() or (root / "app" / "app.vue").is_file() else root
+
+
+def nuxt_components(root: Path) -> dict[str, Path]:
+    """Auto-imported component name → file. components/base/Button.vue is <BaseButton>, and
+    components/base/BaseButton.vue too (a repeated prefix is dropped)."""
+    base = nuxt_src(root) / "components"
+    out: dict[str, Path] = {}
+    if not base.is_dir():
+        return out
+    for f in sorted(base.rglob("*.vue")):
+        if set(f.parts) & SKIP_DIRS:
+            continue
+        name = ""
+        for seg in f.relative_to(base).with_suffix("").parts:
+            seg = _pascal(seg.split(".")[0])
+            if seg == "Index" and name:
+                continue
+            name = seg if seg.startswith(name) and name else name + seg
+        out.setdefault(name, f)
+    return out
+
+
+def vue_component_uses(root: Path, src_files: list[Path], names: dict[str, Path]) -> list[dict]:
+    """Auto-imported components by how many templates use them: Nuxt's answer to 'imported most'."""
+    counts: collections.Counter = collections.Counter()
+    for p in src_files:
+        if p.suffix != ".vue":
+            continue
+        for tag in set(vue_tags(vue_template(read(p, 200_000)))):
+            if tag in names and names[tag] != p:
+                counts[tag] += 1
+    return [{"file": rel(root, names[n]), "importers": c, "component": True, "props": props_of(names[n])}
+            for n, c in counts.most_common(12) if c >= 1][:12]
+
+
+def nuxt_ui(root: Path, src_files: list[Path], deps: dict) -> dict | None:
+    """Nuxt UI's vocabulary: the colours app.config gives it, and its components by use."""
+    if not any(k in deps for k in ("@nuxt/ui", "@nuxt/ui-pro")):
+        return None
+    colors, cfg = {}, None
+    for c in (nuxt_src(root) / "app.config.ts", root / "app.config.ts", nuxt_src(root) / "app.config.js"):
+        if c.is_file():
+            t = read(c)
+            m = re.search(r"colors\s*:\s*\{", t)
+            if m:
+                colors = dict(re.findall(r"(\w+)\s*:\s*['\"]([\w-]+)['\"]", block_after(t, m.start())))
+            cfg = rel(root, c)
+            break
+    counts: collections.Counter = collections.Counter()
+    for p in src_files:
+        if p.suffix == ".vue":
+            counts.update(t for t in vue_tags(vue_template(read(p, 200_000))) if re.match(r"^U[A-Z]", t))
+    return {"config": cfg, "colors": colors, "components": counts.most_common(14)}
+
+
+def nuxt_routes(root: Path) -> list[tuple[str, str]]:
+    pages = nuxt_src(root) / "pages"
+    out = []
+    if not pages.is_dir():
+        return out
+    for f in sorted(pages.rglob("*.vue")):
+        if set(f.parts) & SKIP_DIRS:
+            continue
+        segs = [x for x in f.relative_to(pages).with_suffix("").parts
+                if x != "index" and not (x.startswith("(") and x.endswith(")"))]
+        path = "/" + "/".join(segs)
+        wraps = (f.parent / f.stem).is_dir()
+        out.append((path + (" (wraps its children: <NuxtPage> inside)" if wraps else ""), rel(root, f)))
+    return out
+
+
+def vue_router_routes(root: Path, src_files: list[Path]) -> list[tuple[str, str]]:
+    """routes: [{ path: '/x', component: () => import('../views/X.vue') }] in a vue-router file."""
+    out = []
+    for p in src_files:
+        if p.suffix not in {".ts", ".js", ".mjs"} or "router" not in str(p).lower():
+            continue
+        t = read(p, 300_000)
+        if "createRouter" not in t and "RouteRecordRaw" not in t:
+            continue
+        imports = dict(re.findall(r"import\s+(\w+)\s+from\s*['\"]([^'\"]+)['\"]", t))
+        for m in re.finditer(r"\bpath\s*:\s*['\"]([^'\"]*)['\"]", t):
+            chunk = t[m.end(): m.end() + 600]
+            nxt = re.search(r"\bpath\s*:", chunk)
+            chunk = chunk[:nxt.start()] if nxt else chunk
+            c = re.search(r"component\s*:\s*(?:\(\)\s*=>\s*import\(\s*['\"]([^'\"]+)['\"]\s*\)|(\w+))", chunk)
+            if c:
+                spec = c.group(1) or imports.get(c.group(2), "")
+                target = (p.parent / spec).resolve() if spec.startswith(".") else (root / "src" / spec[2:]) if spec.startswith("@/") else None
+                shown = rel(root, target) if target is not None else (c.group(2) or spec)
+            elif re.search(r"\bredirect\s*:", chunk):
+                shown = "(redirect)"
+            else:
+                shown = "(children below)"
+            out.append((m.group(1) or "(child)", shown))
+    return out[:40]
+
+
+def nuxt_layouts(root: Path, src_files: list[Path]) -> list[dict]:
+    src = nuxt_src(root)
+    out = []
+    uses: dict[str, list[str]] = collections.defaultdict(list)
+    pages = src / "pages"
+    for f in sorted(pages.rglob("*.vue")) if pages.is_dir() else []:
+        m = re.search(r"definePageMeta\(\s*\{[^}]*?\blayout\s*:\s*(?:['\"]([\w-]+)['\"]|(false))", read(f, 100_000), re.S)
+        uses[(m.group(1) or "none") if m else "default"].append(rel(root, f))
+    app = src / "app.vue"
+    if app.is_file():
+        tags = [t for t in vue_tags(vue_template(read(app))) if t not in {"Template"}]
+        out.append({"file": rel(root, app), "scopeText": "wraps every page", "css": [], "fonts": [], "providers": [], "chrome": tags[:8]})
+    for lay in sorted((src / "layouts").glob("*.vue")) if (src / "layouts").is_dir() else []:
+        tags = [t for t in vue_tags(vue_template(read(lay))) if t not in VUE_BUILTINS]
+        who = uses.get(lay.stem, [])
+        scope = ("wraps every page that names no other layout" if lay.stem == "default"
+                 else f"wraps the pages that set `layout: '{lay.stem}'`" + (f" ({len(who)}: {', '.join(os.path.basename(x) for x in who[:4])})" if who else " (none found in pages/)"))
+        out.append({"file": rel(root, lay), "scopeText": scope, "css": [], "fonts": [], "providers": [], "chrome": tags[:8]})
+    return out[:8]
+
+
+NUXT_AUTH = {"nuxt-auth-utils": "nuxt-auth-utils", "@sidebase/nuxt-auth": "sidebase auth", "@nuxtjs/supabase": "Supabase",
+             "@clerk/nuxt": "Clerk", "@hebilicious/authjs-nuxt": "Auth.js", "@nuxtjs/auth-next": "nuxt auth"}
+
+
+def nuxt_before(root: Path, deps: dict, src_files: list[Path]) -> list[str]:
+    """Middleware, the server API, content: what stands between a fresh browser and a Nuxt page."""
+    src = nuxt_src(root)
+    lines = []
+    mw = src / "middleware"
+    if mw.is_dir():
+        named: dict[str, list[str]] = collections.defaultdict(list)
+        for f in sorted((src / "pages").rglob("*.vue")) if (src / "pages").is_dir() else []:
+            m = re.search(r"\bmiddleware\s*:\s*(\[[^\]]*\]|['\"][\w-]+['\"])", read(f, 100_000))
+            if m:
+                for n in re.findall(r"['\"]([\w-]+)['\"]", m.group(1)):
+                    named[n].append(os.path.basename(str(f)))
+        for f in sorted(mw.glob("*.[tj]s")):
+            name = f.stem.replace(".global", "")
+            redirects = bool(re.search(r"\b(navigateTo|abortNavigation)\s*\(", read(f, 50_000)))
+            session = " — it can redirect: a render there needs a session (`--cookie` / `--storage-state`)" if redirects else ""
+            if f.stem.endswith(".global"):
+                lines.append(f"`{rel(root, f)}` runs before every route{session}")
+            else:
+                who = named.get(name, [])
+                lines.append(f"`{rel(root, f)}` runs before the pages that name it" + (f": {', '.join(who[:5])}" if who else " (none found in pages/)") + session)
+    auth = [label for key, label in NUXT_AUTH.items() if key in deps]
+    if auth:
+        lines.append(f"auth: {', '.join(auth)} — a signed-in page needs a session (`--storage-state`)")
+    api = sorted((root / "server" / "api").rglob("*.[tj]s")) if (root / "server" / "api").is_dir() else []
+    if api:
+        eps = []
+        for f in api[:40]:
+            parts = list(f.relative_to(root / "server" / "api").with_suffix("").parts)
+            method = ""
+            m = re.match(r"^(.*)\.(get|post|put|patch|delete)$", parts[-1])
+            if m:
+                parts[-1], method = m.group(1), m.group(2).upper() + " "
+            if parts[-1] == "index":
+                parts = parts[:-1]
+            eps.append(f"{method}/api/{'/'.join(parts)}")
+        lines.append(f"`server/api` answers {len(api)} route{'s' if len(api) > 1 else ''} in the same dev server ({', '.join(f'`{e}`' for e in eps[:4])}{', …' if len(eps) > 4 else ''}): start `nuxt dev`, nothing to mock")
+    if "@nuxt/content" in deps:
+        cols = []
+        for p in src_files:
+            if p.suffix == ".vue":
+                cols += re.findall(r"queryCollection(?:Navigation|SearchSections)?\(\s*['\"](\w+)['\"]", read(p, 100_000))
+        cols = list(dict.fromkeys(cols))
+        lines.append("`content/` is compiled by @nuxt/content when the dev server starts; pages read it with `queryCollection`"
+                     + (f" ({', '.join(f'`{c}`' for c in cols[:6])})" if cols else "") + " — server-rendered, nothing to mock")
+    return lines
+
+
+def _vue_wrapper(root: Path, page: Path, text: str, comps: dict[str, Path]) -> dict | None:
+    """The component a .vue page is wrapped in, or hands everything to."""
+    tmpl = vue_template(text)
+    m = re.search(r"<([A-Z][A-Za-z0-9]*|[a-z][a-z0-9]*-[a-z0-9-]+)\b", tmpl)
+    if not m or not re.match(r"^\s*(?:<!--.*?-->\s*)*<", tmpl, re.S) or tmpl.strip().find("<" + m.group(1)) != 0:
+        return None
+    name = _pascal(m.group(1))
+    if name in VUE_BUILTINS:
+        return None
+    im = re.search(r"import\s+" + re.escape(name) + r"\s+from\s*['\"]([^'\"]+)['\"]", text)
+    target = _resolve_import(root, page, im.group(1)) if im else comps.get(name)
+    if not target or target.suffix != ".vue" or target == page:
+        return None
+    target = Path(os.path.normpath(target))
+    t = read(target, 200_000)
+    wrapper = "<slot" in vue_template(t)
+    return {"name": name, "file": rel(root, target), "lines": t.count("\n") + 1, "signals": _signals(t), "wrapper": wrapper}
+
+
+def page_signatures(root: Path, src_files: list[Path], vocab_names: list[str], framework: str | None = None) -> dict:
     pages, routes = [], []
+    is_next, is_nuxt = framework == "Next.js", framework == "Nuxt"
+    # Next.js: app/ (page files only) and pages/; Nuxt: pages/ only (app/ is its source folder);
+    # everything else: the usual page folders.
+    page_dirs = {"pages", "app"} if is_next else {"pages"} if is_nuxt else PAGE_DIR_NAMES - {"app"}
+    comps = nuxt_components(root) if is_nuxt else {}
     for p in src_files:
         if p.suffix not in {".tsx", ".jsx", ".vue", ".svelte", ".astro"}:
             continue
         rp = p.relative_to(root)
         dirs = [x.lower() for x in rp.parts[:-1]]
-        if not (set(dirs) & PAGE_DIR_NAMES) or re.search(r"\.(test|spec|stories)$", p.stem):
+        if not (set(dirs) & page_dirs) or re.search(r"\.(test|spec|stories)$", p.stem):
             continue
-        if "app" in dirs and p.stem != "page":          # Next.js App Router: page files only
+        if is_next and "app" in dirs and p.stem != "page":          # Next.js App Router: page files only
             continue
         if p.stem in {"layout", "template", "loading", "error", "not-found", "index"} and "app" not in dirs and p.stem != "index":
             continue
         text = read(p, 200_000)
         signals = _signals(text)
-        rendered = _rendered_by(root, p, text)
+        rendered = _vue_wrapper(root, p, text, comps) if p.suffix == ".vue" else _rendered_by(root, p, text)
         used = sorted(((n, _cls_uses(n, [text])) for n in vocab_names), key=lambda x: -x[1])
-        comps: list[str] = []
+        page_comps: list[str] = []
+        if p.suffix == ".vue":                   # the components its template uses, library ones included
+            page_comps = [t for t in vue_tags(vue_template(text)) if t not in VUE_BUILTINS and (not rendered or t != rendered["name"])]
         for names in re.findall(r"import\s*\{([^}]+)\}\s*from\s*['\"][^'\"]*components/[^'\"]+['\"]", text):
-            comps += [x.strip().split(" as ")[0] for x in names.split(",") if x.strip() and not x.strip().startswith("type ")]
+            page_comps += [x.strip().split(" as ")[0] for x in names.split(",") if x.strip() and not x.strip().startswith("type ")]
         pages.append({
             "file": str(rp), "lines": text.count("\n") + 1, "signals": signals,
-            "classes": [f"{n} ×{c}" for n, c in used if c][:3], "components": comps[:6], "renders": rendered,
+            "classes": [f"{n} ×{c}" for n, c in used if c][:3], "components": list(dict.fromkeys(page_comps))[:6], "renders": rendered,
         })
     pages.sort(key=lambda x: x["file"])
     for p in src_files:
@@ -762,7 +1050,11 @@ def page_signatures(root: Path, src_files: list[Path], vocab_names: list[str]) -
             if "<Route" in text:
                 routes += re.findall(r"<Route\s+[^>]*?path=\{?['\"]([^'\"]+)['\"]\}?[^>]*?element=\{<(\w+)", text)
                 routes += [("(index)", comp) for comp in re.findall(r"<Route\s+index\b[^>]*?element=\{<(\w+)", text)]
-    app_dir = next((d for d in (root / "app", root / "src" / "app") if d.is_dir()), None)
+    if is_nuxt:
+        routes += nuxt_routes(root)
+    elif framework == "Vue" or any(p.suffix == ".vue" for p in src_files[:200]):
+        routes += vue_router_routes(root, src_files)
+    app_dir = next((d for d in (root / "app", root / "src" / "app") if d.is_dir()), None) if is_next else None
     if app_dir:
         for pg in sorted(app_dir.rglob("page.*")):
             if set(pg.parts) & SKIP_DIRS:
@@ -910,13 +1202,21 @@ def start_here(root: Path, src_files: list[Path], css_files: list[Path], stack: 
     ui_files = [p for p in src_files if p.suffix in {".tsx", ".jsx", ".vue", ".svelte", ".astro", ".html", ".mdx"}]
     texts = [read(p, 200_000) for p in ui_files[:MAX_SRC_FILES]]
     vocab = css_vocabulary(root, css_files, texts)
-    sig = page_signatures(root, src_files, [v["name"] for v in vocab])
+    sig = page_signatures(root, src_files, [v["name"] for v in vocab], stack.get("framework"))
     is_next = stack.get("framework") == "Next.js"
+    is_nuxt = stack.get("framework") == "Nuxt"
+    notes = {"Nuxt": "references/stacks/nuxt.md", "Vue": "references/stacks/vue.md"}.get(stack.get("framework") or "")
     return {
         "vocabulary": vocab,
         "imported": import_fanin(root, src_files),
         **sig,
-        "layouts": next_layouts(root) if is_next else [],
+        "layouts": next_layouts(root) if is_next else nuxt_layouts(root, src_files) if is_nuxt else [],
+        "autoImported": vue_component_uses(root, src_files, nuxt_components(root)) if is_nuxt else [],
+        "nuxtui": nuxt_ui(root, src_files, deps),
+        "nuxtBefore": nuxt_before(root, deps, src_files) if is_nuxt else [],
+        "nuxt": is_nuxt,
+        "vite": "vite" in deps and not is_next and not is_nuxt,
+        "stackNotes": notes,
         "theme": theme_mechanism(root, css_files, stack, src_files),
         "middleware": middleware_line(root) if is_next else None,
         "locale": locale_routing(root, src_files, sig["routes"]),
@@ -935,11 +1235,21 @@ def md_start_here(sh: dict) -> list[str]:
         out.append("- Vocabulary — the classes the CSS defines, by use:")
         for v in sh["vocabulary"]:
             out.append(f"  - `.{v['name']}` ×{v['uses']} — {v['file']}:{v['line']} — {v['decl']}")
+    nu = sh.get("nuxtui")
+    if nu:
+        cols = ", ".join(f"`{k}: {v}`" for k, v in nu["colors"].items())
+        out.append("- Nuxt UI" + (f" — colours {cols}" + (f" (`{nu['config']}`)" if nu["config"] else "") if cols else "")
+                   + (": its components by use, " + " · ".join(f"{n} ×{c}" for n, c in nu["components"]) if nu["components"] else "")
+                   + ". A match task builds with these and the colour names, not hand-rolled Tailwind.")
+    if sh.get("autoImported"):
+        out.append("- Used most (auto-imported: counted by the templates that use them): " + " · ".join(
+            f"`{m['file']}` ({m['importers']}" + (f"; props {', '.join(m['props'])}" if m.get("props") else "") + ")" for m in sh["autoImported"]))
     if sh["imported"]:
         out.append("- Imported most: " + " · ".join(
             f"`{m['file']}` ({m['importers']}" + (f"; props {', '.join(m['props'])}" if m.get("props") else "") + ")" for m in sh["imported"]))
     if sh["pages"]:
         out.append("- Pages, one line each:")
+        wrappers_named = set()  # a wrapper's path and role once; later pages say only "inside X"
         for pg in sh["pages"]:
             bits = [f"{pg['lines']} lines"]
             if pg["signals"]:
@@ -947,9 +1257,12 @@ def md_start_here(sh: dict) -> list[str]:
             if pg["classes"]:
                 bits.append(", ".join(pg["classes"]))
             if pg["components"]:
-                bits.append("imports " + ", ".join(pg["components"]))
+                bits.append(("uses " if pg["file"].endswith(".vue") else "imports ") + ", ".join(pg["components"]))
             r = pg.get("renders")
-            if r:
+            if r and r.get("wrapper"):
+                bits.append(f"inside {r['name']}" + ("" if r["file"] in wrappers_named else f" (`{r['file']}` · {r['lines']} lines: the chrome, its slot holds the page)"))
+                wrappers_named.add(r["file"])
+            elif r:
                 bits.append(f"renders {r['name']} (`{r['file']}` · {r['lines']} lines" + (f" · {', '.join(r['signals'])}" if r["signals"] else "") + ")")
             out.append(f"  - `{pg['file']}` · " + " · ".join(bits))
     if sh["routes"]:
@@ -984,10 +1297,11 @@ def md_start_here(sh: dict) -> list[str]:
             parts.append("providers " + ", ".join(lay["providers"]))
         if lay["chrome"]:
             parts.append("chrome " + ", ".join(lay["chrome"]))
-        scope = "wraps every page" if i == 0 else f"wraps `{lay['scope']}/*`"
+        scope = lay.get("scopeText") or ("wraps every page" if i == 0 else f"wraps `{lay['scope']}/*`")
         before.append(f"`{lay['file']}` {scope}" + (": " + " · ".join(parts) if parts else ""))
     if sh.get("middleware"):
         before.append(sh["middleware"])
+    before += sh.get("nuxtBefore") or []
     before += list(sh["gates"])
     b = sh["boot"]
     for f in b["files"]:
@@ -1011,12 +1325,18 @@ def md_start_here(sh: dict) -> list[str]:
                 line += "; `dev` starts more than Next (a database, a worker): run it as it is"
             if sh.get("contentlayer"):
                 line += "; contentlayer compiles the content on start"
+        elif sh.get("nuxt"):
+            line += " — `nuxt dev` listens on :3000 unless `--port` says otherwise"
+        elif sh.get("vite"):
+            line += " — Vite listens on :5173 unless `--port` or `server.port` says otherwise"
         before.append(line)
     if before:
         out.append("- Before a page renders:")
         out += [f"  - {ln}" for ln in before]
+    if sh.get("stackNotes"):
+        out.append(f"- Stack notes: `{sh['stackNotes']}` in the skill folder — how this stack serves a page, switches theme and names its components")
     if sh["pages"] or sh["vocabulary"]:
-        thin = any(pg.get("renders") for pg in sh["pages"])
+        thin = any(pg.get("renders") and not pg["renders"].get("wrapper") for pg in sh["pages"])
         out.append("- Read next: " + (("the page above whose signals match yours" + (" (a thin page: the file it renders)" if thin else "") if sh["pages"] else "the vocabulary lines")
                    + (" and the vocabulary lines" if sh["pages"] and sh["vocabulary"] else ""))
                    + ". Not the CSS file, not the store.")
@@ -1035,8 +1355,12 @@ def md(data: dict) -> str:
     bits = []
     if s["framework"]:
         bits.append(s["framework"] + (f" ({s['router']})" if s["router"] else ""))
+    if s["framework"] in ("Nuxt", "Vue") and s.get("frameworkVersion"):
+        bits[-1] = bits[-1].replace(s["framework"], f"{s['framework']} {s['frameworkVersion']}", 1)
     if s["react"]:
         bits.append(f"React {s['react']}")
+    if s.get("vue") and s["framework"] != "Vue":
+        bits.append(f"Vue {s['vue']}")
     if s["tailwind"] or s["tailwindMajor"]:
         mode = "CSS-first @theme" if s["tailwindMajor"] == 4 else "tailwind.config"
         bits.append(f"Tailwind {s['tailwind'] or s['tailwindMajor']} ({mode})")

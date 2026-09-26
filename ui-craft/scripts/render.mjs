@@ -164,6 +164,21 @@ function domAudit(INTERACTIVE) {
     r: fg.r * fg.a + bg.r * (1 - fg.a), g: fg.g * fg.a + bg.g * (1 - fg.a), b: fg.b * fg.a + bg.b * (1 - fg.a), a: 1,
   });
   const rgbStr = (c) => `rgb(${Math.round(c.r)}, ${Math.round(c.g)}, ${Math.round(c.b)})`;
+  // A computed box-shadow, one entry per layer. Tailwind's ring utilities stack five layers, most
+  // of them transparent, so "the first colour in the string" is usually rgba(0, 0, 0, 0).
+  const shadowLayers = (str) => {
+    if (!str || str === 'none') return [];
+    const parts = []; let depth = 0, cur = '';
+    for (const ch of str) { if (ch === '(') depth++; if (ch === ')') depth--; if (ch === ',' && !depth) { parts.push(cur); cur = ''; } else cur += ch; }
+    parts.push(cur);
+    return parts.map((l) => {
+      const m = /[a-z-]+\([^)]*\)/i.exec(l);
+      const [x = 0, y = 0, blur = 0, spread = 0] = ((m ? l.replace(m[0], '') : l).match(/-?[\d.]+px/g) || []).map(parseFloat);
+      return { color: m ? toRGBA(m[0]) : null, x, y, blur, spread, inset: /\binset\b/.test(l) };
+    }).filter((s) => s.color && s.color.a > 0);
+  };
+  // A solid ring: no offset, no blur, some spread (Tailwind `ring`, `ring-inset`).
+  const rings = (str) => shadowLayers(str).filter((s) => !s.x && !s.y && !s.blur && s.spread > 0);
 
   function effectiveBackground(el) {
     const layers = [];
@@ -180,6 +195,52 @@ function domAudit(INTERACTIVE) {
     return bg;
   }
 
+  // A background painted under the text by a positioned sibling rather than an ancestor: the sliding
+  // indicator of a segmented control or tabs, a highlight behind a label. The ancestor walk misses it,
+  // so a failure is checked against one before it is reported.
+  function positionedBackdrop(el) {
+    const r = el.getBoundingClientRect(); const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    let node = el;
+    for (let depth = 0; depth < 4 && node.parentElement; depth++) {
+      const parent = node.parentElement;
+      // Paint order: a positioned sibling at z-index auto paints over in-flow text, and under a
+      // positioned box that comes after it. So it is a backdrop only when the text sits in a
+      // positioned box (below `parent`) that follows it, or when its z-index is negative.
+      let textBox = null;
+      for (let n = el; n && n !== parent; n = n.parentElement) if (getComputedStyle(n).position !== 'static') { textBox = n; break; }
+      const layers = []; // what lies under the text's centre, bottom first
+      for (const sib of parent.children) {
+        if (sib === node || sib.contains(el) || !visible(sib)) continue;
+        const s = getComputedStyle(sib);
+        if (s.position !== 'absolute' && s.position !== 'fixed') continue;
+        const z = parseInt(s.zIndex, 10);
+        if (!isNaN(z) && z > 0) continue; // above the text: an overlay, not a backdrop
+        if (!(z < 0) && !(textBox && (sib.compareDocumentPosition(textBox) & Node.DOCUMENT_POSITION_FOLLOWING))) continue;
+        const b = sib.getBoundingClientRect();
+        if (cx < b.left || cx > b.right || cy < b.top || cy > b.bottom) continue;
+        // A picture under the text (an image, a video, a painted background): no one colour to measure.
+        if (/^(img|video|canvas|picture|svg|iframe)$/i.test(sib.tagName) || (s.backgroundImage && s.backgroundImage !== 'none')) { layers.push(null); continue; }
+        const c = toRGBA(s.backgroundColor);
+        if (c && c.a >= 0.5) layers.push(c);
+      }
+      if (layers.length) {
+        // Composite from the top down to the first opaque layer; a picture on the way makes it unverifiable.
+        const above = [];
+        for (let i = layers.length - 1; i >= 0; i--) {
+          if (!layers[i]) return { unverifiable: true };
+          above.push(layers[i]);
+          if (layers[i].a >= 0.999) break;
+        }
+        let bg = above[above.length - 1].a >= 0.999 ? above.pop() : effectiveBackground(parent);
+        if (bg.unverifiable) return bg;
+        for (let i = above.length - 1; i >= 0; i--) bg = over(above[i], bg);
+        return bg;
+      }
+      node = parent;
+    }
+    return null;
+  }
+
   const all = [...document.body.querySelectorAll('*')];
 
   // --- page colors (what a theme switch must change)
@@ -192,7 +253,7 @@ function domAudit(INTERACTIVE) {
   };
 
   // --- contrast on every element that directly contains text
-  const contrast = { checked: 0, unverifiable: 0, decorativeSkipped: 0, failures: [] };
+  const contrast = { checked: 0, unverifiable: 0, decorativeSkipped: 0, positionedBackdrop: 0, failures: [] };
   for (const el of all) {
     const tag = el.tagName.toUpperCase();
     if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'TEMPLATE' || el.closest('svg')) continue;
@@ -214,6 +275,14 @@ function domAudit(INTERACTIVE) {
     const r = ratio(fg, bg);
     contrast.checked++;
     if (r < required) {
+      const under = positionedBackdrop(el);
+      if (under && under.unverifiable) { contrast.unverifiable++; continue; }
+      if (under) {
+        contrast.positionedBackdrop++;
+        const fg2 = fg0.a < 1 ? over(fg0, under) : fg0, r2 = ratio(fg2, under);
+        if (r2 < required) contrast.failures.push({ selector: short(el), ratio: +r2.toFixed(2), required, fontSize: +size.toFixed(1), color: rgbStr(fg2), background: rgbStr(under), via: 'a positioned element under the text' });
+        continue;
+      }
       contrast.failures.push({ selector: short(el), ratio: +r.toFixed(2), required, fontSize: +size.toFixed(1), color: rgbStr(fg), background: rgbStr(bg) });
     }
   }
@@ -287,6 +356,12 @@ function domAudit(INTERACTIVE) {
     const cands = [];
     if (border) cands.push({ via: 'border', color: border, ratio: ratio(border, outside) });
     if (fill) cands.push({ via: 'fill', color: fill, ratio: ratio(fill, outside) });
+    // A ring drawn as a box-shadow (Nuxt UI and many Tailwind kits outline fields this way): inset,
+    // it paints over the fill; outside, over the surroundings.
+    for (const s of rings(cs.boxShadow)) {
+      const c = over(s.color, s.inset ? (fill || outside) : outside);
+      cands.push({ via: 'ring', color: c, ratio: ratio(c, outside) });
+    }
     if (!cands.length) return null;
     return cands.sort((a, b) => b.ratio - a.ratio)[0];
   };
@@ -591,7 +666,8 @@ async function focusAudit(page, max = 30) {
   const baseline = await page.evaluate((selector) => {
     const visible = (el) => { const cs = getComputedStyle(el); if (cs.display === 'none' || cs.visibility === 'hidden') return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
     const short = (el) => { let s = el.tagName.toLowerCase(); if (el.id) return `${s}#${el.id}`; const t = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 28); return t ? `${s} "${t}"` : s; };
-    const snap = (el) => { const cs = getComputedStyle(el); return { outline: `${cs.outlineStyle} ${cs.outlineWidth}`, boxShadow: cs.boxShadow, borderColor: cs.borderColor, background: cs.backgroundColor, color: cs.color }; };
+    const pseudoSig = (el) => ['::before', '::after'].map((ps) => { const s = getComputedStyle(el, ps); return s.content === 'none' ? '-' : `${s.outlineStyle} ${s.outlineWidth} ${s.outlineColor}|${s.boxShadow}|${s.backgroundColor}`; }).join('||');
+    const snap = (el) => { const cs = getComputedStyle(el); return { outline: `${cs.outlineStyle} ${cs.outlineWidth}`, boxShadow: cs.boxShadow, borderColor: cs.borderColor, background: cs.backgroundColor, color: cs.color, pseudo: pseudoSig(el) }; };
     if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
     window.scrollTo(0, 0);
     const els = [...document.querySelectorAll(selector)].filter(visible);
@@ -628,6 +704,18 @@ async function focusAudit(page, max = 30) {
       const lum = ({ r, g, b }) => { const f = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
       const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
       const over = (fg, bg) => ({ r: fg.r * fg.a + bg.r * (1 - fg.a), g: fg.g * fg.a + bg.g * (1 - fg.a), b: fg.b * fg.a + bg.b * (1 - fg.a), a: 1 });
+      // Box-shadow layers that paint something (see shadowLayers in the page audit): a ring, or a glow.
+      const shadowColors = (str) => {
+        if (!str || str === 'none') return [];
+        const parts = []; let depth = 0, cur = '';
+        for (const ch of str) { if (ch === '(') depth++; if (ch === ')') depth--; if (ch === ',' && !depth) { parts.push(cur); cur = ''; } else cur += ch; }
+        parts.push(cur);
+        return parts.map((l) => {
+          const m = /[a-z-]+\([^)]*\)/i.exec(l);
+          const [, , blur = 0, spread = 0] = ((m ? l.replace(m[0], '') : l).match(/-?[\d.]+px/g) || []).map(parseFloat);
+          return blur > 0 || spread > 0 ? (m ? toRGBA(m[0]) : null) : null;
+        }).filter((c) => c && c.a > 0);
+      };
       const behind = (() => { // effective background of the parent: what the ring is drawn over
         let node = el.parentElement, layers = [], opaque = null;
         while (node && node.nodeType === 1) { const s = getComputedStyle(node); if (s.backgroundImage !== 'none') return null; const c = toRGBA(s.backgroundColor); if (c && c.a > 0) { if (c.a >= 0.999) { opaque = c; break; } layers.push(c); } node = node.parentElement; }
@@ -638,13 +726,34 @@ async function focusAudit(page, max = 30) {
       // that are not the computed outline-color. Visible by construction; nothing to measure.
       if (cs.outlineStyle === 'auto' && parseFloat(cs.outlineWidth) > 0) { ringVia = 'outline (browser default)'; }
       else if (!/^none/.test(cs.outlineStyle) && parseFloat(cs.outlineWidth) > 0) { ringColor = toRGBA(cs.outlineColor); ringVia = 'outline'; }
-      else if (cs.boxShadow && cs.boxShadow !== 'none') { const m = /rgba?\([^)]+\)|#[0-9a-f]{3,8}|[a-z]+\(/i.exec(cs.boxShadow); ringColor = m ? toRGBA(m[0]) : null; ringVia = 'box-shadow'; }
+      else if (shadowColors(cs.boxShadow).length) { ringVia = 'box-shadow'; }
+      // A shadow ring can stack layers (ring-offset in white, then the ring): the most visible one counts.
+      const contrastOf = (c) => (c && c.a > 0 && behind ? ratio(c.a < 1 ? over(c, behind) : c, behind) : null);
+      const best = (vals) => { const v = vals.filter((x) => x !== null); return v.length ? Math.max(...v) : null; };
       let ringContrast = null;
-      if (ringColor && ringColor.a > 0 && behind) ringContrast = +ratio(ringColor.a < 1 ? over(ringColor, behind) : ringColor, behind).toFixed(2);
+      if (ringVia === 'outline') ringContrast = contrastOf(ringColor);
+      else if (ringVia === 'box-shadow') ringContrast = best(shadowColors(cs.boxShadow).map(contrastOf));
+      if (ringContrast !== null) ringContrast = +ringContrast.toFixed(2);
+      const hasBorder = parseFloat(cs.borderTopWidth) > 0 && cs.borderTopStyle !== 'none';
+      const bc = hasBorder ? contrastOf(toRGBA(cs.borderTopColor)) : null;
+      const borderContrast = bc === null ? null : +bc.toFixed(2);
+      // A ring drawn on ::before / ::after (Nuxt UI's navigation links, some menus): read it the same way.
+      // The Node side counts it only if the pseudo-element changed on focus, so decoration is not a ring.
+      let pseudoRing = null;
+      for (const ps of ['::before', '::after']) {
+        const s = getComputedStyle(el, ps);
+        if (s.content === 'none') continue;
+        let contrast = null, via = null;
+        if (!/^none/.test(s.outlineStyle) && parseFloat(s.outlineWidth) > 0) { contrast = contrastOf(toRGBA(s.outlineColor)); via = `outline on ${ps}`; }
+        else if (shadowColors(s.boxShadow).length) { contrast = best(shadowColors(s.boxShadow).map(contrastOf)); via = `box-shadow on ${ps}`; }
+        if (via) { pseudoRing = { via, contrast: contrast === null ? null : +contrast.toFixed(2) }; break; }
+      }
+      const pseudoSig = ['::before', '::after'].map((ps) => { const s = getComputedStyle(el, ps); return s.content === 'none' ? '-' : `${s.outlineStyle} ${s.outlineWidth} ${s.outlineColor}|${s.boxShadow}|${s.backgroundColor}`; }).join('||');
       return {
+        pseudo: pseudoSig, pseudoRing,
         idx: +el.getAttribute('data-uic-idx'), obscured, obscuredBy: obscured ? (onTop.tagName.toLowerCase() + (onTop.id ? '#' + onTop.id : '')) : null,
         outline: `${cs.outlineStyle} ${cs.outlineWidth}`, boxShadow: cs.boxShadow, borderColor: cs.borderColor, background: cs.backgroundColor, color: cs.color,
-        ringVia, ringContrast,
+        ringVia, ringContrast, borderContrast,
       };
     });
     if (!cur) continue;
@@ -652,8 +761,18 @@ async function focusAudit(page, max = 30) {
     seen.add(cur.idx);
     const b = baseline[cur.idx];
     const outlineVisible = !/^none/.test(cur.outline) && !/\b0px$/.test(cur.outline);
-    const changed = cur.outline !== b.outline || ['boxShadow', 'borderColor', 'background', 'color'].some((k) => cur[k] !== b[k]);
-    results.push({ selector: b.selector, visible: outlineVisible || changed, obscured: cur.obscured, obscuredBy: cur.obscuredBy, ringVia: cur.ringVia, ringContrast: cur.ringContrast });
+    const pseudoChanged = cur.pseudo !== b.pseudo;
+    const changed = cur.outline !== b.outline || ['boxShadow', 'borderColor', 'background', 'color'].some((k) => cur[k] !== b[k]) || pseudoChanged;
+    // A shadow that was there before focus (a drop shadow) is not the ring: focus showed as something else.
+    const elementRing = cur.ringVia && (cur.ringVia !== 'box-shadow' || cur.boxShadow !== b.boxShadow);
+    const usePseudo = !elementRing && pseudoChanged && cur.pseudoRing;
+    let ringVia = usePseudo ? cur.pseudoRing.via : elementRing ? cur.ringVia : null;
+    let ringContrast = usePseudo ? cur.pseudoRing.contrast : elementRing ? cur.ringContrast : null;
+    // A field that shows focus by recolouring its border, often with a faint glow: the border counts too.
+    if (cur.borderColor !== b.borderColor && cur.borderContrast !== null && (!ringVia || (ringContrast !== null && cur.borderContrast > ringContrast))) {
+      ringVia = ringVia ? `${ringVia} and border` : 'border'; ringContrast = cur.borderContrast;
+    }
+    results.push({ selector: b.selector, visible: outlineVisible || changed, obscured: cur.obscured, obscuredBy: cur.obscuredBy, ringVia, ringContrast });
   }
   await page.evaluate(() => {
     document.querySelectorAll('[data-uic-idx]').forEach((el) => el.removeAttribute('data-uic-idx'));
@@ -852,6 +971,10 @@ const folds = [];
 const darkFolds = [];
 const widest = Math.max(...opt.viewports);
 
+// Requests a framework makes for itself: Next.js internals, RSC payloads and the dev overlay's stack
+// frames; Nuxt's build manifest, payloads, islands, icon sets and @nuxt/content's client database;
+// Vite's own endpoints.
+const FRAMEWORK_REQUEST = /^\/(_next\/|__nextjs|_nuxt\/|__nuxt|api\/_nuxt_icon\/|@vite\/|@fs\/|@id\/|__vite)|\/_payload\.json(\?|$)|[?&]_rsc=/;
 async function renderViewport(width) {
   const t0 = Date.now(); let tPrev = t0; const timings = {};
   const lap = (name) => { const now = Date.now(); timings[name] = (timings[name] || 0) + (now - tPrev); tPrev = now; };
@@ -868,9 +991,10 @@ async function renderViewport(width) {
   if (opt.initScript) await context.addInitScript({ path: opt.initScript });
   // `scroll-behavior: smooth` makes scrollTo() animate, so a fold screenshot taken right after
   // "scroll back to top" can land mid-way down the page. Measure with instant scrolling; the
-  // page's own transitions are untouched.
+  // page's own transitions are untouched. Dev chrome is hidden too: the error overlays (their errors
+  // still count), and the Nuxt / Vue devtools panels, which float over the page and take focus.
   await context.addInitScript(() => {
-    const fix = () => { const st = document.createElement('style'); st.setAttribute('data-ui-craft', 'scroll'); st.textContent = 'html, body { scroll-behavior: auto !important; } nextjs-portal, vite-error-overlay { display: none !important; }'; (document.head || document.documentElement).appendChild(st); };
+    const fix = () => { const st = document.createElement('style'); st.setAttribute('data-ui-craft', 'scroll'); st.textContent = 'html, body { scroll-behavior: auto !important; } nextjs-portal, vite-error-overlay, #nuxt-devtools-container, nuxt-devtools-inspect-panel, #vue-tracer-overlay, #__vue-devtools-container__, #vue-inspector-container { display: none !important; }'; (document.head || document.documentElement).appendChild(st); };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fix); else fix();
   });
   for (const m of opt.mocks) {
@@ -893,6 +1017,7 @@ async function renderViewport(width) {
   const httpErrors = [];
   const requests = []; // every xhr/fetch the page made, with its status: what a second render would mock
   let recordRequests = true; // one load's worth: the dark pass below may reload the page
+  let frameworkRequests = 0;
   const origin = (() => { try { return new URL(url).origin; } catch { return ''; } })();
   page.on('console', (m) => {
     // "Failed to load resource" carries no URL; the request/response listeners record those with one.
@@ -910,6 +1035,9 @@ async function renderViewport(width) {
     if (recordRequests && (rt === 'xhr' || rt === 'fetch') && requests.length < 40) {
       let path = r.url();
       try { const u = new URL(path); if (u.origin === origin) path = u.pathname + u.search; } catch { /* keep */ }
+      // The framework's own traffic (build manifests, payloads, a content database, icon sets):
+      // counted, not listed. It is not data a --mock would change.
+      if (FRAMEWORK_REQUEST.test(path)) { frameworkRequests++; return; }
       requests.push({ method: r.request().method(), status: r.status(), url: path.slice(0, 120) });
     }
   });
@@ -1077,7 +1205,7 @@ async function renderViewport(width) {
   if (fails.length) anyFail = true;
   report.viewports[key] = {
     width, height, status, fails, warns, loadError,
-    console: consoleErrors.slice(0, 20), failedRequests: failedRequests.slice(0, 20), httpErrors: httpErrors.slice(0, 20), requests: requests.slice(0, 40),
+    console: consoleErrors.slice(0, 20), failedRequests: failedRequests.slice(0, 20), httpErrors: httpErrors.slice(0, 20), requests: requests.slice(0, 40), frameworkRequests,
     audit, focus, hover, dark, dialog, acts: opt.acts, actErrors, darkActErrors,
     screenshots: { fold: opt.fold ? `${key}-fold.png` : null, full: `${key}-full.png`, darkFold: dark && dark.screenshot },
     timings,
@@ -1135,8 +1263,9 @@ if (first) {
   const h1s = (first.audit.structure && first.audit.structure.headings || []).filter((h) => h.level === 1).map((h) => h.text);
   console.log(`  page: ${JSON.stringify(first.audit.pageTitle || '(no title)')}${h1s.length ? ` · h1 ${h1s.map((t) => JSON.stringify(t.slice(0, 40))).join(', ')}` : ' · no h1'}${(/sign ?in|log ?in|登录/i.test((first.audit.pageTitle || '') + ' ' + h1s.join(' ')) || (first.audit.passwordField && /sign ?in|log ?in|login|登录|password|密码/i.test((first.audit.bodyText || '').slice(0, 400)))) ? '  ← looks like a sign-in page: was the session passed? (--cookie / --storage-state)' : ''}`);
   const reqs = first.requests || [];
+  const fw = first.frameworkRequests ? ` (${first.frameworkRequests} of the framework's own left out)` : '';
   if ((first.audit.alerts || []).length || first.audit.invalidFields) console.log(`  alerts: ${(first.audit.alerts || []).map((t) => JSON.stringify(t)).join(' · ') || 'none'}${first.audit.invalidFields ? ` · ${first.audit.invalidFields} field${first.audit.invalidFields > 1 ? 's' : ''} marked invalid` : ''}`);
-  if (!reqs.length && !first.loadError) console.log('  requests (xhr/fetch): none — the data came with the HTML (server-rendered or static); nothing for --mock to answer');
+  if (!reqs.length && !first.loadError) console.log(`  requests (xhr/fetch): none from the app${fw} — the data came with the HTML (server-rendered or static); nothing for --mock to answer`);
   if (first.audit.devOverlay) console.log(`  dev overlay: <${first.audit.devOverlay}> hidden for the screenshots and the audits — its errors still count under console errors`);
   if (reqs.length) {
     // Each endpoint once, with a count: a store that fetches twice (StrictMode, a refetch) would
@@ -1145,7 +1274,7 @@ if (first) {
     for (const q of reqs) { const k = `${q.status} ${q.method} ${q.url}`; counts.set(k, (counts.get(k) || 0) + 1); }
     const distinct = [...counts].map(([k, n]) => (n > 1 ? `${k} ×${n}` : k));
     const head = `${reqs.length}${distinct.length < reqs.length ? `, ${distinct.length} distinct` : ''}`;
-    console.log(`  requests (xhr/fetch, ${head}): ${distinct.slice(0, 16).join(' · ')}${distinct.length > 16 ? ` · … ${distinct.length - 16} more in report.json` : ''}  ← what a second render would --mock`);
+    console.log(`  requests (xhr/fetch, ${head}${first.frameworkRequests ? `; ${first.frameworkRequests} of the framework's own left out` : ''}): ${distinct.slice(0, 16).join(' · ')}${distinct.length > 16 ? ` · … ${distinct.length - 16} more in report.json` : ''}  ← what a second render would --mock`);
   }
   console.log(`  dark mode: ${first.audit.darkSupport.any ? `supported (${['media', 'class', 'attr'].filter((k) => first.audit.darkSupport[k]).map((k) => k === 'attr' ? 'attribute' : k).join('+')})` : 'not implemented'}${report.summary.darkRendered ? ' — rendered and audited' : ''}`);
 }

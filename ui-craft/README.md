@@ -1,6 +1,6 @@
 # ui-craft
 
-A Claude Code skill for UI work in React + Tailwind projects (Vite, Next.js) that
+A Claude Code skill for UI work in React or Vue + Tailwind projects (Vite, Next.js, Nuxt) that
 **renders what it built and measures it** before calling it done.
 
 Most UI skills give the model a database of styles and palettes. ui-craft gives it
@@ -120,13 +120,15 @@ Verified (render.mjs · .ui-craft/pricing-2):
 |---|---|
 | Page behind a login | `node scripts/login-state.mjs <login-url>` opens a window, you log in, the session is saved; renders replay it with `--storage-state`. Or `--cookie`, `--header "Authorization: Bearer …"`, `--auth user:pass`. |
 | A dialog, a menu, a form's error state | `--act 'click:text=Delete'`, `--act 'type:input[name=email]=x' --act press:Enter` put the page in that state first; a dialog gets its own audit (focus inside, Tab trapped when modal, a name, Escape, fits the phone) and the live region's text is quoted |
-| Page needs data | `--mock '**/api/items=fixture.json'` answers requests from a file, `'**/api/teams=[]'` inline, `'**/api/auth/me=401'` a bare status; the output lists every xhr/fetch the page made with its status. `--init-script seed.js` runs before the app (localStorage, flags). |
+| Page needs data | `--mock '**/api/items=fixture.json'` answers requests from a file, `'**/api/teams=[]'` inline, `'**/api/auth/me=401'` a bare status; the output lists every xhr/fetch the app made with its status (the framework's own are counted, not listed). `--init-script seed.js` runs before the app (localStorage, flags). |
 | A splash or cookie bar covers the page | `--dismiss Escape` or `--dismiss '.cookie-bar button'` |
 | SPA that hydrates late | `--wait-for '[data-loaded]'` |
-| One component, not a page | `node scripts/harness.mjs <project> --component src/ui/Button.tsx --states '[…]'` writes a Vite-served page that mounts it once per state |
+| One component, not a page | `node scripts/harness.mjs <project> --component src/ui/Button.tsx --states '[…]'` writes a Vite-served page that mounts it once per state (React) |
 | Did the light theme change? | `--compare .ui-craft/before` pixel-diffs every screenshot against a previous run and writes `diff-*.png` |
 | Monorepo | `inspect.py` on the workspace root lists the app packages; run it on the one you are changing |
 | Next.js | works with `next dev` (render through `localhost`, not `127.0.0.1`: newer dev servers refuse their own scripts from another host); `inspect.py` reads the App Router — layouts, middleware, `[locale]`, the file a thin page renders — and `next/font` |
+| Nuxt | works with `nuxt dev`; `inspect.py` reads the file routes, layouts and the pages each wraps, auto-imported components, route middleware, `server/api`, @nuxt/content collections, Nuxt UI's colours and components and color-mode. Nuxt DevTools is hidden during renders. Notes: `references/stacks/nuxt.md` |
+| Vue + Vite | `inspect.py` reads the vue-router table (lazy imports, redirects), the wrapper component each view sits in, `defineProps`, Pinia's storage keys and the component kit (Element Plus, Vuetify, PrimeVue, Naive UI). Notes: `references/stacks/vue.md` |
 
 ## Scripts
 
@@ -135,19 +137,20 @@ All standard tools; the skill calls them, and so can you.
 | Script | Purpose |
 |---|---|
 | `scripts/render.mjs <url\|file>` | screenshots + audits at 375/768/1440, dark pass when the page has a dark rule, `--act` steps for dialogs, menus and error states, `contact.png`, `report.json`, the `Verified` block |
-| `scripts/inspect.py <project>` | a *Start here* reading list (the CSS vocabulary with declarations, what every page imports, one line per page, routes, where the strings live, what runs before a page renders — what `dark:` keys on and who sets it, the Next.js layouts and middleware), then stack, declared tokens, fonts, primitives and the classes the code actually uses; verdict *match* or *establish* |
+| `scripts/inspect.py <project>` | a *Start here* reading list (the CSS vocabulary with declarations, what every page imports, one line per page, routes, where the strings live, what runs before a page renders — what `dark:` keys on and who sets it, the Next.js and Nuxt layouts and middleware), then stack, declared tokens, fonts, primitives and the classes the code actually uses; verdict *match* or *establish* |
 | `scripts/contrast.py fg bg …` / `--css tokens.css` | WCAG ratios for pairs or a token file, light and dark side by side |
 | `scripts/verify.py <project>` | the facts a model invents: imported packages installed, icon names exported, Google Fonts families/weights real and carrying the page's language subset, `@font-face` files present |
 | `scripts/direction.py init / check --fix / write / from-css` | the brief as `brief.json`: every colour role measured light and dark, failing tokens nudged, the `@theme` block written into the CSS and `DIRECTION.md` generated so the next session inherits the decisions |
-| `scripts/harness.mjs` | component-in-isolation page for Vite + React |
+| `scripts/harness.mjs` | component-in-isolation page for Vite + React (React only) |
 | `scripts/login-state.mjs` | capture a logged-in session for `--storage-state` |
 | `scripts/doctor.mjs` (`npm run doctor`) | is this machine ready? |
 | `scripts/selftest.mjs` (`npm test`) | renders pages with planted defects and checks the instruments report exactly those, plus every real-project option |
 
-`references/` holds the four documents the workflow routes to: `anti-generic.md`
+`references/` holds the documents the workflow routes to: `anti-generic.md`
 (the defaults you reach for without noticing), `critique-rubric.md` (how to look at
 a screenshot), `constraints.md` (the rules with sources, marked measured or manual),
-`patterns.md` (what each page type owes the user).
+`patterns.md` (what each page type owes the user), `real-projects.md` (a page that
+won't just render) and `stacks/` (what differs in a Nuxt or Vue project).
 
 ## Evals
 
@@ -163,9 +166,11 @@ git-ignored `ui-craft-workspace/`.
 
 ## Limits
 
-- Web only, React first. `render.mjs` works on any URL; `inspect.py` understands
-  Tailwind (v3 config or v4 `@theme`) and reads Vue/Svelte/Astro files, but the
-  workflow and fixtures are React. No React Native, Flutter or SwiftUI.
+- Web only: React and Vue. `render.mjs` works on any URL; `inspect.py` understands
+  Tailwind (v3 config or v4 `@theme`), Next.js, Nuxt and Vue + Vite, and reads
+  Svelte/Astro files. The benchmark tasks are React; the Vue and Nuxt support is
+  checked on fixtures and two real templates, not yet on a full task. The component
+  harness is React only. No React Native, Flutter or SwiftUI.
 - It measures what the DOM exposes. Text over images and gradients is reported as
   unverifiable; colour-only meaning, zoom to 200%, dragging alternatives and flashing
   are listed in `constraints.md` as manual checks.

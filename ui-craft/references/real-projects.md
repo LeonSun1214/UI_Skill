@@ -10,7 +10,7 @@ The render output's first lines name the page that rendered (`page: "…" · h1 
 
 ## The page needs data a backend would provide
 
-The inspector's *Start here* section names the calls the store makes and the dev proxy's target: start that backend if a script does it (`dev.sh`, `compose.yaml`). Else `--mock`: a file (`'**/api/items=.ui-craft/items.json'`), an inline body (`'**/api/teams=[]'`, `'**/api/config={"demo_mode":false}'`) or a bare status (`'**/api/auth/me=401'`, a signed-out visitor). The render output's `requests` line lists every xhr/fetch the page made with its status, so the second render can mock all of them. `--init-script .ui-craft/seed.js` runs before the app (localStorage under the key the inspector names, feature flags).
+The inspector's *Start here* section names the calls the store makes and the dev proxy's target: start that backend if a script does it (`dev.sh`, `compose.yaml`). Else `--mock`: a file (`'**/api/items=.ui-craft/items.json'`), an inline body (`'**/api/teams=[]'`, `'**/api/config={"demo_mode":false}'`) or a bare status (`'**/api/auth/me=401'`, a signed-out visitor). The render output's `requests` line lists every xhr/fetch the app made with its status, so the second render can mock all of them; the framework's own (`/_next/`, `/_nuxt/`, payloads) are counted, not listed. `--init-script .ui-craft/seed.js` runs before the app (localStorage under the key the inspector names, feature flags).
 
 ## Content appears after hydration or a fetch
 

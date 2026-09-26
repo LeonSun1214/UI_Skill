@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.12.0 — Vue and Nuxt
+
+The inspector detected Vue, but its reading list, page lines, layouts and routes were
+built from JSX, the App Router and react-router. Taken through a Nuxt UI template
+(the SaaS starter: Nuxt 4, @nuxt/content) and a Vue + Vite dashboard (TailAdmin Vue),
+then fixed where they showed a gap. Notes: `evals/notes/stacks-vue-nuxt.md`.
+
+- `inspect.py`, Nuxt: file routes (`app/` in Nuxt 4, the root in Nuxt 3), each layout
+  with the pages that pick it (`definePageMeta`), `app.vue`, auto-imported components
+  by the name templates use and counted by use, Nuxt UI's colours (`app.config`) and
+  its components by use, route middleware (global, or the pages that name it, and
+  whether it redirects), auth modules, `server/api`, @nuxt/content collections, and
+  color-mode's class and storage key.
+- `inspect.py`, Vue: the vue-router table (lazy imports, redirects), the wrapper
+  component each view sits in ("inside AdminLayout", its path given once), props from
+  `defineProps` in its typed, object and array forms, the components a template uses,
+  and page signals from Vue kits (`UForm`, `el-*`, `v-*`, `v-for`). The stack line
+  names the kit (Nuxt UI, Element Plus, Vuetify, PrimeVue, Naive UI, Reka UI, …) and
+  Iconify sets; the dev line names the port (`nuxt dev` :3000, Vite :5173).
+- `references/stacks/nuxt.md` and `vue.md`: where things are, what Nuxt UI's defaults
+  measure and where to fix them (the theme, not each page), why `requests` reads none
+  on a Nuxt page, dark mode, checks. The reading list points to the one that applies.
+- `render.mjs`, from what the Nuxt page exposed; each applies to React pages drawn the
+  same way:
+  - text on a positioned layer (a tab's sliding indicator) is measured against that
+    layer when the layer paints under it: "Monthly" at 1.1:1 was false. A layer that
+    paints over static text is no backdrop, and a picture under the text (an image
+    under a veil) makes it unverifiable rather than a 1:1 failure;
+  - focus rings drawn on `::before` / `::after` are read: Nuxt UI's navigation links
+    were reported invisible and are faint (1.35:1);
+  - box-shadow rings are read layer by layer. Tailwind composes five layers, mostly
+    transparent, and the first colour was taken: a Tailwind v4 ring was never
+    measured, a v3 ring with an offset read 1:1. The most visible layer counts now, a
+    drop shadow that was there before focus is not a ring, and a border recoloured on
+    focus counts with it;
+  - a field outlined by an inset ring is measured by the ring ("ring 1.49:1", not
+    "fill 1:1");
+  - Nuxt DevTools and Vue DevTools are hidden like the error overlays: they floated
+    over the page and covered focused elements;
+  - the framework's own requests (`/_next/`, `__nextjs_*`, `/_nuxt/`, `_payload.json`,
+    @nuxt/content's database, Nuxt Icon, RSC payloads) are counted, not listed.
+- Self-test: `layers.html` plants each case. The 0.11.6 renderer made 5 false reports,
+  2 wrong attributions and 1 miss on it; this one reports the 5 planted defects and
+  counts the text on the photo as unverifiable. 27 checks. On Sunnote and three
+  Next.js blog pages the findings are unchanged.
+- CI runs the inspector on a Nuxt 4 + Nuxt UI fixture and a Vue + vue-router fixture.
+- SKILL.md: the description names Vue and Nuxt; the stack check, step 1, the
+  situations table and "When to read what" route to the stack notes.
+
+Not measured yet: a task on a Vue or Nuxt project by a fresh agent, and the trigger
+rate of the new description.
+
 ## Evals, after 0.11.6 — the archive task three ways
 
 No change to the skill. The seventh trial's task under ui-ux-pro-max and with no skill

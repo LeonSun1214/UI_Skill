@@ -1,14 +1,14 @@
 ---
 name: ui-craft
 metadata:
-  version: 0.11.6
+  version: 0.12.0
 description: >-
-  Build, change, and review UI in React + Tailwind projects (Vite, Next.js) with a render → look → measure → fix loop, so what ships is checked against a real screenshot and real DOM measurements (contrast, tap targets, overflow, keyboard focus, hover, motion, dark mode) instead of guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even when they never say "design" or "UI". Also use it to inspect an existing project's design conventions before adding to it.
+  Build, change, and review UI in React or Vue + Tailwind projects (Vite, Next.js, Nuxt) with a render → look → measure → fix loop, so what ships is checked against a real screenshot and real DOM measurements (contrast, tap targets, overflow, keyboard focus, hover, motion, dark mode) instead of guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even when they never say "design" or "UI". Also use it to inspect an existing project's design conventions before adding to it.
 ---
 
 # ui-craft
 
-Version 0.11.6. (An older copy of this file means the installed skill is behind the
+Version 0.12.0. (An older copy of this file means the installed skill is behind the
 repository: re-run `install.sh`; `doctor.mjs` says when that is the case.)
 
 UI work has a gap that code review can't close: the first draft always has two or
@@ -90,7 +90,7 @@ Decide which of these you're doing, because they start differently:
 - **Greenfield** (empty project, prototype, single page) → step 2, then 3.
 - **Review or fix** ("polish", "looks off", "is it accessible") → step 4 on the existing page, then fix.
 
-Never assume the stack. Check `package.json` for `next` / `vite` / `react-router`
+Never assume the stack. Check `package.json` for `next` / `nuxt` / `vite` / `react-router` / `vue-router`
 and the Tailwind major (v4 is CSS-first with `@theme`; v3 uses `tailwind.config.*`).
 
 ### 1. Inspect the project before touching it (existing projects)
@@ -109,7 +109,10 @@ it, the theme script, a splash, the early returns in `App`, the requests the sto
 makes, the dev proxy. On Next.js it also names the layouts (root first, with the
 providers and chrome each wraps a page in), the middleware and the routes it
 guards, what `[locale]` defaults to, and, for a thin page that hands everything
-to a layout or template, the file that is the real page. Read the one page whose
+to a layout or template, the file that is the real page. On Nuxt and Vue it names the
+file routes or the route table, the layouts and the pages each wraps, the auto-imported
+components, the route middleware and `server/api`, and the stack notes to read once
+(`references/stacks/nuxt.md` or `vue.md`). Read the one page whose
 signals match yours (or the file it renders) and the vocabulary lines; that is
 the whole of the reading for a match task. Below it the report has the tokens the project
 *declares* and the classes the code *actually uses*: dominant color families,
@@ -318,12 +321,13 @@ read only the section you hit.
 | Content appears after hydration or a fetch | `--wait-for SELECTOR` |
 | A splash or cookie bar covers the page | `--dismiss Escape` or `--dismiss SELECTOR` |
 | The theme is set by a script at boot | nothing: the dark pass reloads |
-| One component, not a page | `scripts/harness.mjs` (Vite + React) |
+| One component, not a page | `scripts/harness.mjs` (Vite + React); in Vue, render a page that holds it |
 | Changing a page that exists, or proving one did not change | render before touching it, `--compare` after; restore generated files (contentlayer, codegen) before each render |
 | A dialog, drawer, menu, dropdown, or form error | `--act 'click:text=Delete'`, `--act 'type:SEL=x' --act press:Enter`; render the closed state too |
 | The project has checks (`tsc`, lint, tests) | run them after the last render; revert what a `lint --fix` reformats |
 | Monorepo | inspect, serve and render the one app you change |
 | Next.js | render `http://localhost:PORT`, never `127.0.0.1`; `requests: none` means the data came with the HTML: start what `dev` starts instead of mocking |
+| Nuxt or Vue | the stack notes the inspector names; Nuxt UI's own defaults (faint rings, the 500-shade primary) are inherited |
 
 ### 5. Report
 
@@ -357,6 +361,7 @@ never a temp directory.
 |---|---|
 | Starting on any existing codebase | run `scripts/inspect.py` — nothing else for a match task |
 | The page won't just render (a login, a backend, a splash, a dialog, Next.js) | that section of `references/real-projects.md` |
+| A Nuxt or Vue project | `references/stacks/nuxt.md` or `vue.md`, once |
 | Choosing a look, or the output feels generic | `references/anti-generic.md` |
 | Picking token values, light or dark | run `scripts/contrast.py` |
 | A project the user will keep building on (tokens to persist) | `scripts/direction.py` — brief.json → check --fix → write |

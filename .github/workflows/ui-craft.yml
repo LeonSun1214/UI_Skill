@@ -58,3 +58,22 @@ jobs:
           grep -q "settings/profile" /tmp/inspect.txt   # the route table found the nested Route
           python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/nextjs | tee /tmp/inspect-next.txt | grep -q "app/page.tsx"
           grep -q "app/layout.tsx. wraps every page" /tmp/inspect-next.txt   # the App Router layout is on the reading list
+          # Nuxt 4 + Nuxt UI: file routes under app/, layouts and who uses them, middleware, server API, Nuxt UI's vocabulary
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/nuxt-app | tee /tmp/inspect-nuxt.txt | head -5
+          grep -q "file routes in app/pages/" /tmp/inspect-nuxt.txt
+          grep -q "/settings/profile. → app/pages/settings/profile.vue" /tmp/inspect-nuxt.txt
+          grep -q "layouts/dashboard.vue. wraps the pages that set .layout: 'dashboard'. (1: profile.vue)" /tmp/inspect-nuxt.txt
+          grep -q "middleware/auth.ts. runs before the pages that name it: profile.vue — it can redirect" /tmp/inspect-nuxt.txt
+          grep -q "server/api. answers 2 routes" /tmp/inspect-nuxt.txt
+          grep -q "Nuxt UI — colours .primary: emerald." /tmp/inspect-nuxt.txt
+          grep -q "dashboard/Sidebar.vue. (1; props collapsed, items)" /tmp/inspect-nuxt.txt
+          grep -q "localStorage .nuxt-color-mode." /tmp/inspect-nuxt.txt
+          grep -q "references/stacks/nuxt.md" /tmp/inspect-nuxt.txt
+          # Vue + vue-router: the route table, the layout a view sits in, props from both defineProps forms
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/vue-app | tee /tmp/inspect-vue.txt | head -5
+          grep -q "/settings. → src/views/SettingsView.vue" /tmp/inspect-vue.txt
+          grep -q "inside AppLayout" /tmp/inspect-vue.txt
+          grep -q "StatCard.vue. (2; props label, value)" /tmp/inspect-vue.txt
+          grep -q "BaseButton.vue. (2; props variant, size)" /tmp/inspect-vue.txt
+          grep -q "localStorage .fixture-theme." /tmp/inspect-vue.txt
+          grep -q "references/stacks/vue.md" /tmp/inspect-vue.txt

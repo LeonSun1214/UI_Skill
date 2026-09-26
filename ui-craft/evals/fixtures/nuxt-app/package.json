@@ -1,0 +1,7 @@
+{
+  "name": "fixture-nuxt-app",
+  "private": true,
+  "type": "module",
+  "scripts": { "dev": "nuxt dev", "build": "nuxt build", "preview": "nuxt preview" },
+  "dependencies": { "nuxt": "^4.1.0", "@nuxt/ui": "^4.0.0", "tailwindcss": "^4.1.0", "@iconify-json/lucide": "^1.2.0" }
+}
