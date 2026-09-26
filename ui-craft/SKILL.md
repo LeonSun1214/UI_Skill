@@ -1,14 +1,14 @@
 ---
 name: ui-craft
 metadata:
-  version: 0.12.0
+  version: 0.12.1
 description: >-
   Build, change, and review UI in React or Vue + Tailwind projects (Vite, Next.js, Nuxt) with a render → look → measure → fix loop, so what ships is checked against a real screenshot and real DOM measurements (contrast, tap targets, overflow, keyboard focus, hover, motion, dark mode) instead of guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even when they never say "design" or "UI". Also use it to inspect an existing project's design conventions before adding to it.
 ---
 
 # ui-craft
 
-Version 0.12.0. (An older copy of this file means the installed skill is behind the
+Version 0.12.1. (An older copy of this file means the installed skill is behind the
 repository: re-run `install.sh`; `doctor.mjs` says when that is the case.)
 
 UI work has a gap that code review can't close: the first draft always has two or
@@ -33,7 +33,8 @@ real leak in past runs:
    grep their source to learn "what they measure" — it's listed below.
 2. **Don't dump `report.json`.** The per-viewport verdict lines and the `Verified`
    block at the end of `render.mjs` output *are* the report. Open `report.json` only
-   to get the selector of a FAIL you're about to fix, and print that entry alone.
+   to get the selector of a FAIL you're about to fix, or the rest of a section the
+   output cut short (its `… N more` line names the path), and print that entry alone.
 3. **Don't write your own probes.** Contrast math → `contrast.py`. Screenshots and
    measurements → `render.mjs`. Package, icon and font facts → `verify.py`. A palette
    to persist → `direction.py`. If the loop can't measure something, say so in the
@@ -240,7 +241,8 @@ server that cannot take three page loads at once).
 
 It writes `contact.png` (all viewports above the fold, one image), `contact-dark.png`
 when dark mode was rendered, `<w>-fold.png`, `<w>-full.png`, `<w>-dark-fold.png`, and
-`report.json`. It prints one verdict line per viewport, the details of every FAIL,
+`report.json`. It prints one verdict line per viewport, the details of every FAIL
+(a long section ends with how many it left out, and where they are in `report.json`),
 and ends with a `Verified` block — the measured numbers in the exact form your
 report needs.
 

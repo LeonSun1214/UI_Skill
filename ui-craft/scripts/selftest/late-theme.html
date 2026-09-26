@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en" class="light">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Late theme test</title>
+<style>
+  :root { --bg: #ffffff; --ink: #1a1a1a; --ring: #2563eb; }
+  .dark { --bg: #101214; --ink: #f1f1f1; --ring: #93c5fd; }
+  body { margin: 0; padding: 32px; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, sans-serif; }
+  a { display: inline-block; padding: 12px 8px; color: var(--ink); }
+  a:hover { text-decoration: none; }
+  a:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+</style>
+<script>
+  // Like a colour-mode plugin that hydrates late: once something has switched the page to .dark,
+  // the next focus puts back the theme it read at boot.
+  new MutationObserver((_, obs) => {
+    const h = document.documentElement;
+    if (!h.classList.contains('dark')) return;
+    obs.disconnect();
+    document.addEventListener('focusin', () => { h.classList.remove('dark'); h.classList.add('light'); }, { once: true });
+  }).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+</script>
+</head>
+<body>
+<main>
+  <h1>Late theme</h1>
+  <p>Its theme script takes the dark class back off.</p>
+  <a href="#one">One</a> <a href="#two">Two</a>
+</main>
+</body>
+</html>

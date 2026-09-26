@@ -19,6 +19,8 @@ Its defaults fail a few measurements, on every page that uses them. On a stock t
 - focus rings in primary at 25 % (`outline-primary/25`), about 1.35:1 on white; navigation links draw theirs on `::before`, which the render reads;
 - inputs outlined by a 1px inset ring (`ring-accented`), about 1.5:1 on white: the non-text line says `ring`.
 
+To match a component's look outside the component (a list row styled like `UBlogPost`'s title and date), read its generated theme: `.nuxt/ui/<component>.ts` (`blog-post.ts`, `page-header.ts`, `link.ts`), a few hundred bytes per component with the default classes of each slot and variant (overrides under `ui` in `app.config.ts` are merged over them at runtime: check there too). Not the bundle in `node_modules/@nuxt/ui/dist`: that is 270 KB of every component at once.
+
 These are the kit's, not your page's. In a match task leave them and name them under *Inherited*. When the user asks for them to be fixed, fix them once, at the theme, never with classes on each page: Nuxt UI points `--ui-primary` at the 500 shade (400 in dark), so `:root { --ui-primary: var(--ui-color-primary-700); }` in the main CSS darkens every primary surface; a component's classes are overridden under `ui.<component>` in `app.config.ts` (`slots`, `variants`).
 
 ## Serving and rendering

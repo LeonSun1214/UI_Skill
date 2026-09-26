@@ -107,6 +107,16 @@ try {
     return `mode=${d.mode}, bg ${v(dk).audit.pageColors.background} → ${d.pageColors.background}`;
   });
 
+  // 2a. a theme script that takes .dark back off during the pass (a colour-mode plugin hydrating
+  // late, met on a cold Nuxt dev server): put back, and the dark screenshot shows the dark theme
+  await check('dark pass survives a script that reverts it', async () => {
+    const r = await render(join(pages, 'late-theme.html'), join(work, 'late'));
+    const d = v(r).dark;
+    expect(d && d.restored && d.screenshotMatches, `expected the class put back and a dark screenshot: ${JSON.stringify(d && { restored: d.restored, screenshotMatches: d.screenshotMatches })}`);
+    expect(/took \.dark off mid-pass/.test(r.stdout), 'the output does not say the class was put back');
+    return 'the class was put back before the screenshot, which shows the measured theme';
+  });
+
   // 2b. patterns met in a real project (see evals/notes/trial-sunnotice.md)
   const rp = await render(join(pages, 'real-project.html'), join(work, 'real'));
   await check('boot-script theme gets a dark pass', () => {
@@ -227,7 +237,10 @@ try {
     expect(fields.length === 1 && /field-ringed$/.test(fields[0].selector) && fields[0].via === 'ring', `expected the faint ring field alone, via its ring: ${JSON.stringify(fields)}`);
     const faint = f.lowContrastRing.join(' | ');
     expect(f.invisible.length === 0, `rings counted invisible: ${JSON.stringify(f.invisible)}`);
-    expect(f.lowContrastRing.length === 2 && /nav-faint \(outline on ::before/.test(faint) && /ring-faint \(box-shadow/.test(faint), `expected the faint ::before ring and the faint shadow ring: ${faint}`);
+    const small = a.targets.below24.map((t) => t.selector).join(' ');
+    expect(!/post-/.test(small), `a link stretched over its card was measured by its text: ${small}`);
+    expect(/tiny-help/.test(small), `a hidden tooltip grew a 20px button's target: ${small}`);
+    expect(f.lowContrastRing.length === 3 && /nav-faint \(outline on ::before/.test(faint) && /ring-faint \(box-shadow/.test(faint) && /post-faint \(outline on a parent/.test(faint), `expected the faint ::before ring, the faint shadow ring and the faint card ring: ${faint}`);
     return `${text.join(' and ')} fail, the tab on the indicator passes, the photo is unverifiable · ${fields[0].selector} via ring · faint rings: ${faint}`;
   });
 

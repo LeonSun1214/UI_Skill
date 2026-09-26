@@ -305,6 +305,29 @@ function domAudit(INTERACTIVE) {
         r = { left, top, right, bottom, width: right - left, height: bottom - top };
       }
     }
+    // A link stretched over its card takes clicks on the whole card, which is then the target: an
+    // `absolute inset-0` child (Tailwind UI cards), or a ::before / ::after at inset 0 (Bootstrap's
+    // stretched-link), whose box is the nearest positioned ancestor's.
+    const grow = (x) => {
+      const left = Math.min(r.left, x.left), top = Math.min(r.top, x.top), right = Math.max(r.right, x.right), bottom = Math.max(r.bottom, x.bottom);
+      r = { left, top, right, bottom, width: right - left, height: bottom - top };
+    };
+    const own = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    for (const child of el.querySelectorAll('*')) {
+      const s = getComputedStyle(child);
+      if (s.position !== 'absolute' || s.pointerEvents === 'none' || s.visibility === 'hidden' || s.opacity === '0') continue;
+      const cr = child.getBoundingClientRect();
+      // an overlay covers the link's own box; a tooltip or a badge beside it does not
+      if (cr.left <= own.left + 1 && cr.top <= own.top + 1 && cr.right >= own.right - 1 && cr.bottom >= own.bottom - 1) grow(cr);
+    }
+    for (const ps of ['::before', '::after']) {
+      const s = getComputedStyle(el, ps);
+      if (s.content === 'none' || s.position !== 'absolute' || s.pointerEvents === 'none') continue;
+      if (![s.top, s.right, s.bottom, s.left].every((v) => v === '0px')) continue;
+      let cb = el;
+      while (cb && cb !== document.body && getComputedStyle(cb).position === 'static') cb = cb.parentElement;
+      if (cb && cb !== document.body) grow(cb.getBoundingClientRect());
+    }
     const cs = getComputedStyle(el);
     // A link inside prose is exempt from the target size (WCAG 2.5.8); a nav item in an <li> is not prose:
     // the host must carry text beyond the link's own.
@@ -667,7 +690,10 @@ async function focusAudit(page, max = 30) {
     const visible = (el) => { const cs = getComputedStyle(el); if (cs.display === 'none' || cs.visibility === 'hidden') return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
     const short = (el) => { let s = el.tagName.toLowerCase(); if (el.id) return `${s}#${el.id}`; const t = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 28); return t ? `${s} "${t}"` : s; };
     const pseudoSig = (el) => ['::before', '::after'].map((ps) => { const s = getComputedStyle(el, ps); return s.content === 'none' ? '-' : `${s.outlineStyle} ${s.outlineWidth} ${s.outlineColor}|${s.boxShadow}|${s.backgroundColor}`; }).join('||');
-    const snap = (el) => { const cs = getComputedStyle(el); return { outline: `${cs.outlineStyle} ${cs.outlineWidth}`, boxShadow: cs.boxShadow, borderColor: cs.borderColor, background: cs.backgroundColor, color: cs.color, pseudo: pseudoSig(el) }; };
+    // A card whose link covers it draws the ring on the card (`:focus-within`, `:has(a:focus-visible)`).
+    const ancestorsOf = (el) => { const out = []; for (let n = el.parentElement; n && n !== document.body && out.length < 3; n = n.parentElement) out.push(n); return out; };
+    const ringSig = (n) => { const s = getComputedStyle(n); return `${s.outlineStyle} ${s.outlineWidth} ${s.outlineColor}|${s.boxShadow}|${s.borderColor}|${s.backgroundColor}`; };
+    const snap = (el) => { const cs = getComputedStyle(el); return { outline: `${cs.outlineStyle} ${cs.outlineWidth}`, boxShadow: cs.boxShadow, borderColor: cs.borderColor, background: cs.backgroundColor, color: cs.color, pseudo: pseudoSig(el), anc: ancestorsOf(el).map(ringSig) }; };
     if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
     window.scrollTo(0, 0);
     const els = [...document.querySelectorAll(selector)].filter(visible);
@@ -685,7 +711,8 @@ async function focusAudit(page, max = 30) {
       // `transition-colors` also transitions outline-color, so right after focus the ring is still
       // fading in from currentColor. Jump every running CSS transition to its end state first;
       // the ring we measure is the one the user sees 150ms later.
-      for (const a of el.getAnimations({ subtree: true })) {
+      const ancestors = []; for (let n = el.parentElement; n && n !== document.body && ancestors.length < 3; n = n.parentElement) ancestors.push(n);
+      for (const a of [...el.getAnimations({ subtree: true }), ...ancestors.flatMap((n) => n.getAnimations())]) {
         if (a.constructor && a.constructor.name === 'CSSTransition') { try { a.finish(); } catch { /* infinite */ } }
       }
       const cs = getComputedStyle(el);
@@ -716,11 +743,12 @@ async function focusAudit(page, max = 30) {
           return blur > 0 || spread > 0 ? (m ? toRGBA(m[0]) : null) : null;
         }).filter((c) => c && c.a > 0);
       };
-      const behind = (() => { // effective background of the parent: what the ring is drawn over
-        let node = el.parentElement, layers = [], opaque = null;
+      const bgFrom = (start) => { // effective background from `start` up: what a ring is drawn over
+        let node = start, layers = [], opaque = null;
         while (node && node.nodeType === 1) { const s = getComputedStyle(node); if (s.backgroundImage !== 'none') return null; const c = toRGBA(s.backgroundColor); if (c && c.a > 0) { if (c.a >= 0.999) { opaque = c; break; } layers.push(c); } node = node.parentElement; }
         let bg = opaque || { r: 255, g: 255, b: 255, a: 1 }; for (let k = layers.length - 1; k >= 0; k--) bg = over(layers[k], bg); return bg;
-      })();
+      };
+      const behind = bgFrom(el.parentElement);
       let ringColor = null, ringVia = null;
       // `outline-style: auto` is the browser's own ring — two-tone in Chromium, drawn in colours
       // that are not the computed outline-color. Visible by construction; nothing to measure.
@@ -728,7 +756,8 @@ async function focusAudit(page, max = 30) {
       else if (!/^none/.test(cs.outlineStyle) && parseFloat(cs.outlineWidth) > 0) { ringColor = toRGBA(cs.outlineColor); ringVia = 'outline'; }
       else if (shadowColors(cs.boxShadow).length) { ringVia = 'box-shadow'; }
       // A shadow ring can stack layers (ring-offset in white, then the ring): the most visible one counts.
-      const contrastOf = (c) => (c && c.a > 0 && behind ? ratio(c.a < 1 ? over(c, behind) : c, behind) : null);
+      const contrastOn = (c, bg) => (c && c.a > 0 && bg ? ratio(c.a < 1 ? over(c, bg) : c, bg) : null);
+      const contrastOf = (c) => contrastOn(c, behind);
       const best = (vals) => { const v = vals.filter((x) => x !== null); return v.length ? Math.max(...v) : null; };
       let ringContrast = null;
       if (ringVia === 'outline') ringContrast = contrastOf(ringColor);
@@ -749,8 +778,18 @@ async function focusAudit(page, max = 30) {
         if (via) { pseudoRing = { via, contrast: contrast === null ? null : +contrast.toFixed(2) }; break; }
       }
       const pseudoSig = ['::before', '::after'].map((ps) => { const s = getComputedStyle(el, ps); return s.content === 'none' ? '-' : `${s.outlineStyle} ${s.outlineWidth} ${s.outlineColor}|${s.boxShadow}|${s.backgroundColor}`; }).join('||');
+      // A ring on a parent, measured against what that parent sits on. The Node side uses the first
+      // parent that changed on focus, and only when the element and its pseudo-elements did not.
+      const anc = ancestors.map((n) => { const s = getComputedStyle(n); return `${s.outlineStyle} ${s.outlineWidth} ${s.outlineColor}|${s.boxShadow}|${s.borderColor}|${s.backgroundColor}`; });
+      const ancRing = ancestors.map((n) => {
+        const s = getComputedStyle(n), bg = bgFrom(n.parentElement);
+        let c = null, via = null;
+        if (!/^none/.test(s.outlineStyle) && parseFloat(s.outlineWidth) > 0) { c = contrastOn(toRGBA(s.outlineColor), bg); via = 'outline on a parent'; }
+        else if (shadowColors(s.boxShadow).length) { c = best(shadowColors(s.boxShadow).map((x) => contrastOn(x, bg))); via = 'box-shadow on a parent'; }
+        return via ? { via, contrast: c === null ? null : +c.toFixed(2) } : null;
+      });
       return {
-        pseudo: pseudoSig, pseudoRing,
+        pseudo: pseudoSig, pseudoRing, anc, ancRing,
         idx: +el.getAttribute('data-uic-idx'), obscured, obscuredBy: obscured ? (onTop.tagName.toLowerCase() + (onTop.id ? '#' + onTop.id : '')) : null,
         outline: `${cs.outlineStyle} ${cs.outlineWidth}`, boxShadow: cs.boxShadow, borderColor: cs.borderColor, background: cs.backgroundColor, color: cs.color,
         ringVia, ringContrast, borderContrast,
@@ -762,12 +801,22 @@ async function focusAudit(page, max = 30) {
     const b = baseline[cur.idx];
     const outlineVisible = !/^none/.test(cur.outline) && !/\b0px$/.test(cur.outline);
     const pseudoChanged = cur.pseudo !== b.pseudo;
-    const changed = cur.outline !== b.outline || ['boxShadow', 'borderColor', 'background', 'color'].some((k) => cur[k] !== b[k]) || pseudoChanged;
+    // A parent whose look changed shows focus; its ring counts only if its outline or shadow is what
+    // changed (a card with a steady drop shadow and a new background shows focus by the background).
+    const ringPart = (sig) => sig.split('|').slice(0, 2).join('|');
+    let ancChanged = false, ancAt = -1;
+    for (let k = 0; k < Math.min(cur.anc.length, b.anc.length); k++) {
+      if (cur.anc[k] === b.anc[k]) continue;
+      ancChanged = true;
+      if (cur.ancRing[k] && ringPart(cur.anc[k]) !== ringPart(b.anc[k])) { ancAt = k; break; }
+    }
+    const changed = cur.outline !== b.outline || ['boxShadow', 'borderColor', 'background', 'color'].some((k) => cur[k] !== b[k]) || pseudoChanged || ancChanged;
     // A shadow that was there before focus (a drop shadow) is not the ring: focus showed as something else.
     const elementRing = cur.ringVia && (cur.ringVia !== 'box-shadow' || cur.boxShadow !== b.boxShadow);
     const usePseudo = !elementRing && pseudoChanged && cur.pseudoRing;
-    let ringVia = usePseudo ? cur.pseudoRing.via : elementRing ? cur.ringVia : null;
-    let ringContrast = usePseudo ? cur.pseudoRing.contrast : elementRing ? cur.ringContrast : null;
+    const useParent = !elementRing && !usePseudo && ancAt >= 0;
+    let ringVia = usePseudo ? cur.pseudoRing.via : useParent ? cur.ancRing[ancAt].via : elementRing ? cur.ringVia : null;
+    let ringContrast = usePseudo ? cur.pseudoRing.contrast : useParent ? cur.ancRing[ancAt].contrast : elementRing ? cur.ringContrast : null;
     // A field that shows focus by recolouring its border, often with a faint glow: the border counts too.
     if (cur.borderColor !== b.borderColor && cur.borderContrast !== null && (!ringVia || (ringContrast !== null && cur.borderContrast > ringContrast))) {
       ringVia = ringVia ? `${ringVia} and border` : 'border'; ringContrast = cur.borderContrast;
@@ -778,12 +827,15 @@ async function focusAudit(page, max = 30) {
     document.querySelectorAll('[data-uic-idx]').forEach((el) => el.removeAttribute('data-uic-idx'));
     if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur(); // no focus ring in screenshots
   });
+  const faint = results.filter((r) => r.visible && r.ringContrast !== null && r.ringContrast < 3);
   return {
     tabbed: results.length,
+    limit: max, // the walk stops here: at the limit, later tab stops were not probed
+    // The lists name the first 20; the counts are all of them.
+    counts: { invisible: results.filter((r) => !r.visible).length, obscured: results.filter((r) => r.obscured).length, lowContrastRing: faint.length },
     invisible: results.filter((r) => !r.visible).map((r) => r.selector).slice(0, 20),
     obscured: results.filter((r) => r.obscured).map((r) => `${r.selector} (behind ${r.obscuredBy})`).slice(0, 20),
-    lowContrastRing: results.filter((r) => r.visible && r.ringContrast !== null && r.ringContrast < 3)
-      .map((r) => `${r.selector} (${r.ringVia} ${r.ringContrast}:1)`).slice(0, 20),
+    lowContrastRing: faint.map((r) => `${r.selector} (${r.ringVia} ${r.ringContrast}:1)`).slice(0, 20),
   };
 }
 
@@ -844,6 +896,7 @@ async function hoverAudit(page, max = 20) {
   await page.evaluate(() => window.scrollTo(0, 0));
   return {
     checked: results.length,
+    limit: max, // a sample: at the limit, later buttons and links were not hovered
     noHoverFeedback: results.filter((r) => r.hovered && !r.changed).map((r) => r.selector).slice(0, 20),
     cursorNotPointer: results.filter((r) => r.hovered && r.cursor !== 'pointer').map((r) => r.selector).slice(0, 20),
     couldNotHover: results.filter((r) => !r.hovered).map((r) => r.selector).slice(0, 10),
@@ -1119,9 +1172,20 @@ async function renderViewport(width) {
       await page.waitForTimeout(150);
       dAudit = await page.evaluate(domAudit, INTERACTIVE_SELECTOR);
     }
+    // A theme script can take the class back off after the switch: a colour-mode plugin that hydrates
+    // late (the first load on a cold dev server) re-applies the theme it read at boot. Put it back
+    // before each later step, and check that the screenshot shows the colours that were measured.
+    const bodyBg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+    const keepDark = () => (audit && audit.darkSupport.class
+      ? page.evaluate(() => { const h = document.documentElement; if (h.classList.contains('dark')) return 0; h.classList.remove('light'); h.classList.add('dark'); return 1; })
+      : Promise.resolve(0));
+    const measuredBg = await bodyBg();
+    let restored = await keepDark();
     const dFocus = await focusAudit(page);
     await page.evaluate(() => window.scrollTo(0, 0));
+    restored += await keepDark();
     await page.waitForTimeout(100);
+    const shownBg = await bodyBg();
     let dFold = null;
     if (opt.fold) {
       dFold = join(opt.out, `${key}-dark-fold.png`);
@@ -1135,9 +1199,11 @@ async function renderViewport(width) {
       reloaded, // the in-place emulation changed nothing; the page was loaded again under the dark scheme
       forced: opt.dark === 'force',
       themeChanged: changed,
+      restored: restored > 0, // the page took the dark class off during the pass; it was put back
+      screenshotMatches: shownBg === measuredBg,
       pageColors: dAudit.pageColors,
       contrast: dAudit.contrast, nonText: dAudit.nonText,
-      focus: { invisible: dFocus.invisible, lowContrastRing: dFocus.lowContrastRing },
+      focus: { invisible: dFocus.invisible, lowContrastRing: dFocus.lowContrastRing, counts: dFocus.counts },
       screenshot: dFold ? `${key}-dark-fold.png` : null,
     };
     await page.emulateMedia({ colorScheme: 'light' });
@@ -1168,9 +1234,10 @@ async function renderViewport(width) {
     if (!audit.viewportMeta.present) warns.push('no viewport meta');
   }
   if (focus) {
-    if (focus.invisible.length) fails.push(`focus invisible ${focus.invisible.length}`);
-    if (focus.obscured.length) fails.push(`focus obscured ${focus.obscured.length}`);
-    if (focus.lowContrastRing.length) fails.push(`focus ring <3:1 ${focus.lowContrastRing.length}`);
+    const fc = focus.counts || { invisible: focus.invisible.length, obscured: focus.obscured.length, lowContrastRing: focus.lowContrastRing.length };
+    if (fc.invisible) fails.push(`focus invisible ${fc.invisible}`);
+    if (fc.obscured) fails.push(`focus obscured ${fc.obscured}`);
+    if (fc.lowContrastRing) fails.push(`focus ring <3:1 ${fc.lowContrastRing}`);
   }
   if (hover) {
     if (hover.noHoverFeedback.length) warns.push(`no hover feedback ${hover.noHoverFeedback.length}`);
@@ -1179,10 +1246,12 @@ async function renderViewport(width) {
   if (dark) {
     if (dark.contrast.failures.length) fails.push(`dark contrast ${dark.contrast.failures.length}`);
     if (dark.nonText.failures.length) fails.push(`dark non-text contrast ${dark.nonText.failures.length}`);
-    if (dark.focus.invisible.length) fails.push(`dark focus invisible ${dark.focus.invisible.length}`);
-    if (dark.focus.lowContrastRing.length) fails.push(`dark focus ring <3:1 ${dark.focus.lowContrastRing.length}`);
+    const dc = dark.focus.counts || { invisible: dark.focus.invisible.length, lowContrastRing: dark.focus.lowContrastRing.length };
+    if (dc.invisible) fails.push(`dark focus invisible ${dc.invisible}`);
+    if (dc.lowContrastRing) fails.push(`dark focus ring <3:1 ${dc.lowContrastRing}`);
     if (dark.nonText.weak.length) warns.push(`dark weak button surface <3:1 ${dark.nonText.weak.length}`);
     if (!dark.themeChanged && !dark.forced) warns.push('dark rule present but page colours did not change');
+    if (!dark.screenshotMatches) warns.push('dark screenshot does not show the measured theme');
   }
   if (dialog) {
     if (!dialog.focusInside) fails.push('dialog: focus did not move into it');
@@ -1276,7 +1345,8 @@ if (first) {
     const head = `${reqs.length}${distinct.length < reqs.length ? `, ${distinct.length} distinct` : ''}`;
     console.log(`  requests (xhr/fetch, ${head}${first.frameworkRequests ? `; ${first.frameworkRequests} of the framework's own left out` : ''}): ${distinct.slice(0, 16).join(' · ')}${distinct.length > 16 ? ` · … ${distinct.length - 16} more in report.json` : ''}  ← what a second render would --mock`);
   }
-  console.log(`  dark mode: ${first.audit.darkSupport.any ? `supported (${['media', 'class', 'attr'].filter((k) => first.audit.darkSupport[k]).map((k) => k === 'attr' ? 'attribute' : k).join('+')})` : 'not implemented'}${report.summary.darkRendered ? ' — rendered and audited' : ''}`);
+  const restoredAt = Object.entries(report.viewports).filter(([, x]) => x.dark && x.dark.restored).map(([k]) => k);
+  console.log(`  dark mode: ${first.audit.darkSupport.any ? `supported (${['media', 'class', 'attr'].filter((k) => first.audit.darkSupport[k]).map((k) => k === 'attr' ? 'attribute' : k).join('+')})` : 'not implemented'}${report.summary.darkRendered ? ' — rendered and audited' : ''}${restoredAt.length ? ` · at ${restoredAt.join(' / ')} the page took .dark off mid-pass (a colour-mode script hydrating late); it was put back before the screenshot` : ''}`);
 }
 // ---- findings, once. A line that holds at every viewport is printed once; one that holds at some
 // carries their widths. Printed per viewport, the same finding three times over was a third of the output.
@@ -1307,21 +1377,42 @@ const specs = [
     !v.dialog.closeControl && 'no close or cancel control inside it',
   ].filter(Boolean) : []), 8, (s) => s],
 ];
+// A section shows its first few lines; the rest are in report.json, at these paths. The line that says
+// how many were left out names the path, so a question about one element is one lookup.
+const FULL_LIST = {
+  contrast: 'audit.contrast.failures', 'non-text contrast': 'audit.nonText.failures', 'targets<24': 'audit.targets.below24',
+  'focus invisible': 'focus.invisible', 'focus obscured': 'focus.obscured', 'focus ring <3:1': 'focus.lowContrastRing',
+  'no hover feedback': 'hover.noHoverFeedback', 'dark non-text contrast': 'dark.nonText.failures',
+  'dark focus ring <3:1': 'dark.focus.lowContrastRing', 'dark contrast': 'dark.contrast.failures', unnamed: 'audit.unnamedControls',
+};
+const TOTAL = { // counts kept apart from lists that report.json caps
+  'focus invisible': (v) => v.focus && v.focus.counts && v.focus.counts.invisible,
+  'focus obscured': (v) => v.focus && v.focus.counts && v.focus.counts.obscured,
+  'focus ring <3:1': (v) => v.focus && v.focus.counts && v.focus.counts.lowContrastRing,
+  'dark focus ring <3:1': (v) => v.dark && v.dark.focus.counts && v.dark.focus.counts.lowContrastRing,
+};
 {
   const audited = Object.entries(report.viewports).filter(([, v]) => v.audit);
   const widths = audited.map(([k]) => k);
-  const sections = []; // [title, Map(line → Set(width)), probedOnce]
+  const sections = []; // [title, Map(line → Set(width)), probedOnce, left out, at which width]
   for (const [title, pick, n, fmt, once] of specs) {
     const m = new Map();
-    for (const [k, v] of audited) for (const s of (pick(v) || []).slice(0, n).map(fmt)) (m.get(s) || m.set(s, new Set()).get(s)).add(k);
-    if (m.size) sections.push([title, m, !!once]);
+    let more = 0, moreAt = null;
+    for (const [k, v] of audited) {
+      const list = pick(v) || [];
+      const rest = ((TOTAL[title] && TOTAL[title](v)) || list.length) - Math.min(n, list.length);
+      if (rest > more) { more = rest; moreAt = k; }
+      for (const s of list.slice(0, n).map(fmt)) (m.get(s) || m.set(s, new Set()).get(s)).add(k);
+    }
+    if (m.size) sections.push([title, m, !!once, more, moreAt]);
   }
   if (sections.length) {
     const tag = (ws) => (ws.size === widths.length ? '' : `  [${widths.filter((w) => ws.has(w)).join(', ')}]`);
     console.log(widths.length > 1 ? `  findings at ${widths.join(' / ')} (an untagged line holds at every viewport):` : `  ${widths[0]}:`);
-    for (const [title, m, once] of sections) {
+    for (const [title, m, once, more, moreAt] of sections) {
       console.log(`    ${title}:`);
       for (const [s, ws] of m) console.log(`      ${s}${widths.length > 1 && !once ? tag(ws) : ''}`);
+      if (more > 0) console.log(`      … ${more} more at ${moreAt}${FULL_LIST[title] ? ` — report.json → viewports["${moreAt}"].${FULL_LIST[title]}` : ''}`);
     }
   }
 }
@@ -1341,7 +1432,7 @@ const specs = [
     if (darks.length) {
       const dw = darks.reduce((a, b) => (a.width > b.width ? a : b));
       const df = worst((v) => v.dark ? v.dark.contrast.failures.length : 0), dbf = worst((v) => v.dark ? v.dark.nonText.failures.length : 0);
-      const dr = worst((v) => v.dark ? v.dark.focus.lowContrastRing.length : 0);
+      const dr = worst((v) => v.dark ? (v.dark.focus.counts ? v.dark.focus.counts.lowContrastRing : v.dark.focus.lowContrastRing.length) : 0);
       L.push(`- Dark mode: rendered (${dw.dark.mode}${dw.dark.reloaded ? ', after a reload under the dark scheme' : ''}) · ${dw.dark.contrast.checked} text elements, ${df.n} below threshold${at(df)} · ${dw.dark.nonText.checked} boundaries, ${dbf.n} below 3:1 · ${dr.n} focus rings below 3:1 · background ${widest.audit.pageColors.background} → ${dw.dark.pageColors.background}${dw.dark.themeChanged ? '' : ' (unchanged!)'}`);
     } else {
       L.push(`- Dark mode: ${widest.audit.darkSupport.any ? 'rule present but not rendered' : 'no dark rule — not rendered'}`);
@@ -1351,8 +1442,9 @@ const specs = [
     const ov = vps.filter((v) => v.audit.overflow.horizontal).map((v) => `${v.width} (${v.audit.overflow.scrollWidth}>${v.audit.overflow.viewportWidth})`);
     L.push(`- Overflow: ${ov.length ? 'horizontal at ' + ov.join(', ') : 'none at ' + vps.map((v) => v.width).join(' / ')}`);
     const f = widest.focus, h = widest.hover;
-    const focusLine = f ? `${f.tabbed - f.invisible.length}/${f.tabbed} tabbed show a visible ring, ${f.lowContrastRing.length} rings below 3:1, ${f.obscured.length} obscured` : 'not probed';
-    const hoverLine = h ? `${h.checked - h.noHoverFeedback.length}/${h.checked} buttons and links respond${h.cursorNotPointer.length ? `, ${h.cursorNotPointer.length} without pointer cursor` : ''}` : 'not probed';
+    const fcn = f && (f.counts || { invisible: f.invisible.length, obscured: f.obscured.length, lowContrastRing: f.lowContrastRing.length });
+    const focusLine = f ? `${f.tabbed - fcn.invisible}/${f.tabbed} tabbed${f.limit && f.tabbed >= f.limit ? ` (the first ${f.limit} tab stops)` : ''} show a visible ring, ${fcn.lowContrastRing} rings below 3:1, ${fcn.obscured} obscured` : 'not probed';
+    const hoverLine = h ? `${h.checked - h.noHoverFeedback.length}/${h.checked} buttons and links respond${h.limit && h.checked >= h.limit ? ` (the first ${h.limit} probed)` : ''}${h.cursorNotPointer.length ? `, ${h.cursorNotPointer.length} without pointer cursor` : ''}` : 'not probed';
     L.push(`- Focus: ${focusLine} · Hover: ${hoverLine}`);
     L.push(`- Motion: reduced-motion rule ${widest.audit.motion.reducedMotionRule ? 'present' : 'missing'} · ${widest.audit.motion.animatedElements} animated elements`);
     const un = worst((v) => v.audit.unnamedControls.length), ia = worst((v) => v.audit.imagesMissingAlt.length);

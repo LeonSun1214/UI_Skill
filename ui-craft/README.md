@@ -52,7 +52,13 @@ judge that could not separate them. ui-craft read 7 project files before its fir
 look against 31 and 41, and used about half the tool calls and tokens (133k against
 244k and 276k; the other two ran side by side, which inflates their numbers somewhat).
 Fewer defects or the same ones, fewer reads, at a similar or lower cost; not a wide
-margin on what a design lead sees.
+margin on what a design lead sees. The archive task on a Nuxt UI template
+(`evals/notes/trial-nuxt-8.md`, ui-craft only) followed the Nuxt reading list: the
+Blog list page and the stack notes, then a baseline render before any edit. The
+page is built from the kit's components with no finding of its own, and the Blog
+list is unchanged outside the header. It cost 204k tokens and 49 tool calls against
+the Next.js run's 133k and 39. The extra went on looking for the kit's classes and
+on asking the report which findings were its own; both are shorter paths now.
 
 The misses of the other two are what a renderer catches and a database cannot, and
 they repeat run after run: body text at 3.7:1, 20 px nav links, focus rings at

@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.12.1 — what the Nuxt trial found
+
+A fresh agent did the seventh trial's archive task on the Nuxt UI template with 0.12.0
+(`evals/notes/trial-nuxt-8.md`). It followed the reading list: the Blog list page and
+`nuxt.md`, a baseline render before any edit. It built from the kit's components and
+semantic classes, left the Blog list unchanged outside the header, and named the
+kit's faint rings as inherited, with the right theme-level fix. 49 tool calls, 204k
+tokens. Grading it turned up five measurement gaps, now fixed:
+
+- **The dark pass could screenshot the light theme.** On a cold dev server Nuxt's
+  colour-mode plugin hydrated after the switch to `.dark` and put back the theme it
+  had read at boot, between the dark audit and the screenshot (1 dark screenshot in
+  27). The pass now puts `.dark` back before each later step and checks that the
+  screenshot shows the colours it measured. `selftest/late-theme.html`.
+- **Counts were capped at 20.** "20 rings below 3:1" on the archive page was 30.
+  The Verified line now counts all of them and says when a probe stopped at its
+  limit ("the first 30 tab stops", "the first 20 probed").
+- **The findings block cut each section without saying so.** A section now ends
+  with how many it left out and the `report.json` path that holds them. That was
+  the question behind most of the agent's `report.json` queries: are my own
+  elements in the rest?
+- **A ring drawn by a parent read as no ring.** `UBlogPost` puts the ring on the
+  card around its stretched link (`has-[>a:focus-visible]`). The focus probe now
+  watches the three elements above each one. One whose outline or shadow changes
+  on focus is the ring, and is measured; one that changes only its background
+  shows focus without a ring to measure. The Blog list's six "invisible" card
+  links read as the kit's faint ring.
+- **A stretched link was a small target.** A link whose `absolute inset-0` child
+  or `::after` covers its card takes clicks on the whole card; the card is now
+  measured as the target. A child counts only when it covers the link's own box,
+  so a hidden tooltip inside a 20px button does not make it bigger.
+- `nuxt.md`: to match a component's look, read `.nuxt/ui/<component>.ts`, a few
+  hundred bytes, not Nuxt UI's 270 KB bundle, which cost the agent four calls.
+- SKILL.md, cost rule 2: `report.json` also for the rest of a section the output cut
+  short, at the path its `… N more` line names.
+
+`selftest/layers.html` gains the cards (a faint ring, a strong ring, a background
+change) and the 20px button with a tooltip; 28 checks. On the four React pages
+of the regression check no finding changed; the output gained only the "… N more"
+lines and the named limits.
+
 ## 0.12.0 — Vue and Nuxt
 
 The inspector detected Vue, but its reading list, page lines, layouts and routes were

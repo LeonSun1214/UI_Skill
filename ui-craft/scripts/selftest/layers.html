@@ -35,6 +35,23 @@
   .btn:hover { background: #334155; }
   .btn.strong:focus-visible { box-shadow: 0 0 #0000, 0 0 #0000, 0 0 0 2px #fff, 0 0 0 4px #1d4ed8, 0 1px 2px rgba(0, 0, 0, 0.05); }
   .btn.faint:focus-visible { box-shadow: 0 0 #0000, 0 0 #0000, 0 0 #0000, 0 0 0 3px rgba(29, 78, 216, 0.15), 0 1px 2px rgba(0, 0, 0, 0.05); }
+  /* Cards whose link covers them draw the ring on the card (Nuxt UI's UBlogPost; focus-within cards) */
+  .post { position: relative; padding: 16px; border-radius: 8px; max-width: 360px; margin-bottom: 12px; }
+  .post h2 { margin: 0; font-size: 16px; }
+  .stretched { color: #1e293b; text-decoration: none; outline: none; }
+  .stretched::after { content: ''; position: absolute; inset: 0; }
+  .stretched:hover { text-decoration: underline; }
+  .faint-post:has(a:focus-visible) { outline: 3px solid rgba(16, 185, 129, 0.25); }
+  .strong-post:focus-within { outline: 2px solid #047857; }
+  /* A card that shows focus by its background, under a steady drop shadow: focus shown, no faint ring */
+  .bg-post { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+  .bg-post:focus-within { background: #e0e7ff; }
+  /* A 20px button with a hidden tooltip inside it: the tooltip is not part of the target */
+  .tiny { position: relative; width: 20px; height: 20px; padding: 0; border: 1px solid #64748b; border-radius: 999px; background: #fff; color: #1e293b; font: 12px/1 system-ui, sans-serif; cursor: pointer; }
+  .tiny:hover { background: #f1f5f9; }
+  .tiny:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 2px; }
+  .tip { position: absolute; bottom: 28px; left: -40px; width: 100px; padding: 4px; background: #1e293b; color: #fff; opacity: 0; }
+  .tiny:hover .tip { opacity: 1; }
   /* Fields outlined by an inset ring instead of a border; one recoloured on focus */
   label { display: block; margin-bottom: 12px; }
   .field { display: block; height: 44px; padding: 0 12px; font: inherit; background: #fff; border-radius: 8px; outline: none; color: #1e293b; }
@@ -72,6 +89,12 @@
     <a href="#docs" id="nav-faint" class="navlink faint">Docs</a>
     <a href="#pricing" id="nav-strong" class="navlink strong">Pricing</a>
   </nav>
+</section>
+<section>
+  <article class="post faint-post"><h2><a href="#p1" id="post-faint" class="stretched">A post whose card rings faintly</a></h2></article>
+  <article class="post strong-post"><h2><a href="#p2" id="post-strong" class="stretched">A post whose card rings clearly</a></h2></article>
+  <article class="post bg-post"><h2><a href="#p3" id="post-bg" class="stretched">A post whose card changes colour</a></h2></article>
+  <p style="margin-top:48px">Need help? <button id="tiny-help" class="tiny" aria-label="Help">?<span class="tip">Opens the guide</span></button></p>
 </section>
 <section>
   <button id="ring-strong" class="btn strong">Save</button>
