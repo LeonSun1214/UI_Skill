@@ -1,5 +1,13 @@
 # Changelog
 
+## Evals, after 0.11.6 — the archive task three ways
+
+No change to the skill. The seventh trial's task under ui-ux-pro-max and with no skill
+(`evals/notes/trial-next-7.md`): the same page three times — identical measurements, a
+judge split at its lowest confidence — with ui-craft reading 7 project files before its
+first look against 31 and 41, and using about half the tool calls and tokens. Every
+run found the layout by following the Blog page's import. README updated.
+
 ## 0.11.6 — a shorter SKILL.md
 
 Every task loads the whole of SKILL.md in its first turn and carries it in every turn

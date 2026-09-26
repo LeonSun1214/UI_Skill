@@ -46,8 +46,13 @@ match, all three pages score overall 3 of 5 (an off-brief control scores 1);
 head to head, ui-craft's page beats the unaided one in both orders, and
 ui-ux-pro-max's beats ui-craft's at the judge's lowest confidence, for a fuller
 grid (ui-craft's three sample items left an orphan card; a check since 0.11.2).
-Fewer defects and fewer reads at a similar cost, not a wide margin on what a
-design lead sees.
+A second task (an archive page matching the Blog list, `evals/notes/trial-next-7.md`)
+came out the same page under all three configurations: identical measurements, and a
+judge that could not separate them. ui-craft read 7 project files before its first
+look against 31 and 41, and used about half the tool calls and tokens (133k against
+244k and 276k; the other two ran side by side, which inflates their numbers somewhat).
+Fewer defects or the same ones, fewer reads, at a similar or lower cost; not a wide
+margin on what a design lead sees.
 
 The misses of the other two are what a renderer catches and a database cannot, and
 they repeat run after run: body text at 3.7:1, 20 px nav links, focus rings at

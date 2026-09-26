@@ -63,3 +63,58 @@ headings". None of the Uses pages scored above 3.
 
 Open: the no-skill and ui-ux-pro-max runs of this task, to see whether they also
 find the layout directly or read their way to it.
+
+## The same task with ui-ux-pro-max and with no skill (after 0.11.6)
+
+The archive task run by a fresh agent under each of the other two configurations, on
+pristine copies of the blog, with the same model as the ui-craft run above, and graded
+the same way: `render.mjs` on each `/archive`, `--compare` of each `/blog` against one
+pristine baseline, the match rubric against the Blog list, reads counted from the
+transcripts.
+
+| | ui-craft (0.11.3) | ui-ux-pro-max | no skill |
+|---|---|---|---|
+| text contrast failures on `/archive` | 0 | 0 | 0 |
+| targets under 24 px / 24–44 px | 7 / 23 | 7 / 23 | 7 / 23 |
+| links without hover feedback | 1 | 1 | 12 |
+| Blog list moved | within the header only | within the header only | within the header only |
+| judge, match: fit / overall | 4 / 4 | 4 / 4 | 3 / 3 |
+| judge pairs, both orders | lost to no skill 0–2, beat pro-max 2–0 | lost both | won both |
+| files in the diff | 3 | 3, plus 3 layouts `lint --fix` reformatted | 3 |
+| project files named before the first look | **7** | 31 | 41 |
+| where the layout file came | 3rd | 4th | 4th |
+| tool calls | **39** | 71 | 98 |
+| tokens (comparable) | **133k** | 244k | 276k |
+| wall clock | **10 min** | 18 min | 20 min |
+
+What it shows:
+
+1. **The pages are the same page.** Every measurement matches, and all three pairs were
+   decided at confidence 2, the judge's lowest, on a divider under the title. The judge's
+   scores and its pairs even disagree: no skill scores lowest and wins both its pairs.
+   There is no visual difference here to claim.
+2. **The 12 links without hover on the no-skill page are the sibling's.** The Blog list's
+   post titles have no hover style (`ListLayoutWithTags.tsx`, the title link); the unaided
+   run matched that, the other two added a hover colour the sibling lacks.
+3. **Every run found the layout by following the import**, third or fourth file, right
+   after the Blog page. The reading list's `renders` line was not what found it.
+4. **What differs is everything else read before the first look:** 7 project files
+   against 31 and 41. The unaided run read `tsconfig`, `next.config`, the ESLint and
+   Prettier configs, `postbuild.mjs` and all eleven posts; ui-ux-pro-max read most of
+   `components/` and `app/`.
+5. **ui-ux-pro-max left `lint --fix`'s reformatting of three untouched layouts in its
+   diff;** ui-craft (the 0.10.1 rule) and the unaided run reverted it.
+
+Caveats. One run per configuration. The ui-craft run is from 0.11.3, alone on the
+machine; the other two ran at the same time, and both lost screenshots to a scratch
+folder they shared and took them again, so their time and tokens are inflated by an
+amount this cannot separate. The next parallel trial gives each agent its own scratch
+folder.
+
+My grading hit the generated-file trap of this trial too: a grading script restored
+`app/tag-data.json` after the dev server had rewritten it, while the baseline had been
+rendered with the rewritten one, so both Blog lists first compared 0.3–0.8 % changed
+"within All Posts". The same protocol for baseline and runs put all three back to the
+header only.
+
+Judge cost: $1.40.
