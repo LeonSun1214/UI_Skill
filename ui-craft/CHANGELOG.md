@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.11.4 — the seventh trial: a thin sibling
+
+A fresh agent added an archive page whose sibling, the Blog list, is 29 lines
+that hand everything to a layout (`evals/notes/trial-next-7.md`). It read six
+project files before its first render, the layout among them right after the
+page the reading list pointed at, and the independent grading matched its
+report: 0 contrast failures, the Blog list changed only within the header.
+
+- SKILL.md, the compare row: a dev server that writes generated files
+  (contentlayer's indexes, codegen) can move the page between the baseline and
+  the after render; restore the generated file before each. The agent took its
+  baseline twice for this.
+
 ## 0.11.3 — where a change is
 
 - `--compare` says where the changed pixels are: the landmarks (header, nav, main's
