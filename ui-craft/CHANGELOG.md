@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.11.5 — a render in a third of the time
+
+Measured before changing anything: every phase of every viewport is now timed
+(`report.json` → `timings`; `--timings` prints them). On the Next.js blog a render took
+27.6 s, and 11 s of it was the hover probe at 1440: up to 20 links and buttons, each
+followed by a fixed 350 ms wait for transitions and 120 ms after the mouse left.
+
+- The hover probe switches transitions off while it runs and waits two animation
+  frames instead (enough for a hover state a script sets): 11 s → 3.5 s. The dark
+  pass does the same when the scheme switches (120 ms instead of 350), which also
+  stops a `transition-colors` body from being measured mid-fade.
+- The viewports render side by side, each in its own context, as they always had
+  one: the run takes as long as the slowest viewport. `--serial` for a dev server
+  that cannot take three page loads at once.
+
+| page | before | after |
+|---|---|---|
+| Next.js blog, `/projects` | 27.6 s | 10.3 s (15.3 s with `--serial`) |
+| Vite app (Sunnote), `/` | 20.6 s | 7.6 s |
+| static test page | 9.4 s | 3.8 s |
+
+Every FAIL, warning, focus count and hover finding was identical between the old run,
+the new one, a repeat, and `--serial`. Self-test: side by side and `--serial` must agree
+(26 checks); the suite runs in under two minutes.
+
 ## Evals, after 0.11.4 — the judge knows what a match task is
 
 No change to the skill. The sixth trial's judge sent every Uses page back as

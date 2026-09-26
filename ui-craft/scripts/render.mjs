@@ -55,6 +55,8 @@ const USAGE = `usage: node render.mjs <url | path/to/page.html> [options]
                        (SEL is any Playwright selector: css, text=Save, role=button[name="Delete"]). A dialog it opens
                        gets its own audit: focus inside, Tab trapped, a name, Escape closes, fits the viewport
   --compare DIR        pixel-diff every screenshot against the same-named one in DIR (a previous run)
+  --timings            print where the time went, per viewport and phase (always recorded in report.json)
+  --serial             render the viewports one after another (default: side by side, each in its own context)
   --strict             exit 1 when any viewport FAILs
 env  UI_CRAFT_CHROME   path to a Chrome/Chromium binary to use`;
 
@@ -65,7 +67,7 @@ if (!argv.length || argv.includes('--help') || argv.includes('-h')) {
   process.exit(argv.length ? 0 : 1);
 }
 const opt = { out: '.ui-craft/latest', viewports: [375, 768, 1440], wait: 500, waitFor: null, fold: true, dark: 'auto', hover: true, strict: false,
-  storageState: null, cookies: [], headers: {}, auth: null, initScript: null, mocks: [], compare: null, dismiss: null, acts: [] };
+  storageState: null, cookies: [], headers: {}, auth: null, initScript: null, mocks: [], compare: null, dismiss: null, acts: [], timings: false, serial: false };
 let target = null;
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
@@ -87,6 +89,8 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--compare') opt.compare = argv[++i];
   else if (a === '--dismiss') opt.dismiss = argv[++i];
   else if (a === '--act') opt.acts.push(argv[++i]);
+  else if (a === '--timings') opt.timings = true;
+  else if (a === '--serial') opt.serial = true;
   else if (a.startsWith('--')) { console.error(`unknown option ${a}\n${USAGE}`); process.exit(1); }
   else target = a;
 }
@@ -667,13 +671,26 @@ async function focusAudit(page, max = 30) {
 // ---------------------------------------------------- hover feedback (pointer)
 // Does each button / standalone link change *anything* visible on hover? Compared
 // on the element and its first descendants, so a group-hover arrow still counts.
+// Transitions are switched off while a state is probed, so the state reads final at once instead of
+// after a fixed wait (the hover probe spent 20 × 470 ms waiting). Two frames cover hover effects a
+// script applies (a mouseenter that sets state); the page's own transitions come back afterwards.
+const NO_TRANSITIONS = '*, *::before, *::after { transition-duration: 0s !important; transition-delay: 0s !important; }';
+const pauseTransitions = (page) => page.evaluate((css) => {
+  if (document.querySelector('style[data-ui-craft="no-transitions"]')) return;
+  const st = document.createElement('style'); st.setAttribute('data-ui-craft', 'no-transitions'); st.textContent = css;
+  (document.head || document.documentElement).appendChild(st);
+}, NO_TRANSITIONS).catch(() => {});
+const resumeTransitions = (page) => page.evaluate(() => document.querySelectorAll('style[data-ui-craft="no-transitions"]').forEach((el) => el.remove())).catch(() => {});
+
 async function hoverAudit(page, max = 20) {
   const handles = await page.$$(INTERACTIVE_SELECTOR);
   const results = [];
   let checked = 0;
+  await pauseTransitions(page);
   for (const h of handles) {
     if (checked >= max) break;
-    const info = await h.evaluate((el) => {
+    const info = await h.evaluate(async (el) => {
+      await new Promise((r) => requestAnimationFrame(r)); // the previous element's hover has cleared
       const cs = getComputedStyle(el);
       const r = el.getBoundingClientRect();
       if (cs.display === 'none' || cs.visibility === 'hidden' || r.width <= 1 || r.height <= 1) return null;
@@ -695,16 +712,16 @@ async function hoverAudit(page, max = 20) {
     checked++;
     try { await h.scrollIntoViewIfNeeded({ timeout: 1500 }); await h.hover({ timeout: 1500, force: false }); }
     catch { results.push({ ...info, hovered: false }); continue; }
-    await page.waitForTimeout(350); // let transitions finish
-    const after = await h.evaluate((el) => {
+    const after = await h.evaluate(async (el) => {
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); // script-driven hover states
       const sig = (node) => { const s = getComputedStyle(node); return [s.backgroundColor, s.color, s.borderColor, s.boxShadow, s.textDecorationLine, s.transform, s.opacity, s.outlineStyle, s.filter, s.backgroundImage].join('|'); };
       const nodes = [el, ...[...el.querySelectorAll('*')].slice(0, 6)];
       return { sig: nodes.map(sig).join('||'), cursor: getComputedStyle(el).cursor };
     });
     results.push({ ...info, hovered: true, changed: after.sig !== info.before, cursor: after.cursor });
     await page.mouse.move(0, 0);
-    await page.waitForTimeout(120);
   }
+  await resumeTransitions(page);
   await page.evaluate(() => window.scrollTo(0, 0));
   return {
     checked: results.length,
@@ -825,7 +842,9 @@ async function contactSheet(browser, outDir, folds, name = 'contact.png') {
 }
 
 // -------------------------------------------------------------------- main
+const tStart = Date.now();
 const browser = await launch();
+const tLaunched = Date.now();
 await mkdir(opt.out, { recursive: true });
 const report = { target: url, generatedAt: new Date().toISOString(), viewports: {}, summary: {} };
 let anyFail = false;
@@ -833,7 +852,9 @@ const folds = [];
 const darkFolds = [];
 const widest = Math.max(...opt.viewports);
 
-for (const width of opt.viewports) {
+async function renderViewport(width) {
+  const t0 = Date.now(); let tPrev = t0; const timings = {};
+  const lap = (name) => { const now = Date.now(); timings[name] = (timings[name] || 0) + (now - tPrev); tPrev = now; };
   const height = width < 600 ? 812 : width < 1000 ? 1024 : 900;
   const context = await browser.newContext({
     viewport: { width, height }, deviceScaleFactor: 2,
@@ -894,9 +915,12 @@ for (const width of opt.viewports) {
   });
 
   let loadError = null;
+  lap('setup');
   try {
     await page.goto(url, { waitUntil: 'load', timeout: 30000 });
+    lap('load');
     await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+    lap('networkidle');
     if (opt.waitFor) await page.waitForSelector(opt.waitFor, { timeout: 30000 });
   } catch (e) { loadError = String(e.message).split('\n')[0]; }
   if (!loadError) await dismiss(page, opt.dismiss);
@@ -915,10 +939,15 @@ for (const width of opt.viewports) {
   }
 
   const key = String(width);
+  lap('settle');
   const audit = loadError ? null : await page.evaluate(domAudit, INTERACTIVE_SELECTOR);
+  lap('audit');
   const dialog = loadError ? null : await dialogAudit(page, opt.acts.length > 0); // before the focus audit moves focus
+  lap('dialog');
   const focus = loadError ? null : await focusAudit(page);
+  lap('focus');
   const hover = (!loadError && opt.hover && width === widest) ? await hoverAudit(page) : null;
+  lap('hover');
   if (!loadError) await page.evaluate(() => window.scrollTo(0, 0));
   await page.waitForTimeout(100);
   if (opt.fold) {
@@ -927,15 +956,17 @@ for (const width of opt.viewports) {
     folds.push({ width, height, path: foldPath });
   }
   await page.screenshot({ path: join(opt.out, `${key}-full.png`), fullPage: true });
+  lap('screenshots');
 
   // --- dark-mode pass: only when the page has a dark rule (or --dark). Same audit, new colours.
   recordRequests = false;
   let dark = null;
   const wantDark = !loadError && opt.dark !== 'skip' && (opt.dark === 'force' || (audit && audit.darkSupport.any));
   if (wantDark) {
+    await pauseTransitions(page); // a body with transition-colors would otherwise be measured mid-fade
     await page.emulateMedia({ colorScheme: 'dark' });
     if (audit && audit.darkSupport.class) await page.evaluate(() => document.documentElement.classList.add('dark'));
-    await page.waitForTimeout(350);
+    await page.waitForTimeout(120);
     let dAudit = await page.evaluate(domAudit, INTERACTIVE_SELECTOR);
     // A page that reads matchMedia once at boot and sets data-theme / a class from it never sees the
     // emulation above. If the colours did not move, load it again under the dark scheme, the way a
@@ -983,7 +1014,9 @@ for (const width of opt.viewports) {
     };
     await page.emulateMedia({ colorScheme: 'light' });
   }
+  lap('dark');
   if (dialog) dialog.escapeCloses = await dialogEscape(page); // last: it closes the dialog
+  lap('dialog');
 
   const fails = [], warns = [];
   if (loadError) fails.push(`load error: ${loadError}`);
@@ -1047,13 +1080,27 @@ for (const width of opt.viewports) {
     console: consoleErrors.slice(0, 20), failedRequests: failedRequests.slice(0, 20), httpErrors: httpErrors.slice(0, 20), requests: requests.slice(0, 40),
     audit, focus, hover, dark, dialog, acts: opt.acts, actErrors, darkActErrors,
     screenshots: { fold: opt.fold ? `${key}-fold.png` : null, full: `${key}-full.png`, darkFold: dark && dark.screenshot },
+    timings,
   };
   await context.close();
+  lap('close');
+  timings.total = Date.now() - t0;
 }
+// Each viewport has its own context, so they render side by side: the run takes as long as the
+// slowest one instead of the sum. --serial for a dev server that cannot take three at once.
+{
+  const queue = [...opt.viewports];
+  const jobs = opt.serial ? 1 : Math.min(3, queue.length);
+  await Promise.all(Array.from({ length: jobs }, async () => { while (queue.length) await renderViewport(queue.shift()); }));
+  folds.sort((a, b) => a.width - b.width);
+  darkFolds.sort((a, b) => a.width - b.width);
+}
+const tViewports = Date.now();
 if (folds.length) await contactSheet(browser, opt.out, folds);
 if (opt.compare) report.compare = await compareRuns(browser, opt.out, opt.compare, report.viewports);
 if (darkFolds.length) await contactSheet(browser, opt.out, darkFolds, 'contact-dark.png');
 await browser.close();
+report.timings = { launch: tLaunched - tStart, viewports: tViewports - tLaunched, sheetsAndCompare: Date.now() - tViewports, total: Date.now() - tStart };
 
 report.summary = {
   status: anyFail ? 'FAIL' : 'PASS',
@@ -1197,6 +1244,15 @@ const specs = [
       L.push(`- Compared with ${report.compare.baseline}: ${changed.length ? changed.map(([n, f]) => `${n.replace('.png', '')} ${describeChange(f)}`).join(' · ') : `all ${fs_.length} screenshots identical`}${errLine}`);
     }
     console.log(`\nVerified (render.mjs · ${opt.out}):\n${L.join('\n')}`);
+  }
+}
+if (opt.timings) {
+  const T = report.timings;
+  console.log(`\ntimings (s): total ${(T.total / 1000).toFixed(1)} · launch ${(T.launch / 1000).toFixed(1)} · viewports ${(T.viewports / 1000).toFixed(1)} · contact sheets and compare ${(T.sheetsAndCompare / 1000).toFixed(1)}`);
+  for (const [k, v] of Object.entries(report.viewports)) {
+    if (!v.timings) continue;
+    const parts = Object.entries(v.timings).filter(([n, ms]) => n !== 'total' && ms >= 50).sort((a, b) => b[1] - a[1]);
+    console.log(`  ${k.padEnd(5)} ${(v.timings.total / 1000).toFixed(1)} — ${parts.map(([n, ms]) => `${n} ${(ms / 1000).toFixed(1)}`).join(' · ')}`);
   }
 }
 console.log(`  full report: ${join(opt.out, 'report.json')}`);

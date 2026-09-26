@@ -8,7 +8,7 @@ description: >-
 
 # ui-craft
 
-Version 0.11.4. (An older copy of this file means the installed skill is behind the
+Version 0.11.5. (An older copy of this file means the installed skill is behind the
 repository: re-run `install.sh`; `doctor.mjs` says when that is the case.)
 
 UI work has a gap that code review can't close: the first draft always has two or
@@ -231,7 +231,9 @@ rendered automatically when the page has a `prefers-color-scheme: dark` rule or
 `.dark` class styles) · `--no-hover` · `--wait <ms>` · `--act STEP` (repeatable: what a
 person does before the state you want measured — `click:SEL`, `type:SEL=TEXT`,
 `press:KEY`, `hover:SEL`, `focus:SEL`, `select:SEL=VALUE`, `wait:MS|SEL`; SEL is any
-Playwright selector, `text=Save` and `role=button[name="Delete"]` included).
+Playwright selector, `text=Save` and `role=button[name="Delete"]` included) ·
+`--serial` (the viewports render side by side by default; one at a time for a dev
+server that cannot take three page loads at once).
 
 It writes `contact.png` (all viewports above the fold, one image), `contact-dark.png`
 when dark mode was rendered, `<w>-fold.png`, `<w>-full.png`, `<w>-dark-fold.png`, and

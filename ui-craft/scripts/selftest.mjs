@@ -84,6 +84,15 @@ try {
     expect(!lines.some((l) => /^\s*(375|600):\s*$/.test(l)), 'a per-viewport block was printed');
     return `${lines.filter((l) => /^\s{6}\S/.test(l)).length} finding lines, one block`;
   });
+  await check('viewports side by side agree with --serial', async () => {
+    const vps = ['--viewports', '375,600,1024'];
+    const par = await render(join(pages, 'instruments.html'), join(work, 'inst-par'), ...vps);
+    const ser = await render(join(pages, 'instruments.html'), join(work, 'inst-ser'), ...vps, '--serial');
+    const sig = (r) => JSON.stringify(Object.entries(r.viewports).map(([k, x]) => [k, x.fails, x.warns, x.focus && x.focus.tabbed, x.hover && x.hover.noHoverFeedback]));
+    expect(sig(par) === sig(ser), `side by side and serial differ:\n${sig(par)}\n${sig(ser)}`);
+    expect(par.timings && par.viewports['375'].timings && par.viewports['375'].timings.total > 0, 'timings missing from report.json');
+    return `3 viewports, same findings · ${(par.timings.viewports / 1000).toFixed(1)} s side by side, ${(ser.timings.viewports / 1000).toFixed(1)} s serial`;
+  });
   await check('instruments: clean button stays clean', () => {
     const names = [...v(inst).audit.nonText.failures, ...v(inst).focus.lowContrastRing.map((s) => ({ selector: s }))].map((x) => x.selector).join(' ');
     expect(!/OK button/.test(names), `the OK button was flagged: ${names}`);
