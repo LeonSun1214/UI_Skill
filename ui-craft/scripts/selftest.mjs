@@ -246,6 +246,34 @@ try {
     return `${text.join(' and ')} fail, the tab on the indicator passes, the photo is unverifiable · ${fields[0].selector} via ring · faint rings: ${faint}`;
   });
 
+  // 3g. Angular Material's ways of showing focus, its theme class and its scrolling pane (see
+  // evals/notes/stacks-angular.md): a field's frame beside the input, a state-layer tint, a strong
+  // indicator on a child's ::before; a field that turns invalid on blur must not reach the screenshots
+  await check('material: frames, tints and inner rings', async () => {
+    const r = await render(`${base}/material.html`, join(work, 'material'));
+    const f = v(r).focus, d = v(r).dark, w = v(r).walk;
+    const faint = f.lowContrastRing.join(' | ');
+    expect(f.invisible.length === 0, `focus read as invisible: ${JSON.stringify(f.invisible)}`);
+    expect(/field-faint \(border of its frame/.test(faint), `the faint frame was not measured: ${faint}`);
+    expect(!/field-ok/.test(faint), `the strong frame was flagged: ${faint}`);
+    expect(/tint-btn \(tint on an inner layer/.test(faint), `the tint-only button was not flagged: ${faint}`);
+    expect(!/strong-btn|deep-btn/.test(faint), `a strong inner ring was flagged: ${faint}`);
+    expect(f.lowContrastRing.length === 2, `expected the faint frame and the tint alone: ${faint}`);
+    expect(d && (d.classes || []).includes('theme-dark') && d.themeChanged, `the .theme-dark class was not used: ${JSON.stringify(d && { classes: d.classes, themeChanged: d.themeChanged })}`);
+    expect(w && w.touchedForms && d.reloadedForForms, `the field left invalid by the walk did not send the dark pass to a fresh load: ${JSON.stringify({ walk: w, reloaded: d && d.reloaded })}`);
+    expect(w.scrollRestored >= 1, `the pane scrolled by the walk was not put back: ${JSON.stringify(w)}`);
+    return `faint: ${faint} · dark via .theme-dark, reloaded for the touched field · ${w.scrollRestored} pane put back`;
+  });
+  await check('--dark-storage switches through the app', async () => {
+    const a = await render(`${base}/stored-theme.html`, join(work, 'st0'));
+    expect(!v(a).dark, 'a dark pass ran with nothing to switch it');
+    const b = await render(`${base}/stored-theme.html`, join(work, 'st1'), '--dark-storage', 'look=night');
+    const d = v(b).dark;
+    expect(d && d.themeChanged && (d.storage || []).join() === 'look=night', `the stored choice did not switch the theme: ${JSON.stringify(d && { themeChanged: d.themeChanged, storage: d.storage })}`);
+    expect(/switched through the app's own storage \(look=night\)/.test(b.stdout), 'the output does not say how it switched');
+    return `without: no dark pass · with: bg ${v(b).audit.pageColors.background} → ${d.pageColors.background}`;
+  });
+
   await check('--dismiss Escape lifts the splash', async () => {
     const a = await render(`${base}/splash.html`, join(work, 's0'));
     const b = await render(`${base}/splash.html`, join(work, 's1'), '--dismiss', 'Escape');

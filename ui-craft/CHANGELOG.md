@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.14.0 — Angular
+
+The third web stack after SvelteKit and Astro, and the first whose pages are not files:
+an Angular page is a component a route table names, its children are elements named by
+selector, and what stands before it is a guard in that table. On five projects the
+inspector found no pages and no routes, counted no components, called an Angular
+Material app greenfield and named its dark class `.dark` when it was `.dark-theme`.
+Rendering them showed the renderer wrong about Material in four ways. Checked on a demo
+built with the CLI and Material's schematics, the RealWorld example (plain CSS, default
+exports), ng-matero (Material M3, path aliases, a guard, an in-browser API), TailAdmin's
+Angular dashboard (Angular 22, Tailwind) and an Angular 12 NgModule starter (Material
+M2). Notes: `evals/notes/stacks-angular.md`.
+
+- `inspect.py`, Angular: the route table from `provideRouter` or `RouterModule.forRoot`,
+  followed through `loadComponent`, `loadChildren` (a routes file, its default export, or
+  an NgModule's `forChild`) and `children`, with tsconfig path aliases and barrels
+  resolved. One line per page: its route, its template (file or inline), its signals,
+  the elements it uses, the layout whose `<router-outlet>` holds it, and the requests it
+  makes through its services (`data: GET /api/stats (Orders.stats)`). Also the root
+  component and each layout with its chrome; each guard with the pages it covers, where
+  it redirects and the storage key of the session it reads; interceptors that rewrite
+  the base URL; an in-browser API (`angular-in-memory-web-api`); the proxy file; a global
+  stylesheet `angular.json` lists that is not on disk (a git submodule). Components by
+  selector with their inputs and outputs replace "imported most"; the vocabulary leaves
+  out component-scoped stylesheets and Material's own classes. The Angular Material
+  theme: M3 `mat.theme` or M2 palettes, typography, density, several themes, overrides,
+  its components by use and the `--mat-sys-*` uses. The dark class (named like a theme,
+  setting `color-scheme: dark`, or wrapping a Material dark theme) and the service that
+  sets it, with the flag to render dark through it.
+- `inspect.py`, every stack: test files no longer count as importers ("imported most" on
+  Sunnote dropped by a few per module); `localStorage['key']` is read as a storage key;
+  the css v1 Google Fonts syntax (`family=A|B`) names every family; an icon font from
+  Google Fonts is reported as one; PrimeNG, NG-ZORRO, Taiga UI, Clarity and other Angular
+  kits are named.
+- `render.mjs`, the screenshots: taken before the Tab and hover walks. A form that
+  validates on blur (Angular's touched fields) was drawn in its error state. When a walk
+  leaves fields invalid, the dark pass measures a fresh load. A walk that scrolled a
+  container (Material's `mat-sidenav-content`) is scrolled back, so the dark screenshot
+  starts at the top.
+- `render.mjs`, focus: a ring drawn beside the control (the outline pieces of a Material
+  field, `border of its frame`) or on an inner layer (Material's strong focus indicator,
+  `ring on an inner layer`) is found and measured; a focus shown only as a tint on an
+  inner layer (Material's default state layer, about 1.2:1) is reported as `tint on an
+  inner layer`, a faint ring. Hover reads the pseudo-elements of the control's inner
+  layers, where Material draws its hover.
+- `render.mjs`, dark mode: theme classes besides `.dark` (`.dark-theme`, `.theme-dark`,
+  `.dark-mode`, a class that sets `color-scheme: dark`, a prefixed theme root such as
+  `.my-app-dark`), each put where its selector says, and `color-scheme: light dark`
+  counted as dark support. A widget's own dark variant (`.apexcharts-theme-dark`) is not
+  a page theme. `--dark-storage KEY=VALUE` renders dark through the app's own stored
+  choice. When the dark pass leaves the background where it was, the output suggests it.
+- `render.mjs`, fonts: a font stylesheet that did not load (a blocked host) is named on
+  the `fonts:` line, with its effect (fallback faces, icon names in place of icons);
+  failed requests repeated by a reload are counted once.
+- `references/stacks/angular.md`: where things are, Angular Material (its theme, dark
+  mode, its faint focus and the one-line fix, icon ligatures), serving (guards, proxies,
+  touched forms, the Node version the Angular 22 CLI needs), checks.
+- CI runs the inspector on an Angular fixture (15 assertions); the self-test gains a
+  Material page (frames, tints, inner rings, a touched field, the theme class, a scrolling
+  pane) and a stored-theme page (30 checks).
+
 ## 0.13.0 — SvelteKit and Astro
 
 The first of the web stacks ui-craft did not read. The render loop already worked on

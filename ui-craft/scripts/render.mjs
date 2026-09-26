@@ -40,6 +40,8 @@ const USAGE = `usage: node render.mjs <url | path/to/page.html> [options]
   --wait MS            extra settle time after load (default 500)
   --no-fold            skip the above-the-fold screenshots and contact sheets
   --dark / --no-dark   force or skip the dark-mode pass (default: auto — when the page has a dark rule)
+  --dark-storage K=V   for the dark pass, set localStorage K to V and reload: the app's own theme switch, for an
+                       app whose theme service does more than a class on <html> (repeatable; implies --dark)
   --no-hover           skip the hover-feedback probe (done at the widest viewport only)
   --wait-for SEL       wait for a CSS selector before measuring (SPA hydration, data loading)
   --storage-state F    Playwright storage state JSON (cookies + localStorage) — a logged-in session; see login-state.mjs
@@ -67,7 +69,8 @@ if (!argv.length || argv.includes('--help') || argv.includes('-h')) {
   process.exit(argv.length ? 0 : 1);
 }
 const opt = { out: '.ui-craft/latest', viewports: [375, 768, 1440], wait: 500, waitFor: null, fold: true, dark: 'auto', hover: true, strict: false,
-  storageState: null, cookies: [], headers: {}, auth: null, initScript: null, mocks: [], compare: null, dismiss: null, acts: [], timings: false, serial: false };
+  storageState: null, cookies: [], headers: {}, auth: null, initScript: null, mocks: [], compare: null, dismiss: null, acts: [], timings: false, serial: false,
+  darkStorage: [] };
 let target = null;
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
@@ -91,6 +94,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--act') opt.acts.push(argv[++i]);
   else if (a === '--timings') opt.timings = true;
   else if (a === '--serial') opt.serial = true;
+  else if (a === '--dark-storage') { const v = argv[++i] || ''; const k = v.indexOf('='); if (k > 0) opt.darkStorage.push([v.slice(0, k), v.slice(k + 1)]); }
   else if (a.startsWith('--')) { console.error(`unknown option ${a}\n${USAGE}`); process.exit(1); }
   else target = a;
 }
@@ -448,7 +452,16 @@ function domAudit(INTERACTIVE) {
   }
 
   // --- stylesheet scan: reduced-motion rule, dark-mode support
-  let reducedMotionRule = false, darkMedia = false, darkClass = false, darkAttr = false;
+  let reducedMotionRule = false, darkMedia = false, darkClass = false, darkAttr = false, darkScheme = false;
+  // A theme class: .dark, or one named like a theme (.dark-theme, .theme-dark, .dark-mode), or any class whose
+  // rule sets `color-scheme: dark` (Angular Material's light-dark() colours follow it). A prefixed name
+  // (.my-app-dark, .apexcharts-theme-dark) counts only when its rule is a theme root: it sets custom properties
+  // or `color-scheme`; a widget's own dark variant does not. Each is put where its selector says: `body.x` on
+  // <body>, everything else on <html>.
+  const THEME_CLASS = /^(?:dark|dark[-_](?:theme|mode|scheme)|(?:theme|mode|scheme|is)[-_]dark)$/i;
+  const PREFIXED_THEME = /^[\w-]+[-_](?:theme|mode|scheme|app)[-_]dark$|^app[-_]dark$/i;
+  const themeRoot = (style) => { if (!style) return false; if (style.colorScheme) return true; for (let i = 0; i < style.length; i++) if (style[i].startsWith('--')) return true; return false; };
+  const darkClasses = new Map();
   const scan = (rules) => {
     for (const rule of rules) {
       if (rule.media) {
@@ -456,7 +469,16 @@ function domAudit(INTERACTIVE) {
         if (/prefers-reduced-motion/i.test(mt)) reducedMotionRule = true;
         if (/prefers-color-scheme\s*:\s*dark/i.test(mt)) darkMedia = true;
       }
-      if (rule.selectorText && /(^|[\s,>+~(])\.dark(\b|\\:)/.test(rule.selectorText)) darkClass = true;
+      if (rule.selectorText && /(^|[\s,>+~(])\.dark(\b|\\:)/.test(rule.selectorText)) { darkClass = true; darkClasses.set('dark', 'html'); }
+      if (rule.selectorText) {
+        const scheme = (rule.style && rule.style.colorScheme) || '';
+        for (const part of rule.selectorText.split(',')) {
+          const m = part.trim().match(/^(html|body|:root)?\.([\w-]+)(?=$|[\s>+~])/);
+          if (m && (THEME_CLASS.test(m[2]) || (PREFIXED_THEME.test(m[2]) && themeRoot(rule.style)) || (/\bdark\b/.test(scheme) && !/\blight\b/.test(scheme)))) darkClasses.set(m[2], m[1] === 'body' ? 'body' : 'html');
+        }
+        // `color-scheme: light dark` on the root: the OS scheme picks the colours, and emulating it is the switch.
+        if (/\blight\b/.test(scheme) && /\bdark\b/.test(scheme) && /^(html|:root|body)$/.test(rule.selectorText.trim())) darkScheme = true;
+      }
       // A theme chosen by a script at boot and written to an attribute: the rule names one theme
       // (either one — some key the light theme and default to dark), so the pass has to be
       // tried and its effect measured rather than assumed.
@@ -468,7 +490,8 @@ function domAudit(INTERACTIVE) {
   let animatedElements = 0;
   for (const el of all) { const cs = getComputedStyle(el); if (cs.animationName && cs.animationName !== 'none') animatedElements++; }
   const motion = { reducedMotionRule, animatedElements };
-  const darkSupport = { media: darkMedia, class: darkClass, attr: darkAttr, any: darkMedia || darkClass || darkAttr };
+  darkClass = darkClass || darkClasses.size > 0;
+  const darkSupport = { media: darkMedia, class: darkClass, classes: [...darkClasses], attr: darkAttr, scheme: darkScheme, any: darkMedia || darkClass || darkAttr || darkScheme };
 
   // --- fonts
   // One entry per family, best status wins (a family has one face per weight/style; "loaded"
@@ -698,7 +721,43 @@ async function focusAudit(page, max = 30) {
     window.scrollTo(0, 0);
     const els = [...document.querySelectorAll(selector)].filter(visible);
     els.forEach((el, i) => el.setAttribute('data-uic-idx', String(i)));
-    return els.map((el) => ({ selector: short(el), ...snap(el) }));
+    // A field can draw its focus on elements beside it, not on itself or a parent: Material's outlined
+    // field thickens and recolours the three pieces of its notched outline. Keep, per control, the
+    // bordered elements around it (within its third parent) and its own inner layers (a button's state
+    // layer, a tint on a child's ::before), so the walk can see which of them changed.
+    const frameOf = (el) => {
+      const r = el.getBoundingClientRect(), chain = new Set();
+      for (let n = el; n; n = n.parentElement) chain.add(n);
+      let top = el; for (let k = 0; k < 3 && top.parentElement && top.parentElement !== document.body; k++) top = top.parentElement;
+      const out = []; let seen = 0;
+      for (const n of top.querySelectorAll('*')) {
+        if (++seen > 400 || out.length >= 24) break;
+        if (chain.has(n) || el.contains(n)) continue;
+        const q = n.getBoundingClientRect();
+        if ((q.width || q.height) && q.right >= r.left - 12 && q.left <= r.right + 12 && q.bottom >= r.top - 12 && q.top <= r.bottom + 12) out.push(n);
+      }
+      return out;
+    };
+    window.__uicFrame = els.map(frameOf);
+    window.__uicLayers = els.map((el) => [el, ...[...el.querySelectorAll('*')].slice(0, 12)]);
+    const frameSig = (n) => { const s = getComputedStyle(n); const side = (w, st, c) => (parseFloat(w) > 0 && st !== 'none' ? `${c} ${w}` : '0'); return `${side(s.borderTopWidth, s.borderTopStyle, s.borderTopColor)} ${side(s.borderBottomWidth, s.borderBottomStyle, s.borderBottomColor)} ${side(s.borderLeftWidth, s.borderLeftStyle, s.borderLeftColor)}|${s.outlineStyle === 'none' ? 'none' : `${s.outlineStyle} ${s.outlineWidth} ${s.outlineColor}`}|${s.boxShadow}`; };
+    // An inner layer's pseudo-elements: its tint (a state layer) and any ring it draws (Material's strong
+    // focus indicator is a border on a child's ::before, shown only on keyboard focus).
+    const layerState = (n) => ['::before', '::after'].map((ps) => {
+      const s = getComputedStyle(n, ps);
+      if (s.content === 'none') return null;
+      const shown = s.display !== 'none' && s.visibility !== 'hidden';
+      return {
+        bg: s.backgroundColor, op: s.opacity, shown,
+        border: shown && parseFloat(s.borderTopWidth) > 0 && s.borderTopStyle !== 'none' ? s.borderTopColor : null,
+        outline: shown && s.outlineStyle !== 'none' && parseFloat(s.outlineWidth) > 0 ? s.outlineColor : null,
+        shadow: shown ? s.boxShadow : 'none',
+      };
+    });
+    window.__uicFrameSig = frameSig; window.__uicLayerState = layerState;
+    window.__uicFrameBase = window.__uicFrame.map((ns) => ns.map(frameSig));
+    window.__uicLayerBase = window.__uicLayers.map((ns) => ns.map(layerState));
+    return els.map((el, i) => ({ selector: short(el), ...snap(el) }));
   }, INTERACTIVE_SELECTOR);
 
   const results = [];
@@ -788,9 +847,60 @@ async function focusAudit(page, max = 30) {
         else if (shadowColors(s.boxShadow).length) { c = best(shadowColors(s.boxShadow).map((x) => contrastOn(x, bg))); via = 'box-shadow on a parent'; }
         return via ? { via, contrast: c === null ? null : +c.toFixed(2) } : null;
       });
+      const idx = +el.getAttribute('data-uic-idx');
+      const frameNodes = (window.__uicFrame || [])[idx] || [], layerNodes = (window.__uicLayers || [])[idx] || [];
+      const frame = window.__uicFrameSig ? frameNodes.map(window.__uicFrameSig) : [];
+      const layers = window.__uicLayerState ? layerNodes.map(window.__uicLayerState) : [];
+      // The frame's ring: the best-contrast border / outline / shadow among the frame elements, against what they sit on.
+      const frameRing = (changedAt) => {
+        const vals = changedAt.map((k) => {
+          const n = frameNodes[k], s = getComputedStyle(n), bg = bgFrom(n.parentElement);
+          const sides = [['Top', s.borderTopWidth, s.borderTopStyle, s.borderTopColor], ['Bottom', s.borderBottomWidth, s.borderBottomStyle, s.borderBottomColor], ['Left', s.borderLeftWidth, s.borderLeftStyle, s.borderLeftColor]];
+          const cs2 = sides.filter(([, w, st]) => parseFloat(w) > 0 && st !== 'none').map(([, , , c]) => contrastOn(toRGBA(c), bg));
+          if (!/^none/.test(s.outlineStyle) && parseFloat(s.outlineWidth) > 0) cs2.push(contrastOn(toRGBA(s.outlineColor), bg));
+          cs2.push(...shadowColors(s.boxShadow).map((c) => contrastOn(c, bg)));
+          return best(cs2);
+        });
+        const v = best(vals);
+        return v === null ? null : +v.toFixed(2);
+      };
+      // A ring that appears on an inner layer (a border or outline on a child's pseudo-element), against the page
+      // behind the control; and a tint that fades in on one (a state layer): how far it moves the control's colour.
+      const innerRing = (changedAt, before) => {
+        const vals = changedAt.flatMap((k) => (layers[k] || []).map((now, j) => {
+          const was = (before[k] || [])[j];
+          if (!now || !now.shown) return null;
+          const cands = [];
+          if (now.border && (!was || !was.shown || was.border !== now.border)) cands.push(contrastOf(toRGBA(now.border)));
+          if (now.outline && (!was || !was.shown || was.outline !== now.outline)) cands.push(contrastOf(toRGBA(now.outline)));
+          if (now.shadow !== 'none' && (!was || !was.shown || was.shadow !== now.shadow)) cands.push(...shadowColors(now.shadow).map(contrastOf));
+          return best(cands);
+        }));
+        const v = best(vals);
+        return v === null ? null : +v.toFixed(2);
+      };
+      const tint = (changedAt, before) => {
+        const base = bgFrom(el);
+        if (!base) return null;
+        const vals = changedAt.flatMap((k) => (layers[k] || []).map((now, j) => {
+          const was = (before[k] || [])[j];
+          if (!now) return null;
+          const c = toRGBA(now.bg), p = was ? toRGBA(was.bg) : null;
+          if (!c) return null;
+          const a = { ...c, a: now.shown ? c.a * +now.op : 0 }, b0 = p && was.shown ? { ...p, a: p.a * +was.op } : { r: 0, g: 0, b: 0, a: 0 };
+          return ratio(over(a, base), over(b0, base));
+        }));
+        const v = best(vals);
+        return v === null ? null : +v.toFixed(2);
+      };
+      const fBase = (window.__uicFrameBase || [])[idx] || [], lBase = (window.__uicLayerBase || [])[idx] || [];
+      const frameAt = frame.map((s, k) => (s !== fBase[k] ? k : -1)).filter((k) => k >= 0);
+      const layerAt = layers.map((s, k) => (JSON.stringify(s) !== JSON.stringify(lBase[k]) ? k : -1)).filter((k) => k >= 0);
       return {
         pseudo: pseudoSig, pseudoRing, anc, ancRing,
-        idx: +el.getAttribute('data-uic-idx'), obscured, obscuredBy: obscured ? (onTop.tagName.toLowerCase() + (onTop.id ? '#' + onTop.id : '')) : null,
+        frameChanged: frameAt.length > 0, frameContrast: frameAt.length ? frameRing(frameAt) : null,
+        layersChanged: layerAt.length > 0, innerRing: layerAt.length ? innerRing(layerAt, lBase) : null, tintContrast: layerAt.length ? tint(layerAt, lBase) : null,
+        idx, obscured, obscuredBy: obscured ? (onTop.tagName.toLowerCase() + (onTop.id ? '#' + onTop.id : '')) : null,
         outline: `${cs.outlineStyle} ${cs.outlineWidth}`, boxShadow: cs.boxShadow, borderColor: cs.borderColor, background: cs.backgroundColor, color: cs.color,
         ringVia, ringContrast, borderContrast,
       };
@@ -810,13 +920,19 @@ async function focusAudit(page, max = 30) {
       ancChanged = true;
       if (cur.ancRing[k] && ringPart(cur.anc[k]) !== ringPart(b.anc[k])) { ancAt = k; break; }
     }
-    const changed = cur.outline !== b.outline || ['boxShadow', 'borderColor', 'background', 'color'].some((k) => cur[k] !== b[k]) || pseudoChanged || ancChanged;
+    const changed = cur.outline !== b.outline || ['boxShadow', 'borderColor', 'background', 'color'].some((k) => cur[k] !== b[k]) || pseudoChanged || ancChanged
+      || cur.frameChanged || cur.layersChanged;
     // A shadow that was there before focus (a drop shadow) is not the ring: focus showed as something else.
     const elementRing = cur.ringVia && (cur.ringVia !== 'box-shadow' || cur.boxShadow !== b.boxShadow);
     const usePseudo = !elementRing && pseudoChanged && cur.pseudoRing;
     const useParent = !elementRing && !usePseudo && ancAt >= 0;
     let ringVia = usePseudo ? cur.pseudoRing.via : useParent ? cur.ancRing[ancAt].via : elementRing ? cur.ringVia : null;
     let ringContrast = usePseudo ? cur.pseudoRing.contrast : useParent ? cur.ancRing[ancAt].contrast : elementRing ? cur.ringContrast : null;
+    if (!ringVia && cur.frameChanged && cur.frameContrast !== null) { ringVia = 'border of its frame'; ringContrast = cur.frameContrast; }
+    else if (!ringVia && cur.layersChanged && cur.innerRing !== null) { ringVia = 'ring on an inner layer'; ringContrast = cur.innerRing; }
+    else if (!ringVia && cur.layersChanged && cur.tintContrast !== null && cur.outline === b.outline && cur.borderColor === b.borderColor) {
+      ringVia = 'tint on an inner layer'; ringContrast = cur.tintContrast;
+    }
     // A field that shows focus by recolouring its border, often with a faint glow: the border counts too.
     if (cur.borderColor !== b.borderColor && cur.borderContrast !== null && (!ringVia || (ringContrast !== null && cur.borderContrast > ringContrast))) {
       ringVia = ringVia ? `${ringVia} and border` : 'border'; ringContrast = cur.borderContrast;
@@ -824,6 +940,7 @@ async function focusAudit(page, max = 30) {
     results.push({ selector: b.selector, visible: outlineVisible || changed, obscured: cur.obscured, obscuredBy: cur.obscuredBy, ringVia, ringContrast });
   }
   await page.evaluate(() => {
+    for (const k of ['__uicFrame', '__uicLayers', '__uicFrameSig', '__uicLayerState', '__uicFrameBase', '__uicLayerBase']) delete window[k];
     document.querySelectorAll('[data-uic-idx]').forEach((el) => el.removeAttribute('data-uic-idx'));
     if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur(); // no focus ring in screenshots
   });
@@ -877,7 +994,7 @@ async function hoverAudit(page, max = 20) {
       // An underline that appears by colour (decoration-transparent → decoration-primary) or grows on a
       // pseudo-element (::after scale-x-0 → scale-x-100) is hover feedback too.
       const look = (s) => [s.backgroundColor, s.color, s.borderColor, s.boxShadow, s.textDecorationLine, s.textDecorationColor, s.textDecorationThickness, s.textUnderlineOffset, s.transform, s.opacity, s.outlineStyle, s.filter, s.backgroundImage].join('|');
-      const sig = (node) => look(getComputedStyle(node)) + (node === el ? ['::before', '::after'].map((ps) => { const p = getComputedStyle(node, ps); return p.content === 'none' ? '' : `|${ps}|${look(p)}|${p.width}|${p.height}`; }).join('') : '');
+      const sig = (node) => look(getComputedStyle(node)) + ['::before', '::after'].map((ps) => { const p = getComputedStyle(node, ps); return p.content === 'none' ? '' : `|${ps}|${look(p)}|${p.width}|${p.height}`; }).join('');
       const nodes = [el, ...[...el.querySelectorAll('*')].slice(0, 6)];
       let s = el.tagName.toLowerCase(); if (el.id) s += '#' + el.id; const t = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 28); if (t) s += ` "${t}"`;
       return { selector: s, before: nodes.map(sig).join('||'), cursor: cs.cursor, isButton, y: r.top + window.scrollY };
@@ -891,7 +1008,7 @@ async function hoverAudit(page, max = 20) {
       // An underline that appears by colour (decoration-transparent → decoration-primary) or grows on a
       // pseudo-element (::after scale-x-0 → scale-x-100) is hover feedback too.
       const look = (s) => [s.backgroundColor, s.color, s.borderColor, s.boxShadow, s.textDecorationLine, s.textDecorationColor, s.textDecorationThickness, s.textUnderlineOffset, s.transform, s.opacity, s.outlineStyle, s.filter, s.backgroundImage].join('|');
-      const sig = (node) => look(getComputedStyle(node)) + (node === el ? ['::before', '::after'].map((ps) => { const p = getComputedStyle(node, ps); return p.content === 'none' ? '' : `|${ps}|${look(p)}|${p.width}|${p.height}`; }).join('') : '');
+      const sig = (node) => look(getComputedStyle(node)) + ['::before', '::after'].map((ps) => { const p = getComputedStyle(node, ps); return p.content === 'none' ? '' : `|${ps}|${look(p)}|${p.width}|${p.height}`; }).join('');
       const nodes = [el, ...[...el.querySelectorAll('*')].slice(0, 6)];
       return { sig: nodes.map(sig).join('||'), cursor: getComputedStyle(el).cursor };
     });
@@ -1019,6 +1136,14 @@ async function contactSheet(browser, outDir, folds, name = 'contact.png') {
   await page.close();
 }
 
+/** Hosts of font stylesheets or font files whose requests failed, and whether one was an icon font. */
+function fontHostsFailed(report) {
+  const lines = Object.values(report.viewports).flatMap((v) => v.failedRequests || [])
+    .filter((l) => /fonts\.(googleapis|gstatic)\.com|use\.typekit\.net|fonts\.bunny\.net|\.(woff2?|ttf|otf)(\?|$)/i.test(l));
+  const hosts = [...new Set(lines.map((l) => { try { return new URL(l.split(' ').pop()).host; } catch { return null; } }).filter(Boolean))];
+  return { hosts, icons: lines.some((l) => /Material\+(Icons|Symbols)|icon\?family=/i.test(l)) };
+}
+
 // -------------------------------------------------------------------- main
 const tStart = Date.now();
 const browser = await launch();
@@ -1086,7 +1211,8 @@ async function renderViewport(width) {
   page.on('requestfailed', (r) => {
     const why = r.failure()?.errorText || 'failed';
     if (why === 'net::ERR_ABORTED') return; // cut short by a navigation of ours (reload, next viewport), not a failure of the page
-    failedRequests.push(`${why} ${r.url().slice(0, 120)}`);
+    const line = `${why} ${r.url().slice(0, 120)}`;
+    if (!failedRequests.includes(line)) failedRequests.push(line);
   });
   page.on('response', (r) => {
     if (r.status() >= 400 && !/\/favicon\.ico(\?|$)/.test(r.url())) httpErrors.push(`${r.status()} ${r.url().slice(0, 120)}`);
@@ -1129,12 +1255,8 @@ async function renderViewport(width) {
   lap('settle');
   const audit = loadError ? null : await page.evaluate(domAudit, INTERACTIVE_SELECTOR);
   lap('audit');
-  const dialog = loadError ? null : await dialogAudit(page, opt.acts.length > 0); // before the focus audit moves focus
-  lap('dialog');
-  const focus = loadError ? null : await focusAudit(page);
-  lap('focus');
-  const hover = (!loadError && opt.hover && width === widest) ? await hoverAudit(page) : null;
-  lap('hover');
+  // The screenshots show the page as it loaded: before the Tab and hover walks below, which leave a form
+  // that validates on blur (Angular's touched fields, react-hook-form's onBlur) in its error state.
   if (!loadError) await page.evaluate(() => window.scrollTo(0, 0));
   await page.waitForTimeout(100);
   if (opt.fold) {
@@ -1144,22 +1266,62 @@ async function renderViewport(width) {
   }
   await page.screenshot({ path: join(opt.out, `${key}-full.png`), fullPage: true });
   lap('screenshots');
+  const formState = () => (loadError ? Promise.resolve('') : page.evaluate(async () => {
+    // A framework marks a field touched on its next render after blur (Angular without zone.js: a frame later).
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 50))));
+    const n = (s) => { try { return document.querySelectorAll(s).length; } catch { return 0; } };
+    return [n('[aria-invalid="true"]'), n(':user-invalid'), n('.ng-touched'), n('[class*="invalid"], [class*="error"]')].join('|');
+  }));
+  const formsBefore = await formState();
+  // The walks scroll whatever holds the focused control: an app that scrolls inside a container (Material's
+  // mat-sidenav-content, a dashboard's main pane) keeps that offset, and window.scrollTo(0, 0) does not undo it.
+  const scrolls = loadError ? null : await page.evaluate(() => {
+    const at = [];
+    for (const el of document.querySelectorAll('*')) if (el.scrollTop || el.scrollLeft) at.push([el, el.scrollTop, el.scrollLeft]);
+    window.__uicScroll = at;
+    return at.length;
+  });
+  const dialog = loadError ? null : await dialogAudit(page, opt.acts.length > 0); // before the focus audit moves focus
+  lap('dialog');
+  const focus = loadError ? null : await focusAudit(page);
+  lap('focus');
+  const hover = (!loadError && opt.hover && width === widest) ? await hoverAudit(page) : null;
+  lap('hover');
+  const walkTouchedForms = !loadError && (await formState()) !== formsBefore; // the dark pass measures a fresh load then
+  let scrollRestored = 0;
+  if (scrolls !== null) {
+    scrollRestored = await page.evaluate(() => {
+      const keep = new Map((window.__uicScroll || []).map(([el, top, left]) => [el, [top, left]]));
+      let n = 0;
+      for (const el of document.querySelectorAll('*')) {
+        if (!el.scrollTop && !el.scrollLeft && !keep.has(el)) continue;
+        const [top, left] = keep.get(el) || [0, 0];
+        if (el.scrollTop !== top || el.scrollLeft !== left) n++;
+        el.scrollTop = top; el.scrollLeft = left;
+      }
+      delete window.__uicScroll;
+      window.scrollTo(0, 0);
+      return n;
+    });
+  }
 
   // --- dark-mode pass: only when the page has a dark rule (or --dark). Same audit, new colours.
   recordRequests = false;
   let dark = null;
-  const wantDark = !loadError && opt.dark !== 'skip' && (opt.dark === 'force' || (audit && audit.darkSupport.any));
+  const wantDark = !loadError && opt.dark !== 'skip' && (opt.dark === 'force' || opt.darkStorage.length > 0 || (audit && audit.darkSupport.any));
   if (wantDark) {
     await pauseTransitions(page); // a body with transition-colors would otherwise be measured mid-fade
     await page.emulateMedia({ colorScheme: 'dark' });
-    if (audit && audit.darkSupport.class) await page.evaluate(() => document.documentElement.classList.add('dark'));
+    if (opt.darkStorage.length) await page.evaluate((kv) => { for (const [k, v] of kv) localStorage.setItem(k, v); }, opt.darkStorage);
+    const darkOn = (classes) => page.evaluate((cls) => { for (const [c, at] of cls) (at === 'body' ? document.body : document.documentElement).classList.add(c); }, classes);
+    if (audit && audit.darkSupport.class) await darkOn(audit.darkSupport.classes);
     await page.waitForTimeout(120);
     let dAudit = await page.evaluate(domAudit, INTERACTIVE_SELECTOR);
     // A page that reads matchMedia once at boot and sets data-theme / a class from it never sees the
     // emulation above. If the colours did not move, load it again under the dark scheme, the way a
     // dark-mode visitor would, and measure that.
     let reloaded = false;
-    if (audit && dAudit.pageColors.background === audit.pageColors.background) {
+    if (audit && (opt.darkStorage.length || walkTouchedForms || dAudit.pageColors.background === audit.pageColors.background)) {
       reloaded = true;
       try {
         await page.reload({ waitUntil: 'load', timeout: 30000 });
@@ -1169,7 +1331,7 @@ async function renderViewport(width) {
       await dismiss(page, opt.dismiss);
       await act(page, opt.acts, darkActErrors);
       await page.waitForTimeout(opt.wait);
-      if (audit.darkSupport.class) await page.evaluate(() => document.documentElement.classList.add('dark'));
+      if (audit.darkSupport.class) await darkOn(audit.darkSupport.classes);
       await page.evaluate(async () => {
         const h = document.documentElement.scrollHeight;
         for (let y = 0; y < h; y += 600) { window.scrollTo(0, y); await new Promise((r) => setTimeout(r, 40)); }
@@ -1183,29 +1345,41 @@ async function renderViewport(width) {
     // before each later step, and check that the screenshot shows the colours that were measured.
     const bodyBg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     const keepDark = () => (audit && audit.darkSupport.class
-      ? page.evaluate(() => { const h = document.documentElement; if (h.classList.contains('dark')) return 0; h.classList.remove('light'); h.classList.add('dark'); return 1; })
+      ? page.evaluate((cls) => {
+        let n = 0;
+        for (const [c, at] of cls) {
+          const el = at === 'body' ? document.body : document.documentElement;
+          if (!el.classList.contains(c)) { el.classList.add(c); n++; }
+        }
+        if (n) document.documentElement.classList.remove('light');
+        return n ? 1 : 0;
+      }, audit.darkSupport.classes)
       : Promise.resolve(0));
     const measuredBg = await bodyBg();
     let restored = await keepDark();
-    const dFocus = await focusAudit(page);
     await page.evaluate(() => window.scrollTo(0, 0));
-    restored += await keepDark();
     await page.waitForTimeout(100);
     const shownBg = await bodyBg();
     let dFold = null;
-    if (opt.fold) {
+    if (opt.fold) {                                   // before the Tab walk, like the light screenshots
       dFold = join(opt.out, `${key}-dark-fold.png`);
       await page.screenshot({ path: dFold });
       darkFolds.push({ width, height, path: dFold, label: `${width} × ${height} · dark` });
     }
+    const dFocus = await focusAudit(page);
+    restored += await keepDark();
     const changed = !!(audit && dAudit.pageColors.background && audit.pageColors.background !== dAudit.pageColors.background);
     dark = {
       mode: audit && audit.darkSupport.class && !audit.darkSupport.media ? 'class'
-        : audit && audit.darkSupport.attr && !audit.darkSupport.media && !audit.darkSupport.class ? 'attribute' : 'media',
+        : audit && audit.darkSupport.attr && !audit.darkSupport.media && !audit.darkSupport.class ? 'attribute'
+          : audit && audit.darkSupport.scheme && !audit.darkSupport.media ? 'color-scheme' : 'media',
+      classes: audit && audit.darkSupport.class ? audit.darkSupport.classes.map(([c]) => c) : [],
+      storage: opt.darkStorage.map(([k, v]) => `${k}=${v}`), // switched through the app's own stored choice
       reloaded, // the in-place emulation changed nothing; the page was loaded again under the dark scheme
       forced: opt.dark === 'force',
       themeChanged: changed,
       restored: restored > 0, // the page took the dark class off during the pass; it was put back
+      reloadedForForms: reloaded && walkTouchedForms, // the light Tab walk left fields in their error state
       screenshotMatches: shownBg === measuredBg,
       pageColors: dAudit.pageColors,
       contrast: dAudit.contrast, nonText: dAudit.nonText,
@@ -1282,6 +1456,7 @@ async function renderViewport(width) {
     width, height, status, fails, warns, loadError,
     console: consoleErrors.slice(0, 20), failedRequests: failedRequests.slice(0, 20), httpErrors: httpErrors.slice(0, 20), requests: requests.slice(0, 40), frameworkRequests,
     audit, focus, hover, dark, dialog, acts: opt.acts, actErrors, darkActErrors,
+    walk: { touchedForms: walkTouchedForms, scrollRestored }, // what the Tab and hover walks changed, and what was put back
     screenshots: { fold: opt.fold ? `${key}-fold.png` : null, full: `${key}-full.png`, darkFold: dark && dark.screenshot },
     timings,
   };
@@ -1332,7 +1507,10 @@ const first = Object.values(report.viewports).find((v) => v.audit);
 if (first) {
   const fam = first.audit.fonts.declared;
   const line = fam.length ? fam.map((f) => `${f.family} (${f.status})`).join(', ') : 'none declared';
-  console.log(`  fonts: ${line}; used: ${first.audit.fonts.used.join(', ')}`);
+  // A font stylesheet that never arrived (a blocked host, no network) leaves the page in fallback faces:
+  // say so, or "none declared" reads as a page that asked for none.
+  const blocked = fontHostsFailed(report);
+  console.log(`  fonts: ${line}; used: ${first.audit.fonts.used.join(', ')}${blocked.hosts.length ? ` — the font stylesheet from ${blocked.hosts.join(', ')} did not load (blocked or offline): the text shows in a fallback face${blocked.icons ? ', and the icon font\'s icons show as their names (`menu`)' : ''}; not a fault of the page where that host is reachable` : ''}`);
   // Which page this was: a session that did not stick lands on the sign-in page, and every number
   // below would then describe that page. Say so where it cannot be missed.
   const h1s = (first.audit.structure && first.audit.structure.headings || []).filter((h) => h.level === 1).map((h) => h.text);
@@ -1352,7 +1530,11 @@ if (first) {
     console.log(`  requests (xhr/fetch, ${head}${first.frameworkRequests ? `; ${first.frameworkRequests} of the framework's own left out` : ''}): ${distinct.slice(0, 16).join(' · ')}${distinct.length > 16 ? ` · … ${distinct.length - 16} more in report.json` : ''}  ← what a second render would --mock`);
   }
   const restoredAt = Object.entries(report.viewports).filter(([, x]) => x.dark && x.dark.restored).map(([k]) => k);
-  console.log(`  dark mode: ${first.audit.darkSupport.any ? `supported (${['media', 'class', 'attr'].filter((k) => first.audit.darkSupport[k]).map((k) => k === 'attr' ? 'attribute' : k).join('+')})` : 'not implemented'}${report.summary.darkRendered ? ' — rendered and audited' : ''}${restoredAt.length ? ` · at ${restoredAt.join(' / ')} the page took .dark off mid-pass (a colour-mode script hydrating late); it was put back before the screenshot` : ''}`);
+  const ds = first.audit.darkSupport;
+  const dcls = (ds.classes || []).map(([c]) => `.${c}`);
+  const plainDark = dcls.length === 1 && dcls[0] === '.dark';
+  const unmoved = Object.values(report.viewports).some((x) => x.dark && !x.dark.themeChanged && !x.dark.forced);
+  console.log(`  dark mode: ${opt.darkStorage.length ? `switched through the app's own storage (${opt.darkStorage.map(([k, v]) => `${k}=${v}`).join(', ')}) — ` : ''}${ds.any ? `supported (${['media', 'class', 'attr', 'scheme'].filter((k) => ds[k]).map((k) => (k === 'attr' ? 'attribute' : k === 'scheme' ? 'color-scheme' : k === 'class' && !plainDark ? `class ${dcls.join(' ')}` : k)).join('+')})` : 'not implemented'}${report.summary.darkRendered ? ' — rendered and audited' : ''}${restoredAt.length ? ` · at ${restoredAt.join(' / ')} the page took ${plainDark ? '.dark' : 'its dark class'} off mid-pass (a colour-mode script hydrating late); it was put back` : ''}${unmoved && !opt.darkStorage.length ? '  ← the page background did not move: if a script switches the theme (a theme service, a stored choice), render dark through it: --dark-storage KEY=VALUE' : ''}`);
 }
 // ---- findings, once. A line that holds at every viewport is printed once; one that holds at some
 // carries their widths. Printed per viewport, the same finding three times over was a third of the output.
@@ -1456,7 +1638,8 @@ const TOTAL = { // counts kept apart from lists that report.json caps
     const un = worst((v) => v.audit.unnamedControls.length), ia = worst((v) => v.audit.imagesMissingAlt.length);
     L.push(`- Names & alt: ${un.n} unnamed controls · ${ia.n} images without alt · ${widest.audit.structure.h1Count} h1 · ${widest.audit.structure.skippedLevels.length} skipped heading levels`);
     const decl = widest.audit.fonts.declared, errs = decl.filter((x) => x.status === 'error').map((x) => x.family);
-    L.push(`- Fonts: ${decl.length ? `${decl.length} declared, ${errs.length ? `${errs.length} failed to load (${[...new Set(errs)].join(', ')}) — rendered with fallbacks` : 'all loaded'}` : 'none declared (system stack)'}`);
+    const blockedFonts = fontHostsFailed(report);
+    L.push(`- Fonts: ${decl.length ? `${decl.length} declared, ${errs.length ? `${errs.length} failed to load (${[...new Set(errs)].join(', ')}) — rendered with fallbacks` : 'all loaded'}` : blockedFonts.hosts.length ? `none loaded — the stylesheet from ${blockedFonts.hosts.join(', ')} failed, so the page shows fallback faces` : 'none declared (system stack)'}`);
     const dvs = vps.filter((v) => v.dialog);
     if (dvs.length) {
       const d = dvs[0].dialog;

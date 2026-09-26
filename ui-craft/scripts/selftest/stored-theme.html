@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stored theme</title>
+<script>
+  // A theme service: the stored choice decides the look at boot, under a class no stylesheet scan
+  // would call a theme. Only the app's own switch (the stored value, then a load) shows it dark.
+  if (localStorage.getItem('look') === 'night') document.documentElement.classList.add('night');
+</script>
+<style>
+  body { margin: 0; padding: 32px; font: 16px/1.5 system-ui, sans-serif; background: #ffffff; color: #1f2328; }
+  html.night body { background: #0d1117; color: #e6edf3; }
+</style>
+</head>
+<body>
+  <h1>Stored theme</h1>
+  <p>The page is dark only when the app's stored choice says so.</p>
+</body>
+</html>

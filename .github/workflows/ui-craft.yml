@@ -101,3 +101,21 @@ jobs:
           grep -q "inline script in .src/components/BaseHead.astro. (localStorage .theme.)" /tmp/inspect-astro.txt
           grep -q "BaseHead.astro. (3; props title, description)" /tmp/inspect-astro.txt
           grep -q "references/stacks/astro.md" /tmp/inspect-astro.txt
+          # Angular: the route table (lazy components, a lazy NgModule, default-export routes), the layout with an
+          # outlet, guards and the session they read, the requests a page makes, the Material theme, the theme class
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/angular-app | tee /tmp/inspect-ng.txt | head -5
+          grep -q "Angular .*(standalone components; routes in .src/app/app.routes.ts.) · UI: Angular Material" /tmp/inspect-ng.txt
+          grep -q "dashboard.component.ts. · ./dashboard. (lazy) · template .dashboard.component.html., 34 lines" /tmp/inspect-ng.txt
+          grep -q "data: GET ./api/stats. (Orders.stats)" /tmp/inspect-ng.txt
+          grep -q "inside ShellComponent (.src/app/shell/shell.component.ts." /tmp/inspect-ng.txt
+          grep -q "./admin/audit. → AuditLogComponent (lazy)" /tmp/inspect-ng.txt
+          grep -q "./reports. → ReportsPage (lazy)" /tmp/inspect-ng.txt
+          grep -q "guard .AdminGuard. (.src/app/admin/admin.guard.ts.) runs before ./admin/audit.; it can redirect to ./login." /tmp/inspect-ng.txt
+          grep -q "needs a session: localStorage .ng-demo-token. (.src/app/auth/auth.service.ts.)" /tmp/inspect-ng.txt
+          grep -q "stat-card.ts. .<app-stat-card>. (2; inputs label (required), value, unit, trend; outputs selected)" /tmp/inspect-ng.txt
+          grep -q "M3 theme at .src/styles.scss:10. (primary .azure., tertiary .blue." /tmp/inspect-ng.txt
+          grep -q "under .\.dark-theme. on .<html>." /tmp/inspect-ng.txt
+          grep -q "render dark through it: .--dark-storage ng-demo-theme=dark." /tmp/inspect-ng.txt
+          grep -q "proxy.conf.json. proxies ./api. → .http://localhost:3000." /tmp/inspect-ng.txt
+          grep -q "ng serve. listens on :4200" /tmp/inspect-ng.txt
+          grep -q "references/stacks/angular.md" /tmp/inspect-ng.txt

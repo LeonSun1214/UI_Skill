@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Material patterns</title>
+<style>
+  /* How Angular Material draws focus, without Angular: a field's outline is three pieces beside the
+     input (they thicken and take the primary colour on focus); a button's focus is a state layer that
+     fades in on a child's ::before, or, with strong focus indicators on, a border on another child's
+     ::before. The theme switches by a class that sets color-scheme, and the app scrolls inside a pane. */
+  html { color-scheme: light; }
+  .theme-dark { color-scheme: dark; }
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #fafafd; color: #1a1b1f; }
+  html.theme-dark body { background: #121316; color: #e3e2e6; }
+  #pane { height: 520px; overflow: auto; padding: 16px 24px; box-sizing: border-box; }
+  h1 { margin: 0 0 16px; font-size: 24px; }
+  .field { position: relative; display: flex; width: 320px; height: 56px; margin-bottom: 16px; }
+  .outline { position: absolute; inset: 0; display: flex; pointer-events: none; }
+  .outline span { border: 1px solid #74777f; border-left-width: 0; border-right-width: 0; }
+  .outline .lead { width: 12px; border-left-width: 1px; border-radius: 4px 0 0 4px; }
+  .outline .notch { width: 60px; border-top-width: 0; }
+  .outline .trail { flex: 1; border-right-width: 1px; border-radius: 0 4px 4px 0; }
+  .field input { position: relative; z-index: 1; flex: 1; border: 0; outline: none; background: transparent; padding: 16px; font: inherit; color: inherit; }
+  #ok-field:focus-within .outline span { border-color: #005cbb; border-top-width: 2px; border-bottom-width: 2px; }
+  #ok-field:focus-within .outline .lead { border-left-width: 2px; }
+  #ok-field:focus-within .outline .trail { border-right-width: 2px; }
+  #faint-field:focus-within .outline span { border-color: #d6d6dc; border-top-width: 2px; border-bottom-width: 2px; }
+  .notch { border-top-width: 0 !important; }
+  .btn { position: relative; margin: 0 12px 16px 0; padding: 10px 24px; border: 0; border-radius: 20px; background: #005cbb; color: #fff; font: 600 14px system-ui, sans-serif; cursor: pointer; outline: none; }
+  .btn .state { position: absolute; inset: 0; border-radius: inherit; pointer-events: none; }
+  .btn .state::before { content: ''; position: absolute; inset: 0; border-radius: inherit; background: #fff; opacity: 0; }
+  .btn:hover .state::before { opacity: 0.08; }
+  .btn:focus-visible .state::before { opacity: 0.12; }
+  .btn .fi { position: absolute; inset: 0; pointer-events: none; }
+  .btn .fi::before { content: ''; position: absolute; inset: -5px; border: 3px solid #1b1b1f; border-radius: 24px; display: none; }
+  #strong-btn:focus-visible .fi::before, #deep-btn:focus-visible .fi::before { display: block; }
+  #touchy { width: 320px; padding: 12px; border: 1px solid #74777f; border-radius: 4px; font: inherit; background: transparent; color: inherit; }
+  #touchy:focus { outline: 2px solid #005cbb; outline-offset: 1px; }
+  #touchy.ng-touched.ng-invalid { border-color: #b3261e; }
+  .tall { height: 1400px; }
+</style>
+</head>
+<body>
+<main id="pane">
+  <h1>Material patterns</h1>
+  <div class="field" id="ok-field"><div class="outline"><span class="lead"></span><span class="notch"></span><span class="trail"></span></div><input id="field-ok" aria-label="Email"></div>
+  <div class="field" id="faint-field"><div class="outline"><span class="lead"></span><span class="notch"></span><span class="trail"></span></div><input id="field-faint" aria-label="Name"></div>
+  <button class="btn" id="tint-btn"><span class="state"></span>Save</button>
+  <button class="btn" id="strong-btn"><span class="state"></span><span class="fi"></span>Send</button>
+  <p><input id="touchy" required aria-label="Code"></p>
+  <div class="tall"></div>
+  <button class="btn" id="deep-btn"><span class="state"></span><span class="fi"></span>At the bottom</button>
+</main>
+<script>
+  // What Angular's forms do on blur: the field is touched, and an empty required one is invalid.
+  const touchy = document.getElementById('touchy');
+  touchy.addEventListener('blur', () => {
+    touchy.classList.add('ng-touched');
+    if (!touchy.value) { touchy.classList.add('ng-invalid'); touchy.setAttribute('aria-invalid', 'true'); }
+  });
+</script>
+</body>
+</html>

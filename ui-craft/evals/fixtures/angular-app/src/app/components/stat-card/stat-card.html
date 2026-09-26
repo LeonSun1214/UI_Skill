@@ -1,0 +1,12 @@
+<mat-card appearance="outlined" class="stat" (click)="selected.emit(label())">
+  <mat-card-content>
+    <p class="label">{{ label() }}</p>
+    <p class="value">{{ unit() }}{{ value() | number }}</p>
+    @if (trend()) {
+      <p class="trend" [class.down]="trend() === 'down'">
+        <mat-icon inline>{{ trendIcon() }}</mat-icon>
+        {{ trend() === 'down' ? 'Down' : 'Up' }} on last week
+      </p>
+    }
+  </mat-card-content>
+</mat-card>

@@ -22,7 +22,7 @@ The inspector's *Start here* section names the calls the store makes and the dev
 
 ## The theme is set by a script at boot (`data-theme`)
 
-Nothing: the dark pass reloads the page under the dark scheme when in-place emulation changes nothing, and the report names the mode (`media`, `class`, `attribute`).
+Nothing: the dark pass reloads the page under the dark scheme when in-place emulation changes nothing, and the report names the mode (`media`, `class`, `attribute`, `color-scheme`). When the switch is a theme service that does more than a class on `<html>` (a class on `<body>` too, a stored setting read at boot), render dark through it: `--dark-storage KEY=dark` sets the stored choice and reloads. The inspector prints that flag when it finds the service; the render suggests it when the dark pass left the page background where it was.
 
 ## The task is one component, not a page
 

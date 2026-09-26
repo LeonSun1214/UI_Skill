@@ -1,7 +1,8 @@
 # ui-craft
 
-A Claude Code skill for UI work in web projects built with React, Vue, Svelte or Astro
-(Vite, Next.js, Nuxt, SvelteKit, Astro; Tailwind or plain CSS) that
+A Claude Code skill for UI work in web projects built with React, Vue, Svelte, Astro or
+Angular (Vite, Next.js, Nuxt, SvelteKit, Astro, Angular CLI; Tailwind, plain CSS or Angular
+Material) that
 **renders what it built and measures it** before calling it done.
 
 Most UI skills give the model a database of styles and palettes. ui-craft gives it
@@ -139,6 +140,8 @@ Verified (render.mjs · .ui-craft/pricing-2):
 | Vue + Vite | `inspect.py` reads the vue-router table (lazy imports, redirects), the wrapper component each view sits in, `defineProps`, Pinia's storage keys and the component kit (Element Plus, Vuetify, PrimeVue, Naive UI). Notes: `references/stacks/vue.md` |
 | SvelteKit | `inspect.py` reads the file routes (route groups dropped), each `+layout.svelte` and the pages it wraps, what loads a page's data (`+page.ts`, `+page.server.ts`, form actions), `hooks.server.ts` and the paths it guards, `+server.ts` endpoints, props from `$props()` or `export let`, mode-watcher. Notes: `references/stacks/sveltekit.md` |
 | Astro | `inspect.py` reads the file routes and endpoints, the layout each page sits in, content collections and their folders, islands (`client:*`), middleware, integrations, Starlight's docs pages, and dark mode set by an inline script over plain CSS variables. The render hides Astro's dev toolbar. Notes: `references/stacks/astro.md` |
+| Angular | `inspect.py` follows the route table from `provideRouter` / `RouterModule.forRoot` through lazy components, lazy NgModules and default-export route files (tsconfig path aliases and barrels resolved), and prints one line per page with its route, template and the layout whose `<router-outlet>` holds it; each guard with the pages it covers, where it redirects and the storage key of the session it reads; each service's `HttpClient` requests, and on the page line the calls that page makes; components by selector with their inputs and outputs; the Angular Material theme (M3 or M2, palettes, `--mat-sys-*` use); the dark-theme class and the service that sets it. The render reads Material's focus where it draws it (a field's outline beside the input, a ring on an inner layer) and reports the faint state-layer tint Material shows by default. Notes: `references/stacks/angular.md` |
+| A theme service switches dark mode | `--dark-storage theme=dark` sets the app's stored choice for the dark pass and reloads, so the app's own switch runs (a body class, a stored setting) instead of a class the render guesses; the inspector prints the flag when it finds the service |
 
 ## Scripts
 
@@ -180,7 +183,7 @@ git-ignored `ui-craft-workspace/`.
   understands Tailwind (v3 config or v4 `@theme`) and plain CSS variables, Next.js,
   Nuxt, Vue + Vite, SvelteKit and Astro. The benchmark tasks are React and Nuxt;
   SvelteKit and Astro are checked on fixtures and three real projects, not yet on a
-  full task. Not yet: Angular, server-rendered templates (Laravel, Rails, Django),
+  full task. Not yet: server-rendered templates (Laravel, Rails, Django),
   and the theme objects of CSS-in-JS kits (MUI, Chakra, styled-components). The
   component harness is React only. No React Native, Flutter or SwiftUI.
 - It measures what the DOM exposes. Text over images and gradients is reported as

@@ -1,0 +1,23 @@
+:host {
+  display: block;
+}
+
+.label {
+  margin: 0;
+  font: var(--mat-sys-label-large);
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.value {
+  margin: 8px 0 0;
+  font: var(--mat-sys-headline-medium);
+}
+
+.trend {
+  margin: 8px 0 0;
+  color: var(--mat-sys-primary);
+
+  &.down {
+    color: var(--mat-sys-error);
+  }
+}

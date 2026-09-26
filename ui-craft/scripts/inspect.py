@@ -53,12 +53,16 @@ KNOWN_UI = {
     "@nuxt/ui": "Nuxt UI", "@nuxt/ui-pro": "Nuxt UI Pro", "element-plus": "Element Plus", "vuetify": "Vuetify",
     "primevue": "PrimeVue", "naive-ui": "Naive UI", "reka-ui": "Reka UI", "radix-vue": "Radix Vue",
     "@headlessui/vue": "Headless UI", "ant-design-vue": "Ant Design Vue", "quasar": "Quasar",
+    "@angular/material": "Angular Material", "primeng": "PrimeNG", "ng-zorro-antd": "NG-ZORRO", "@taiga-ui/core": "Taiga UI",
+    "@nebular/theme": "Nebular", "@clr/angular": "Clarity", "@ng-bootstrap/ng-bootstrap": "ng-bootstrap",
+    "ngx-bootstrap": "ngx-bootstrap", "@ionic/angular": "Ionic", "@spartan-ng/brain": "spartan/ui",
 }
 KNOWN_ICONS = {
     "lucide-react": "Lucide", "@heroicons/react": "Heroicons", "@phosphor-icons/react": "Phosphor",
     "react-icons": "react-icons", "@tabler/icons-react": "Tabler", "@radix-ui/react-icons": "Radix Icons",
     "@iconify/react": "Iconify",
     "lucide-vue-next": "Lucide", "@iconify/vue": "Iconify", "@heroicons/vue": "Heroicons", "@phosphor-icons/vue": "Phosphor",
+    "lucide-angular": "Lucide", "@ng-icons/core": "ng-icons", "@fortawesome/angular-fontawesome": "Font Awesome",
 }
 KNOWN_MOTION = {
     "framer-motion": "Framer Motion", "motion": "Motion", "gsap": "GSAP",
@@ -309,15 +313,16 @@ def collect_tokens(root: Path, css_files: list[Path], stack: dict) -> dict:
 
 # --------------------------------------------------------------------- fonts
 def collect_fonts(root: Path, src_files: list[Path], css_files: list[Path], tokens: dict) -> dict:
-    next_font, google, face = set(), set(), set()
+    next_font, google, face, icon_fonts = set(), set(), set(), set()
     for p in src_files[:MAX_SRC_FILES]:
         text = read(p, 120_000)
         if "next/font" in text:
             for names in re.findall(r"import\s*\{([^}]+)\}\s*from\s*['\"]next/font/(?:google|local)['\"]", text):
                 next_font.update(n.strip().split(" as ")[0] for n in names.split(",") if n.strip())
         for q in re.findall(r"fonts\.googleapis\.com/css2?\?([^\"'\s>]+)", text):
-            for fam in re.findall(r"family=([^&:]+)", q):
-                google.add(fam.replace("+", " "))
+            for fam in re.findall(r"family=([^&]+)", q):
+                google.update(f.split(":")[0].replace("+", " ") for f in fam.split("|") if f)
+        icon_fonts.update(f.replace("+", " ") for f in re.findall(r"fonts\.googleapis\.com/icon\?family=([\w+]+)", text))
     for p in css_files:
         text = read(p)
         for q in re.findall(r"fonts\.googleapis\.com/css2?\?([^\"'\s)]+)", text):
@@ -331,7 +336,10 @@ def collect_fonts(root: Path, src_files: list[Path], css_files: list[Path], toke
         (n, v.split(",")[0].strip().strip("\"'"))
         for _, n, v in tokens["theme"] + tokens["root"] if n.startswith("--font")
     ]
-    return {"nextFont": sorted(next_font), "googleLinks": sorted(google), "fontFace": sorted(face), "tokenFonts": token_fonts[:12]}
+    icon_fonts |= {g for g in google if re.match(r"Material (Icons|Symbols)", g)}
+    google -= icon_fonts
+    return {"nextFont": sorted(next_font), "googleLinks": sorted(google), "fontFace": sorted(face), "tokenFonts": token_fonts[:12],
+            "iconFonts": sorted(icon_fonts)}
 
 
 # ---------------------------------------------------------------- components
@@ -341,10 +349,15 @@ COMPONENT_DIR_NAMES = {"components", "ui", "primitives", "design-system", "eleme
 def component_inventory(root: Path, src_files: list[Path]) -> dict:
     primitives, composed = [], []
     for p in src_files:
-        if p.suffix not in {".tsx", ".jsx", ".vue", ".svelte"}:
+        if p.suffix not in {".tsx", ".jsx", ".vue", ".svelte", ".ts"}:
             continue
         stem = p.stem
-        if stem.lower() in {"index", "page", "layout", "loading", "error", "not-found", "route", "template"}:
+        if p.suffix == ".ts":                            # an Angular component: a class under @Component
+            if re.search(r"\.(spec|test|stories)$", stem) or not (set(x.lower() for x in p.parts) & COMPONENT_DIR_NAMES) \
+                    or "@Component" not in read(p, 100_000):
+                continue
+            stem = re.sub(r"\.component$", "", stem)
+        if stem.lower() in {"index", "page", "layout", "loading", "error", "not-found", "route", "template"} and p.suffix != ".ts":
             continue
         if re.search(r"\.(test|spec|stories)$", stem):
             continue
@@ -429,14 +442,20 @@ def find_docs(root: Path) -> list[str]:
 
 
 # ------------------------------------------------------------------- verdict
-def verdict(stack: dict, tokens: dict, fonts: dict, comps: dict, usage: dict, docs: list[str]) -> dict:
+def verdict(stack: dict, tokens: dict, fonts: dict, comps: dict, usage: dict, docs: list[str], sh: dict | None = None) -> dict:
     tokens_declared = bool(tokens["theme"] or tokens["root"] or tokens["configExtend"])
+    ng = (sh or {}).get("ng")
+    mt = (sh or {}).get("material")
     established = (
         usage["rawTotal"] + usage["semanticTotal"] >= 25
         or len(comps["primitives"]) + len(comps["composed"]) >= 4
         or tokens_declared
+        or bool(ng and (ng["components"] >= 4 or (mt and (mt["file"] or mt["prebuilt"]))))
     )
     lines = []
+    if mt and (mt["file"] or mt["prebuilt"]):
+        cols = ", ".join(f"{k} {v}" for k, v in list(mt["colors"].items())[:2])
+        lines.append(f"UI kit: **Angular Material** ({mt['kind'] or 'prebuilt'} theme" + (f", {cols}" if cols else "") + ") — build with its components, not hand-rolled ones")
     total_color = usage["rawTotal"] + usage["semanticTotal"]
     if total_color:
         sem_pct = round(100 * usage["semanticTotal"] / total_color)
@@ -453,7 +472,7 @@ def verdict(stack: dict, tokens: dict, fonts: dict, comps: dict, usage: dict, do
     all_fonts = fonts["nextFont"] + fonts["googleLinks"] + fonts["fontFace"] + [v for _, v in fonts["tokenFonts"]]
     if all_fonts:
         lines.append("Fonts: " + ", ".join(dict.fromkeys(all_fonts))[:160])
-    lines.append("Dark mode: " + ("present" if usage["dark"] or tokens["darkBlock"] else "not used"))
+    lines.append("Dark mode: " + ("present" if usage["dark"] or tokens["darkBlock"] or (ng and (sh or {}).get("theme")) else "not used"))
     if usage["arbitraryTotal"] >= 8:
         lines.append(f"Token drift: {usage['arbitraryTotal']} arbitrary values (`w-[…]`, `bg-[#…]`) — missing tokens, or one-offs to avoid repeating")
     if docs:
@@ -482,14 +501,14 @@ def _cls_uses(name: str, texts: list[str]) -> int:
     return sum(len(pat.findall(t)) for t in texts)
 
 
-def css_vocabulary(root: Path, css_files: list[Path], src_texts: list[str]) -> list[dict]:
+def css_vocabulary(root: Path, css_files: list[Path], src_texts: list[str], skip: str | None = None) -> list[dict]:
     """Single-class rules (`.card {`, `.btn-primary {`) with their first declarations, by use."""
     vocab: dict[str, dict] = {}
     for p in css_files:
         text = read(p)
         for m in re.finditer(r"(?m)^[ \t]*\.([a-zA-Z][\w-]*)\s*\{", text):
             name = m.group(1)
-            if name in vocab or name in {"dark", "light"}:      # a theme selector, not a class a page uses
+            if name in vocab or name in {"dark", "light"} or (skip and re.match(skip, name)):  # a theme selector, or a kit's own class
                 continue
             decl = re.sub(r"/\*.*?\*/", "", block_after(text, m.start()), flags=re.S)
             decl = " ".join(decl.split()).strip()
@@ -574,7 +593,7 @@ def import_fanin(root: Path, src_files: list[Path]) -> list[dict]:
     counts: collections.Counter = collections.Counter()
     src_dir = root / "src" if (root / "src").is_dir() else root
     for p in src_files:
-        if p.suffix not in {".tsx", ".jsx", ".ts", ".js", ".vue", ".svelte", ".astro"}:
+        if p.suffix not in {".tsx", ".jsx", ".ts", ".js", ".vue", ".svelte", ".astro"} or re.search(r"\.(spec|test|stories)\.\w+$", p.name):
             continue
         text = read(p, 200_000)
         seen = set()
@@ -616,13 +635,14 @@ def _signals(text: str) -> list[str]:
     if re.search(r"<(?:form|UForm|u-form|el-form|ElForm|v-form|VForm)\b", text):
         signals.append("form")
     n_fields = len(re.findall(r"<(?:input|select|textarea)\b|<(?:U|u-|El|el-|V|v-)?(?:Input|input|Select|select|Textarea|textarea|SelectMenu|select-menu|InputNumber|Checkbox|Switch|RadioGroup)\b(?![\w-])", text))
+    n_fields += len(re.findall(r"<(?:mat-(?:select|checkbox|slide-toggle|radio-group|slider|chip-grid)|p-(?:select|dropdown|inputnumber|checkbox|calendar|datepicker|multiselect|autocomplete|toggleswitch)|nz-(?:select|input-number|date-picker|checkbox|switch|radio-group))(?![\w-])", text))
     if n_fields:
         signals.append(f"{n_fields} field{'s' if n_fields > 1 else ''}")
-    if re.search(r"<(?:table|UTable|u-table|el-table|ElTable|VDataTable|v-data-table)\b", text):
+    if re.search(r"<(?:table|UTable|u-table|el-table|ElTable|VDataTable|v-data-table|mat-table|p-table|nz-table)\b", text):
         signals.append("table")
-    elif (".map(" in text and re.search(r"<(?:li|article|tr)\b", text)) or "v-for=" in text or "{#each" in text:
+    elif (".map(" in text and re.search(r"<(?:li|article|tr)\b", text)) or "v-for=" in text or "{#each" in text or "@for (" in text or "*ngFor=" in text:
         signals.append("list")
-    if re.search(r'role="dialog"|<dialog\b|<Dialog\b|<(?:UModal|USlideover|u-modal|el-dialog|ElDialog|VDialog|v-dialog)\b', text):
+    if re.search(r'role="dialog"|<dialog\b|<Dialog\b|<(?:UModal|USlideover|u-modal|el-dialog|ElDialog|VDialog|v-dialog|p-dialog|nz-modal)\b', text):
         signals.append("dialog")
     data = [f"content `{c}`" for c in dict.fromkeys(re.findall(r"queryCollection(?:Navigation)?\(\s*['\"](\w+)['\"]", text))]
     data += [f"fetch `{u}`" for u in dict.fromkeys(re.findall(r"(?:useFetch|useLazyFetch|\$fetch)\(\s*['\"`]([^'\"`$]+)", text))]
@@ -732,13 +752,23 @@ def theme_mechanism(root: Path, css_files: list[Path], stack: dict, src_files: l
             how = f"`.{color_mode['cls']}` on `<html>`"
             where = "the class @nuxtjs/color-mode sets" + (" (Nuxt UI brings it)" if nuxt_ui_on else "")
     plain = False
+    ng_setter = None
+    if how is None and stack.get("framework") == "Angular":
+        found = angular_dark(root, css_files)
+        if found:
+            cls, where_ = found
+            ng_setter = angular_dark_setter(root, src_files, cls)
+            on = "`<html>`" if ng_setter and re.search(r"documentElement|htmlElement|\bhtml\b", read(root / ng_setter.split("`")[1], 200_000)) else "an ancestor"
+            scheme = any(re.search(r"\." + re.escape(cls) + r"\b[^{]*\{[^}]*color-scheme\s*:\s*dark", read(c)) for c in css_files)
+            how = f"`.{cls}` on {on}" + (" (`color-scheme: dark`: Material's `light-dark()` colours follow it)" if scheme and "@angular/material" in deps else "")
+            where, plain = f"`{where_}`", True
     if how is None and "@astrojs/starlight" in deps:
         how, where, plain = "`[data-theme=dark]` on `<html>`", "Starlight's own CSS (`--sl-color-*` properties)", True
     if how is None:                                  # plain CSS: dark rules keyed on an attribute, a class, or the OS scheme
         for c in css_files:
             t = read(c)
             for pat, label in ((r"\[data-theme=['\"]?dark", "`[data-theme=dark]` on `<html>`"),
-                               (r"(?:^|[\s,}])(?::root|html)?\.dark\b", "`.dark` on `<html>`"),
+                               (r"(?:^|[\s,}])(?::root|html)?\.dark(?![\w-])", "`.dark` on `<html>`"),
                                (r"prefers-color-scheme:\s*dark", "the OS scheme (`prefers-color-scheme`)")):
                 m = re.search(pat, t, re.M)
                 if m:
@@ -750,8 +780,10 @@ def theme_mechanism(root: Path, css_files: list[Path], stack: dict, src_files: l
         if not stack.get("tailwind") or not uses_dark:
             return None
         how, where = "the OS scheme (`prefers-color-scheme`)", "Tailwind's default, no toggle in the app"
-    setter = None
-    if "mode-watcher" in deps:
+    setter = ng_setter
+    if setter:
+        pass
+    elif "mode-watcher" in deps:
         setter = "set before paint by mode-watcher (`<ModeWatcher />` in the root layout; localStorage `mode-watcher-mode`)"
     elif "@astrojs/starlight" in deps:
         setter = "set before paint by Starlight's theme select (localStorage `starlight-theme`; follows the OS until chosen)"
@@ -766,6 +798,9 @@ def theme_mechanism(root: Path, css_files: list[Path], stack: dict, src_files: l
                     break
             if setter:
                 break
+    if setter is None and stack.get("framework") == "Angular":   # a theme service: classList.add('dark')
+        cm = re.search(r"`\.([\w-]+)`", how)
+        setter = angular_dark_setter(root, src_files, cm.group(1)) if cm else None
     if "next-themes" in (stack.get("deps") or {}):
         for p in src_files:
             if p.suffix not in {".tsx", ".jsx"}:
@@ -1312,6 +1347,859 @@ def astro_before(root: Path, deps: dict) -> list[str]:
     return out
 
 
+# -------------------------------------------------------------------- Angular
+# An Angular page is a component a route names; its markup is a template file or an inline
+# `template:`, its children are elements named by their selectors, and what stands before it is
+# a guard in the route table, not a file beside it. The readers below follow the route table
+# from provideRouter / RouterModule.forRoot through lazy children to the component files.
+NG_STRUCTURAL = {"router-outlet", "ng-container", "ng-template", "ng-content"}
+NG_LAZY = re.compile(r"import\(\s*['\"]([^'\"]+)['\"]\s*\)(?:\s*\.then\(\s*\(?\s*(\w+)\s*\)?\s*=>\s*\2\.(\w+)\s*\))?")
+NG_THEME_CLASS = re.compile(r"^(?:dark|dark[-_](?:theme|mode|scheme)|(?:theme|mode|scheme|is)[-_]dark)$", re.I)
+NG_PREFIXED_THEME = re.compile(r"^[\w-]+[-_](?:theme|mode|scheme|app)[-_]dark$|^app[-_]dark$", re.I)   # a theme root only when its rule sets variables
+
+
+def _no_comments(t: str) -> str:
+    """TypeScript or JSON without comments; a `//` after a colon or a quote (a URL in a string) is kept."""
+    t = re.sub(r"/\*.*?\*/", "", t, flags=re.S)
+    return re.sub(r"(?<![:\w'\"`\\])//[^\n]*", "", t)
+
+
+def _balanced(t: str, i: int) -> str:
+    """The text inside the bracket that opens at t[i], with strings respected."""
+    depth, quote, j = 0, None, i
+    while j < len(t):
+        ch = t[j]
+        if quote:
+            if ch == "\\":
+                j += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "'\"`":
+            quote = ch
+        elif ch in "[{(":
+            depth += 1
+        elif ch in "]})":
+            depth -= 1
+            if depth == 0:
+                return t[i + 1:j]
+        j += 1
+    return t[i + 1:]
+
+
+def _split_top(s: str) -> list[str]:
+    """Split at the commas that are not inside brackets or strings."""
+    out, cur, depth, quote, i = [], [], 0, None, 0
+    while i < len(s):
+        ch = s[i]
+        cur.append(ch)
+        if quote:
+            if ch == "\\" and i + 1 < len(s):
+                cur.append(s[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "'\"`":
+            quote = ch
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            cur.pop()
+            out.append("".join(cur))
+            cur = []
+        i += 1
+    out.append("".join(cur))
+    return [x.strip() for x in out if x.strip()]
+
+
+def _fields(body: str) -> dict[str, str]:
+    """The properties of an object literal's body: { path: 'x', children: [...] } → {path: "'x'", children: "[...]"}."""
+    out = {}
+    for part in _split_top(body):
+        m = re.match(r"['\"]?([\w$]+)['\"]?\s*:\s*(.*)$", part, re.S)
+        if m:
+            out[m.group(1)] = m.group(2).strip()
+        elif re.match(r"^[\w$]+$", part):
+            out[part] = part
+    return out
+
+
+def _unquote(v: str | None) -> str | None:
+    m = re.match(r"^\s*(['\"`])(.*)\1\s*$", v or "", re.S)
+    return m.group(2) if m else None
+
+
+def angular_workspace(root: Path) -> dict | None:
+    """The application in angular.json: where its source is, its global stylesheets, how `ng serve` serves it."""
+    f = root / "angular.json"
+    if not f.is_file():
+        return None
+    try:
+        d = json.loads(read(f))
+    except json.JSONDecodeError:
+        return None
+    projects = d.get("projects") or {}
+    apps = [k for k, v in projects.items() if isinstance(v, dict) and v.get("projectType") == "application"]
+    name = d.get("defaultProject") if d.get("defaultProject") in projects else (apps[0] if apps else next(iter(projects), None))
+    p = projects.get(name) or {}
+    arch = p.get("architect") or p.get("targets") or {}
+    build, serve = arch.get("build") or {}, arch.get("serve") or {}
+    opts, sopts = build.get("options") or {}, serve.get("options") or {}
+    bdev = (build.get("configurations") or {}).get("development") or {}
+    sdev = (serve.get("configurations") or {}).get("development") or {}
+    styles = [s if isinstance(s, str) else (s or {}).get("input") for s in opts.get("styles") or []]
+    return {
+        "name": name, "apps": apps, "src": p.get("sourceRoot") or os.path.join(p.get("root") or "", "src"),
+        "styles": [s for s in styles if s], "port": sopts.get("port") or sdev.get("port"),
+        "proxy": sopts.get("proxyConfig") or sdev.get("proxyConfig"), "ssr": bool(opts.get("ssr") or opts.get("server")),
+        "env": [(r.get("replace"), r.get("with")) for r in bdev.get("fileReplacements") or [] if isinstance(r, dict)],
+    }
+
+
+def ts_aliases(root: Path) -> list[tuple[str, list[Path]]]:
+    """compilerOptions.paths: `@core` → src/app/core, `@env/*` → src/environments/*."""
+    for name in ("tsconfig.json", "tsconfig.base.json", "tsconfig.app.json"):
+        f = root / name
+        if not f.is_file():
+            continue
+        try:
+            co = json.loads(re.sub(r",(\s*[}\]])", r"\1", _no_comments(read(f)))).get("compilerOptions") or {}
+        except (json.JSONDecodeError, AttributeError):
+            continue
+        if co.get("paths"):
+            base = root / (co.get("baseUrl") or ".")
+            return [(k, [base / v for v in vs]) for k, vs in co["paths"].items() if isinstance(vs, list)]
+    return []
+
+
+def _ng_resolve(root: Path, from_file: Path, spec: str, aliases: list) -> Path | None:
+    """The file an import specifier names: relative, a tsconfig alias, or a path from the base URL."""
+    if spec.startswith("."):
+        bases = [from_file.parent / spec]
+    else:
+        bases = []
+        for pat, targets in aliases:
+            if pat.endswith("/*") and spec.startswith(pat[:-1]):
+                bases += [Path(str(t)[:-1] + spec[len(pat) - 1:]) if str(t).endswith("*") else t for t in targets]
+            elif pat == spec:
+                bases += targets
+        bases = bases or [root / spec, root / "src" / spec]
+    for b in bases:
+        for ext in ("", ".ts", "/index.ts", ".js", "/index.js"):
+            c = Path(str(b) + ext)
+            if c.is_file():
+                return Path(os.path.normpath(c))
+    return None
+
+
+def _ng_defines(root: Path, f: Path, name: str, aliases: list, depth: int = 0) -> Path | None:
+    """The file that declares `name`, through a barrel's `export * from` and `export { name } from`."""
+    t = read(f, 300_000)
+    if re.search(r"export\s+(?:default\s+)?(?:abstract\s+)?(?:const|let|var|function|class|interface|type|enum)\s+" + re.escape(name) + r"\b", t) \
+            or re.search(r"(?:const|let|var|function|class)\s+" + re.escape(name) + r"\b[\s\S]*export\s*\{[^}]*\b" + re.escape(name) + r"\b", t):
+        return f
+    if depth >= 4:
+        return None
+    if re.search(r"export\s*\{[^}]*\b" + re.escape(name) + r"\b[^}]*\}(?!\s*from)", t):     # export { X } of an imported X
+        for names, spec in re.findall(r"import\s*\{([^}]*)\}\s*from\s*['\"]([^'\"]+)['\"]", t):
+            if re.search(r"(?:^|[\s,])" + re.escape(name) + r"\s*(?:,|$)", names):
+                g = _ng_resolve(root, f, spec, aliases)
+                return _ng_defines(root, g, name, aliases, depth + 1) if g else None
+    for names, spec in re.findall(r"export\s*\{([^}]*)\}\s*from\s*['\"]([^'\"]+)['\"]", t):
+        for part in names.split(","):
+            bits = [x.strip() for x in part.split(" as ")]
+            if bits[-1] == name:
+                g = _ng_resolve(root, f, spec, aliases)
+                return _ng_defines(root, g, bits[0], aliases, depth + 1) if g else None
+    for spec in re.findall(r"export\s*\*\s*from\s*['\"]([^'\"]+)['\"]", t):
+        g = _ng_resolve(root, f, spec, aliases)
+        hit = _ng_defines(root, g, name, aliases, depth + 1) if g else None
+        if hit:
+            return hit
+    return None
+
+
+def _ng_source_of(root: Path, f: Path, t: str, name: str, aliases: list) -> Path | None:
+    """Where an identifier used in file f is declared: an import, followed through barrels, or the file itself."""
+    for names, spec in re.findall(r"import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*['\"]([^'\"]+)['\"]", t):
+        for part in names.split(","):
+            bits = [x.strip() for x in part.split(" as ")]
+            if bits[-1] == name:
+                g = _ng_resolve(root, f, spec, aliases)
+                return (_ng_defines(root, g, bits[0], aliases) or g) if g else None
+    m = re.search(r"import\s+" + re.escape(name) + r"\s+from\s*['\"]([^'\"]+)['\"]", t)
+    if m:
+        return _ng_resolve(root, f, m.group(1), aliases)
+    if re.search(r"(?:const|let|var|function|class)\s+" + re.escape(name) + r"\b", t):
+        return f
+    return None
+
+
+def _ng_inline(meta: str, key: str) -> str | None:
+    """An inline `template:` or `styles:` string of a decorator."""
+    m = re.search(r"\b" + key + r"\s*:\s*\[?\s*(['\"`])", meta)
+    if not m:
+        return None
+    q, i, j = m.group(1), m.end(), m.end()
+    while j < len(meta):
+        if meta[j] == "\\":
+            j += 2
+            continue
+        if meta[j] == q:
+            return meta[i:j]
+        j += 1
+    return meta[i:]
+
+
+def _ng_io(body: str, meta: str) -> tuple[list[str], list[str]]:
+    """Inputs and outputs of a component class: decorators, signal functions, and `inputs:` metadata."""
+    ins: list[str] = []
+    for m in re.finditer(r"@Input\(\s*(\{[^)]*\}|['\"]\w+['\"])?\s*\)\s*(?:(?:public|protected|private|readonly|override|declare)\s+)*(?:set\s+)?(\w+)", body):
+        arg = m.group(1) or ""
+        alias = re.search(r"(?:alias\s*:\s*)?['\"](\w+)['\"]", arg)
+        ins.append((alias.group(1) if alias else m.group(2)) + (" (required)" if re.search(r"required\s*:\s*true", arg) else ""))
+    for m in re.finditer(r"(?:^|[\s;{])(?:(?:public|protected|private|readonly|override)\s+)*(\w+)\s*=\s*(input|model)(\.required)?\s*(?:<[^;=]*?>)?\s*\(", body):
+        ins.append(m.group(1) + (" (required)" if m.group(3) else "") + (" (two-way)" if m.group(2) == "model" else ""))
+    im = re.search(r"\binputs\s*:\s*\[([^\]]*)\]", meta)
+    if im:
+        ins += [x.split(":")[0].strip() for x in re.findall(r"['\"]([^'\"]+)['\"]", im.group(1))]
+    outs = [m.group(1) or m.group(2) for m in re.finditer(r"@Output\(\s*(?:['\"](\w+)['\"])?\s*\)\s*(?:(?:public|protected|private|readonly|override)\s+)*(\w+)", body)]
+    outs += [m.group(1) for m in re.finditer(r"(?:^|[\s;{])(?:(?:public|protected|private|readonly|override)\s+)*(\w+)\s*=\s*(?:output|outputFromObservable)\s*(?:<[^;=]*?>)?\s*\(", body)]
+    return list(dict.fromkeys(ins)), list(dict.fromkeys(outs))
+
+
+def angular_components(root: Path, src_files: list[Path]) -> list[dict]:
+    """Every @Component: class, selectors, template (its file or inline), stylesheets, inputs and outputs."""
+    out = []
+    for f in src_files:
+        if f.suffix != ".ts" or re.search(r"\.(spec|test|stories)\.ts$", f.name):
+            continue
+        t = read(f, 300_000)
+        if "@Component" not in t:
+            continue
+        code = _no_comments(t)
+        for m in re.finditer(r"@Component\s*\(\s*\{", code):
+            meta = _balanced(code, m.end() - 1)
+            rest = code[m.end() - 1 + len(meta) + 2:]
+            cm = re.search(r"export\s+(default\s+)?(?:abstract\s+)?class\s+(\w+)[^{]*\{", rest)
+            if not cm:
+                continue
+            body = _balanced(rest, cm.end() - 1)
+            sel = re.search(r"\bselector\s*:\s*['\"`]([^'\"`]+)", meta)
+            turl = re.search(r"\btemplateUrl\s*:\s*['\"]([^'\"]+)", meta)
+            tfile = Path(os.path.normpath(f.parent / turl.group(1))) if turl else None
+            template = read(tfile, 200_000) if tfile and tfile.is_file() else (_ng_inline(meta, "template") or "")
+            urls = re.findall(r"['\"]([^'\"]+\.(?:s?css|sass|less))['\"]", " ".join(re.findall(r"\bstyleUrls?\s*:\s*(\[[^\]]*\]|['\"][^'\"]+['\"])", meta)))
+            ins, outs = _ng_io(body, meta)
+            out.append({
+                "class": cm.group(2), "default": bool(cm.group(1)), "file": f, "selectors": [s.strip() for s in sel.group(1).split(",")] if sel else [],
+                "templateFile": tfile, "template": template, "styles": [Path(os.path.normpath(f.parent / u)) for u in urls],
+                "unscoped": bool(re.search(r"encapsulation\s*:\s*ViewEncapsulation\.(?:None|ShadowDom)", meta)),
+                "standalone": (True if re.search(r"\bstandalone\s*:\s*true", meta) else False if re.search(r"\bstandalone\s*:\s*false", meta) else None),
+                "inputs": ins, "outputs": outs, "code": code,
+            })
+    return out
+
+
+def _ng_tag_re(selector: str) -> re.Pattern | None:
+    """How a template uses a selector: `app-card` → <app-card, `[appTip]` / `button[appTip]` → an appTip attribute."""
+    s = selector.strip()
+    if re.match(r"^[a-z][\w-]*$", s):
+        return re.compile(r"<" + re.escape(s) + r"(?=[\s/>])")
+    m = re.match(r"^([a-z][\w-]*)?\[([\w-]+)\]$", s)
+    if m:
+        return re.compile(r"<" + (re.escape(m.group(1)) if m.group(1) else r"[\w-]+") + r"\b[^>]*?\s\[?\(?" + re.escape(m.group(2)) + r"\)?\]?(?=[\s=/>])")
+    return None
+
+
+def ng_template_tags(template: str) -> list[str]:
+    """The elements a template uses that are components (a dash in the name), in order of first use."""
+    return [t for t in dict.fromkeys(re.findall(r"<([a-z][\w]*-[\w-]*)(?=[\s/>])", template)) if t not in NG_STRUCTURAL]
+
+
+def angular_selector_uses(comps: list[dict]) -> list[dict]:
+    """The app's own components by how many templates use them: Angular's answer to 'imported most'."""
+    templates = [(c["file"], c["template"]) for c in comps if c["template"]]
+    ranked = []
+    for c in comps:
+        pats = [p for p in (_ng_tag_re(s) for s in c["selectors"]) if p]
+        if not pats:
+            continue
+        n_templates = n_uses = 0
+        for f, tmpl in templates:
+            if f == c["file"]:
+                continue
+            k = sum(len(p.findall(tmpl)) for p in pats)
+            if k:
+                n_templates += 1
+                n_uses += k
+        if n_templates:
+            ranked.append((c, n_templates, n_uses))
+    ranked.sort(key=lambda x: (-x[1], -x[2], str(x[0]["file"])))
+    return [{"component": c, "templates": n, "uses": u} for c, n, u in ranked]
+
+
+def _ng_routes_body(root: Path, f: Path, name: str | None, aliases: list) -> tuple[Path, str] | None:
+    """The body of a routes array: the one named `name` in file f (followed to the file that declares it),
+    its default export, or the array an NgModule hands to RouterModule.forChild."""
+    for _ in range(4):
+        code = _no_comments(read(f, 300_000))
+        if name is None:
+            m = re.search(r"export\s+default\s+(\w+)\s*;", code) or re.search(r"export\s+default\s+(?=\[)", code)
+            if not m:
+                return None
+            if m.lastindex:
+                name = m.group(1)
+            else:
+                return f, _balanced(code, m.end())
+        decl = re.search(r"(?:const|let|var)\s+" + re.escape(name) + r"\b[^=]*=\s*(?=\[)", code)
+        if decl:
+            return f, _balanced(code, decl.end())
+        mod = re.search(r"class\s+" + re.escape(name) + r"\b", code)
+        if mod:                                           # an NgModule: its forChild, here or in the routing module it imports
+            fc = re.search(r"RouterModule\.forChild\(\s*(\w+|\[)", code)
+            if fc:
+                if fc.group(1) == "[":
+                    return f, _balanced(code, fc.end() - 1)
+                name = fc.group(1)
+                continue
+            for rm in re.findall(r"\b(\w*Routing\w*Module)\b", code):
+                g = _ng_source_of(root, f, code, rm, aliases)
+                if g and g != f:
+                    f, name = g, rm
+                    break
+            else:
+                return None
+            continue
+        g = _ng_source_of(root, f, code, name, aliases)
+        if not g or g == f:
+            return None
+        f = g
+    return None
+
+
+def _ng_guard_names(v: str | None) -> list[str]:
+    if not v:
+        return []
+    inner = _balanced(v, 0) if v.startswith("[") else v
+    out = []
+    for g in _split_top(inner):
+        m = re.match(r"^(?:inject\()?\s*([A-Za-z_$][\w$]*)\s*\)?$", g)
+        out.append(m.group(1) if m else "(inline)")
+    return out
+
+
+def angular_routes(root: Path, src_files: list[Path], aliases: list) -> dict:
+    """The route table from provideRouter / RouterModule.forRoot, lazy children followed. Each record:
+    path, the component's class and file, lazy, guards (inherited), redirect, and the layout it sits in."""
+    start = None
+    for f in src_files:
+        if f.suffix != ".ts" or re.search(r"\.(spec|test)\.ts$", f.name):
+            continue
+        t = read(f, 300_000)
+        m = re.search(r"(?:provideRouter|RouterModule\.forRoot)\(\s*(\w+|\[)", _no_comments(t))
+        if m:
+            start = (f, m)
+            break
+    if not start:
+        return {"routes": [], "file": None}
+    f, m = start
+    code = _no_comments(read(f, 300_000))
+    if m.group(1) == "[":
+        found = (f, _balanced(code, m.end() - 1))
+    else:
+        found = _ng_routes_body(root, f, m.group(1), aliases)
+    records: list[dict] = []
+    _GUARD_FILES.clear()
+    if found:
+        _ng_walk(root, found[0], found[1], "", [], None, aliases, records, 0)
+    return {"routes": records, "file": rel(root, found[0]) if found else None}
+
+
+_GUARD_FILES: dict[str, Path] = {}   # guard name → the routes file that names it (filled by _ng_walk)
+
+
+def _ng_walk(root: Path, f: Path, body: str, prefix: str, guards: list[str], layout: dict | None,
+             aliases: list, out: list[dict], depth: int) -> None:
+    if depth > 6 or len(out) > 200:
+        return
+    code = _no_comments(read(f, 300_000))
+    for el in _split_top(body):
+        if el.startswith("..."):                          # ...OTHER_ROUTES
+            found = _ng_routes_body(root, f, el[3:].strip(), aliases)
+            if found:
+                _ng_walk(root, found[0], found[1], prefix, guards, layout, aliases, out, depth + 1)
+            continue
+        if not el.startswith("{"):
+            continue
+        fl = _fields(_balanced(el, 0))
+        path = _unquote(fl.get("path")) or ""
+        full = "/" + "/".join(x for x in (prefix.strip("/"), path.strip("/")) if x)
+        g = guards + [n for k in ("canActivate", "canMatch", "canLoad", "canActivateChild") for n in _ng_guard_names(fl.get(k))]
+        g = list(dict.fromkeys(g))
+        for n in g:
+            _GUARD_FILES.setdefault(n, f)
+        rec = {"path": "**" if path == "**" else full, "guards": g, "layout": layout, "lazy": False, "cls": None, "file": None,
+               "redirect": None, "title": _unquote(fl.get("title")), "outlet": _unquote(fl.get("outlet"))}
+        if "redirectTo" in fl:
+            rec["redirect"] = _unquote(fl["redirectTo"]) or "(computed)"
+            out.append(rec)
+            continue
+        if "component" in fl:
+            rec["cls"] = fl["component"].strip()
+            rec["file"] = _ng_source_of(root, f, code, rec["cls"], aliases)
+        elif "loadComponent" in fl:
+            lm = NG_LAZY.search(fl["loadComponent"])
+            if lm:
+                rec["lazy"] = True
+                rec["file"] = _ng_resolve(root, f, lm.group(1), aliases)
+                dm = re.search(r"export\s+default\s+class\s+(\w+)", read(rec["file"], 300_000)) if rec["file"] and not lm.group(3) else None
+                rec["cls"] = lm.group(3) or (dm.group(1) if dm else "(default export)")
+        child_layout = {"cls": rec["cls"], "file": rec["file"], "path": rec["path"]} if rec["cls"] else layout
+        kids = fl.get("children")
+        if kids:
+            if rec["cls"]:
+                rec["hasChildren"] = True
+                out.append(rec)
+            if kids.startswith("["):
+                _ng_walk(root, f, _balanced(kids, 0), full, g, child_layout, aliases, out, depth + 1)
+            else:
+                found = _ng_routes_body(root, f, kids, aliases)
+                if found:
+                    _ng_walk(root, found[0], found[1], full, g, child_layout, aliases, out, depth + 1)
+            continue
+        if "loadChildren" in fl:
+            lc = fl["loadChildren"]
+            lm = NG_LAZY.search(lc)
+            spec, name = (lm.group(1), lm.group(3)) if lm else ((_unquote(lc) or "").split("#") + [None])[:2]
+            target = _ng_resolve(root, f, spec, aliases) if spec else None
+            found = _ng_routes_body(root, target, name, aliases) if target else None
+            if rec["cls"]:
+                rec["hasChildren"] = True
+                out.append(rec)
+            if found:
+                n0 = len(out)
+                _ng_walk(root, found[0], found[1], full, g, child_layout, aliases, out, depth + 1)
+                for r in out[n0:]:
+                    r["lazy"] = True
+            continue
+        if rec["cls"]:
+            out.append(rec)
+
+
+def _ng_injected(code: str) -> list[str]:
+    """Classes a component or service asks for: inject(X), or constructor(private x: X)."""
+    names = re.findall(r"\binject\(\s*([A-Z]\w*)", code)
+    cm = re.search(r"constructor\s*\(", code)
+    if cm:
+        names += re.findall(r"(?:private|protected|public|readonly)\s+(?:readonly\s+)?\w+\s*:\s*([A-Z]\w*)", _balanced(code, cm.end() - 1))
+    return list(dict.fromkeys(names))
+
+
+def angular_env(root: Path, ws: dict | None) -> dict[str, str]:
+    """String values of the environment file `ng serve` uses (the development replacement when there is one)."""
+    src = root / (ws or {}).get("src", "src")
+    cands = [root / w for r, w in (ws or {}).get("env", []) if w and "environment" in w] + [src / "environments" / "environment.development.ts", src / "environments" / "environment.ts"]
+    for c in cands:
+        if c.is_file():
+            return dict(re.findall(r"(\w+)\s*:\s*['\"`]([^'\"`]*)['\"`]", _no_comments(read(c))))
+    return {}
+
+
+def _ng_url(expr: str, env: dict, fields: dict) -> str:
+    """A request's URL argument as a path: template literals and `+` joins resolved where the parts are known."""
+    expr = expr.strip()
+    if expr.startswith("`"):
+        s = expr.strip("`")
+    else:
+        parts = []
+        for p in re.split(r"\s*\+\s*", expr):
+            q = _unquote(p)
+            parts.append(q if q is not None else "${" + p + "}")
+        s = "".join(parts)
+
+    def sub(m):
+        name = m.group(1).strip()
+        if not re.match(r"^[\w$.]+$", name):
+            return "{…}"
+        key = name.split(".")[-1]
+        if name.startswith("environment."):
+            return env.get(key, "{" + key + "}")
+        if name.startswith("this.") and key in fields:
+            return fields[key]
+        return "{" + key + "}"
+    return re.sub(r"\$\{([^}]*)\}", sub, s)
+
+
+def angular_http(root: Path, src_files: list[Path], env: dict) -> dict[Path, dict]:
+    """Services that call HttpClient: per file, the class and each method's requests (GET /api/x)."""
+    out: dict[Path, dict] = {}
+    for f in src_files:
+        if f.suffix != ".ts" or re.search(r"\.(spec|test)\.ts$", f.name):
+            continue
+        t = read(f, 300_000)
+        if "HttpClient" not in t:
+            continue
+        code = _no_comments(t)
+        members = re.findall(r"(\w+)\s*=\s*inject\(\s*HttpClient\s*\)", code) + re.findall(r"(?:private|protected|public|readonly)\s+(?:readonly\s+)?(\w+)\s*:\s*HttpClient\b", code)
+        if not members:
+            continue
+        fields = {k: _ng_url(v, env, {}) for k, v in re.findall(r"(?:private|protected|public|readonly|static)?\s*(\w+)\s*=\s*((?:environment\.\w+|['\"`][^'\"`]*['\"`])(?:\s*\+\s*['\"`][^'\"`]*['\"`])?)\s*;", code)}
+        cls = re.search(r"export\s+class\s+(\w+)", code)
+        methods: dict[str, list[str]] = {}
+        call = re.compile(r"\b(?:this\.)?(?:" + "|".join(map(re.escape, dict.fromkeys(members))) + r")\s*\.\s*(get|post|put|patch|delete|request)\s*(?:<[^()]*?>)?\s*\(")
+        for m in call.finditer(code):
+            args = _split_top(_balanced(code, m.end() - 1))
+            if not args:
+                continue
+            head = code[:m.start()]
+            owner = None
+            for om in re.finditer(r"\n\s+(?:(?:public|private|protected|async|static|override)\s+)*(\w+)\s*(?:<[^>]*>)?\s*\([^)]*\)\s*(?::[^{]*)?\{", head):
+                owner = om.group(1)
+            if owner in {"if", "for", "while", "switch", "constructor", "catch", "function"}:
+                owner = None
+            methods.setdefault(owner or "?", []).append(f"{m.group(1).upper()} `{_ng_url(args[0], env, fields)}`")
+        if methods:
+            out[f] = {"class": cls.group(1) if cls else f.stem, "methods": {k: list(dict.fromkeys(v)) for k, v in methods.items()}}
+    return out
+
+
+def _ng_page_data(root: Path, comp: dict, http: dict[Path, dict], aliases: list) -> list[str]:
+    """The requests a page's own code sets off: the service methods it calls, through what it injects."""
+    code = comp["code"]
+    calls = []
+    for svc in _ng_injected(code):
+        g = _ng_source_of(root, comp["file"], code, svc, aliases)
+        if not g or g not in http:
+            continue
+        var = re.findall(r"(\w+)\s*=\s*inject\(\s*" + svc + r"\b", code) + re.findall(r"(\w+)\s*:\s*" + svc + r"\b", code)
+        used = set(re.findall(r"inject\(\s*" + svc + r"\s*\)\s*\.\s*(\w+)\(", code))
+        for v in var:
+            used |= set(re.findall(r"\b(?:this\.)?" + re.escape(v) + r"\s*\.\s*(\w+)\s*\(", code))
+        for meth, reqs in http[g]["methods"].items():
+            if meth in used:
+                calls += [f"{r} ({svc}.{meth})" for r in reqs]
+    return list(dict.fromkeys(calls))
+
+
+def _ng_session(root: Path, f: Path, aliases: list, depth: int = 0, seen: set | None = None) -> list[tuple[str, str]]:
+    """Where a guard's service keeps the session: storage keys in it or in the services it injects."""
+    seen = seen if seen is not None else set()
+    if f in seen or depth > 3:
+        return []
+    seen.add(f)
+    t = _no_comments(read(f, 200_000))
+    found = [(f"localStorage `{k}`", rel(root, f)) for k in re.findall(r"(?:local|session)Storage(?:\.(?:getItem|setItem)\(\s*|\[\s*)['\"]([^'\"]+)['\"]", t)]
+    for name, key in re.findall(r"(?:const|readonly|private|static)\s+(?:readonly\s+)?(\w*(?:key|KEY|Key))\s*=\s*['\"]([\w.:/-]+)['\"]", t):
+        m = re.search(r"(\w*(?:Storage|store|storage)\w*)\s*\.\s*(?:get|set|getItem|setItem|remove|removeItem)\w*\(\s*(?:this\.)?" + re.escape(name) + r"\b", t)
+        if m:
+            found.append((f"{m.group(1)} `{key}`" if m.group(1) in ("localStorage", "sessionStorage") else f"storage key `{key}`", rel(root, f)))
+    for svc in _ng_injected(t):
+        g = _ng_source_of(root, f, t, svc, aliases)
+        if g and g != f:
+            found += _ng_session(root, g, aliases, depth + 1, seen)
+    return list(dict.fromkeys(found))
+
+
+def angular_guards(root: Path, routes: list[dict], routes_file: str | None, aliases: list) -> list[str]:
+    """One line per guard: the pages it covers, where it redirects, and for a sign-in guard where the session lives."""
+    covers: dict[str, list[str]] = collections.defaultdict(list)
+    for r in routes:
+        if r["cls"] and not r.get("hasChildren"):
+            for g in r["guards"]:
+                covers[g].append(r["path"])
+    lines = []
+    for g, paths in covers.items():
+        src_file = _GUARD_FILES.get(g) or (root / routes_file if routes_file else None)
+        if g == "(inline)" or not src_file:
+            continue
+        code = _no_comments(read(src_file, 300_000))
+        gf = _ng_source_of(root, src_file, code, g, aliases)
+        pkg = None
+        if not gf:
+            pm = re.search(r"import\s*\{[^}]*\b" + re.escape(g) + r"\b[^}]*\}\s*from\s*['\"]([^'\"]+)['\"]", code)
+            pkg = pm.group(1) if pm else None
+        gt = _no_comments(read(gf, 200_000)) if gf else ""
+        if gf and gf == src_file:                        # a guard declared in the routes file: its own statement
+            m = re.search(r"(?:const|function)\s+" + re.escape(g) + r"\b", gt)
+            gt = gt[m.start(): m.start() + 900] if m else ""
+        to = re.search(r"(?:createUrlTree|navigate)\(\s*\[\s*['\"]([^'\"]+)|(?:parseUrl|navigateByUrl)\(\s*['\"]([^'\"]+)", gt)
+        target = (to.group(1) or to.group(2)) if to else None
+        shown = ", ".join(f"`{p}`" for p in paths[:4]) + (f" and {len(paths) - 4} more" if len(paths) > 4 else "")
+        line = f"guard `{g}`" + (f" (`{rel(root, gf)}`)" if gf and gf != src_file else f" (from `{pkg}`)" if pkg else "") + f" runs before {shown}"
+        if target:
+            line += f"; it can redirect to `{target}`"
+        if re.search(r"login|sign-?in|auth", target or "", re.I) or re.search(r"auth|login|session|token", g, re.I):
+            session = []
+            for svc in _ng_injected(gt) if gf else []:
+                sf = _ng_source_of(root, gf, _no_comments(read(gf, 200_000)), svc, aliases)
+                if sf:
+                    session += _ng_session(root, sf, aliases)
+            line += " — a render there needs a session"
+            if session:
+                keys = list(dict.fromkeys(k for k, _ in session))
+                line += ": " + ", ".join(keys[:2]) + f" (`{session[0][1]}`): seed it with `--init-script`, or sign in with `--act`"
+            else:
+                line += " (`--init-script` / `--storage-state`, or sign in with `--act`)"
+        lines.append(line)
+    return lines
+
+
+def angular_bootstrap(root: Path, ws: dict | None, comps: list[dict], aliases: list) -> dict | None:
+    """The root component: bootstrapApplication(App) in main.ts, or an NgModule's `bootstrap: [AppComponent]`."""
+    src = root / (ws or {}).get("src", "src")
+    main = next((m for m in (src / "main.ts", root / "src" / "main.ts") if m.is_file()), None)
+    if not main:
+        return None
+    t = _no_comments(read(main))
+    m = re.search(r"bootstrapApplication\(\s*(\w+)", t)
+    f, name = main, None
+    if m:
+        name = m.group(1)
+    else:
+        mm = re.search(r"bootstrapModule\(\s*(\w+)", t)
+        mf = _ng_source_of(root, main, t, mm.group(1), aliases) if mm else None
+        if mf:
+            mt = _no_comments(read(mf))
+            bm = re.search(r"bootstrap\s*:\s*\[\s*(\w+)", mt)
+            if bm:
+                f, t, name = mf, mt, bm.group(1)
+    if not name:
+        return None
+    cf = _ng_source_of(root, f, t, name, aliases)
+    return next((c for c in comps if c["class"] == name and c["file"] == cf), None)
+
+
+def _ng_comp(comps: list[dict], cls: str | None, file: Path | None) -> dict | None:
+    if not file:
+        return None
+    same = [c for c in comps if c["file"] == file]
+    return next((c for c in same if c["class"] == cls), None) or next((c for c in same if c["default"]), None) or (same[0] if len(same) == 1 else None)
+
+
+def angular_material(root: Path, css_files: list[Path], ws: dict | None, comps: list[dict], deps: dict) -> dict | None:
+    """Angular Material's theme: the mixin that builds it, palettes, typography, density, and its components by use."""
+    if "@angular/material" not in deps:
+        return None
+    info: dict = {"file": None, "kind": None, "colors": {}, "typography": None, "density": None, "prebuilt": None, "overrides": []}
+    for s in (ws or {}).get("styles", []):
+        m = re.search(r"prebuilt-themes/([\w-]+)\.css", s)
+        if m:
+            info["prebuilt"] = m.group(1)
+    themes = []
+    src = root / (ws or {}).get("src", "src")
+    for c in sorted((c for c in css_files if c.suffix in {".scss", ".sass"}),
+                    key=lambda c: (0 if src in c.parents else 1, 0 if re.search(r"default|light|main|theme", c.stem, re.I) and "dark" not in c.stem.lower() and "black" not in c.stem.lower() else 1, str(c))):
+        t = read(c)
+        themes += [n for n in re.findall(r"\$([\w-]+)\s*:\s*(?:mat\.)?(?:m2-)?(?:define-(?:light-|dark-)?theme|mat-(?:light|dark)-theme)\(", t)]
+        m = re.search(r"mat\.theme\(\s*\(", t) or re.search(r"mat\.(?:m2-)?define-(?:light-|dark-)?theme\(", t) or re.search(r"(?<![\w-])mat-(?:light|dark)-theme\(", t)
+        if m and not info["file"]:
+            body = _balanced(t, t.index("(", m.start()))
+            info["file"] = f"{rel(root, c)}:{t[:m.start()].count(chr(10)) + 1}"
+            info["kind"] = "M3" if "mat.theme(" in m.group(0) or (re.search(r"define-theme\($", m.group(0)) and "m2-" not in m.group(0)) else "M2"
+            for role, pal in re.findall(r"(primary|secondary|tertiary|accent|warn|error|neutral)\s*:\s*(?:mat\.)?\$?(?:m2-)?([\w-]+?)(?:-palette)?(?![\w-])", body):
+                info["colors"].setdefault(role, pal)
+            if info["kind"] == "M2" and not info["colors"]:        # M2: palettes are variables defined above the call
+                for var, pal in re.findall(r"\$([\w-]+)\s*:\s*(?:mat\.)?(?:m2-)?(?:define-)?(?:mat-)?palette\(\s*(?:mat\.)?\$(?:m2-|mat-)?([\w-]+?)(?:-palette)?(?![\w-])", t):
+                    role = next((r for r in ("primary", "accent", "warn") if r in var), None)
+                    if role:
+                        info["colors"].setdefault(role, pal)
+            ty = re.search(r"typography\s*:\s*([\w' -]+|\([^)]*\))", body)
+            info["typography"] = ty.group(1).strip().strip("'\"") if ty else None
+            dn = re.search(r"density\s*:\s*(-?\d)", body)
+            info["density"] = dn.group(1) if dn else None
+        info["overrides"] += re.findall(r"mat\.([\w-]+)-overrides\(", t)
+    counts: collections.Counter = collections.Counter()
+    sys_vars = 0
+    for c in comps:
+        counts.update(re.findall(r"<(mat-[\w-]+)(?=[\s/>])", c["template"]))
+        counts.update("mat-" + re.sub(r"(?<!^)(?=[A-Z])", "-", a).lower() for a in re.findall(r"\smat(Button|IconButton|FlatButton|StrokedButton|RaisedButton|Fab|MiniFab|Input|Tooltip|Badge|Ripple|SortHeader)(?=[\s=>/])", c["template"]))
+        counts.update(re.findall(r"\s(mat-(?:raised|flat|stroked|icon|mini-fab|fab)?-?button|mat-table|mat-sort-header|mat-list-item|mat-menu-item)(?=[\s=>/])", c["template"]))
+        for s in c["styles"]:
+            sys_vars += len(re.findall(r"var\(\s*--mat-sys-", read(s, 100_000)))
+        sys_vars += len(re.findall(r"var\(\s*--mat-sys-", _ng_inline(c["code"], "styles") or ""))
+    info["components"] = counts.most_common(14)
+    info["sysVars"] = sys_vars
+    info["overrides"] = list(dict.fromkeys(info["overrides"]))[:8]
+    info["themes"] = list(dict.fromkeys(themes))[:6]
+    return info
+
+
+def angular_dark(root: Path, css_files: list[Path]) -> tuple[str, str] | None:
+    """A class that switches the theme: named like one (.dark-theme, .theme-dark), setting `color-scheme: dark`,
+    or wrapping a Material dark theme. Returns (class, file:line)."""
+    dark_vars = set()
+    for c in css_files:
+        t = read(c)
+        dark_vars |= set(re.findall(r"\$([\w-]+)\s*:\s*(?:mat\.)?(?:m2-)?(?:define-dark-theme|mat-dark-theme)\(", t))
+        dark_vars |= {v for v, body in re.findall(r"\$([\w-]+)\s*:\s*mat\.define-theme\(\s*\((.*?)\)\s*\)\s*;", t, re.S) if re.search(r"theme-type\s*:\s*dark", body)}
+    for c in css_files:
+        t = read(c)
+        for m in re.finditer(r"(?m)^[ \t]*((?:html|body|:root)?\.([\w-]+))(?![\w.:#\[-])[^{};]*\{", t):
+            cls, block = m.group(2), block_after(t, m.start())
+            if NG_THEME_CLASS.match(cls) or (NG_PREFIXED_THEME.match(cls) and re.search(r"--[\w-]+\s*:|color-scheme\s*:", block)) \
+                    or re.search(r"color-scheme\s*:\s*dark\b", block) \
+                    or any(re.search(r"\(\s*\$" + re.escape(v) + r"\s*\)", block) for v in dark_vars):
+                return cls, f"{rel(root, c)}:{t[:m.start()].count(chr(10)) + 1}"
+    return None
+
+
+def angular_dark_setter(root: Path, src_files: list[Path], cls: str) -> str | None:
+    """The TypeScript that puts the theme class on the page, and the storage key it remembers the choice in."""
+    for f in src_files:
+        if f.suffix != ".ts" or re.search(r"\.(spec|test)\.ts$", f.name):
+            continue
+        t = read(f, 200_000)
+        if cls not in t:
+            continue
+        if re.search(r"(?:classList\.(?:add|toggle|replace)|addClass)\([^)]*['\"]" + re.escape(cls) + r"['\"]", t) or re.search(r"\[class\.\s*" + re.escape(cls), t):
+            key = re.search(r"localStorage\.(?:getItem|setItem)\(\s*['\"]([^'\"]+)", t)
+            kv = re.findall(r"(?:const|readonly|private|static)\s+(?:readonly\s+)?(\w*(?:key|KEY|Key))\s*=\s*['\"]([\w.:/-]+)['\"]", t)
+            local = bool(kv) and bool(re.search(r"localStorage\.(?:getItem|setItem)\(\s*(?:this\.)?" + re.escape(kv[0][0]) + r"\b", t))
+            where = f"localStorage `{key.group(1)}`" if key else (f"{'localStorage' if local else 'storage key'} `{kv[0][1]}`" if kv else None)
+            follows = " — follows the OS until chosen" if "prefers-color-scheme" in t else ""
+            key_name = key.group(1) if key else (kv[0][1] if kv and local else None)
+            switch = f"; render dark through it: `--dark-storage {key_name}=dark`" if key_name and re.search(r"['\"]dark['\"]", t) else ""
+            return f"set by `{rel(root, f)}`" + (f" ({where})" if where else "") + follows + switch
+    return None
+
+
+def angular_proxies(root: Path, ws: dict | None) -> list[tuple[str, str, str]]:
+    """`ng serve`'s proxy file (proxy.conf.json, or a .js one): path → target."""
+    f = root / ws["proxy"] if ws and ws.get("proxy") else None
+    if not f or not f.is_file():
+        return []
+    t = _no_comments(read(f))
+    out = []
+    if f.suffix == ".json":
+        try:
+            d = json.loads(re.sub(r",(\s*[}\]])", r"\1", t))
+        except json.JSONDecodeError:
+            d = {}
+        items = d.items() if isinstance(d, dict) else [((x.get("context") or ["?"])[0], x) for x in d if isinstance(x, dict)]
+        out = [(k, (v or {}).get("target", "?"), rel(root, f)) for k, v in items if isinstance(v, dict)]
+    else:
+        out = [(p, tg, rel(root, f)) for p, tg in re.findall(r"['\"]([^'\"]+)['\"]\s*:\s*\{[^}]*?target\s*:\s*['\"]([^'\"]+)['\"]", t, re.S)]
+    return out[:6]
+
+
+def angular_interceptors(root: Path, src_files: list[Path], aliases: list) -> list[str]:
+    """HTTP interceptors that change where requests go (a base URL) or add a session header; an in-browser fake backend."""
+    lines = []
+    for f in src_files:
+        if f.suffix != ".ts" or re.search(r"\.(spec|test)\.ts$", f.name):
+            continue
+        t = read(f, 200_000)
+        m = re.search(r"(\w*InMemoryWebApiModule)\.forRoot\(\s*(\w+)", t)
+        if m:
+            src = _ng_source_of(root, f, _no_comments(t), m.group(2), aliases)
+            lines.append(f"`{rel(root, f)}` answers the app's HTTP calls in the browser (angular-in-memory-web-api, `{m.group(2)}`"
+                         + (f" in `{rel(root, src)}`" if src else "") + "): nothing to mock or start")
+        if "HttpInterceptor" not in t and "HttpHandlerFn" not in t:
+            continue
+        code = _no_comments(t)
+        um = re.search(r"clone\(\s*\{[^}]*?\burl\s*:\s*(`[^`]*`|['\"][^'\"]*['\"])", code, re.S)
+        name = re.search(r"export\s+(?:const|function|class)\s+(\w+)", code)
+        if um:
+            base = re.sub(r"\$\{[^}]*url[^}]*\}", "", um.group(1).strip("`'\""))
+            if base and not base.startswith("${"):
+                lines.append(f"interceptor `{name.group(1) if name else f.stem}` (`{rel(root, f)}`) sends every request to `{base}` + its path — mock that host, or let the requests through")
+    return lines[:4]
+
+
+def angular_start(root: Path, src_files: list[Path], css_files: list[Path], deps: dict) -> dict:
+    """Start-here pieces for an Angular app: pages from the route table, layouts, what guards them, what they fetch."""
+    ws = angular_workspace(root)
+    aliases = ts_aliases(root)
+    comps = angular_components(root, src_files)
+    rt = angular_routes(root, src_files, aliases)
+    routes = rt["routes"]
+    env = angular_env(root, ws)
+    http = angular_http(root, src_files, env)
+    by_comp: dict[tuple, list[dict]] = {}
+    for r in routes:
+        if r["cls"] and r["file"] and not r.get("hasChildren"):
+            by_comp.setdefault((r["file"], r["cls"]), []).append(r)
+    pages = []
+    for (file, cls), rs in by_comp.items():
+        c = _ng_comp(comps, cls, file)
+        tmpl = c["template"] if c else ""
+        code = c["code"] if c else ""
+        signals = _signals(tmpl)
+        if re.search(r"\bMatDialog\b|\bDialogService\b|\bNzModalService\b|\bdialog\.open\(", code) and "dialog" not in signals:
+            signals.append("opens dialogs")
+        data = _ng_page_data(root, c, http, aliases) if c else []
+        if data:
+            signals.append("data: " + ", ".join(data[:3]) + (f", … {len(data) - 3} more" if len(data) > 3 else ""))
+        lay = rs[0]["layout"]
+        lc = _ng_comp(comps, lay["cls"], lay["file"]) if lay else None
+        renders = {"name": lay["cls"], "file": rel(root, lay["file"]), "lines": (lc["template"].count("\n") + 1) if lc else 0,
+                   "signals": [], "wrapper": True, "outlet": True} if lay and lay.get("file") else None
+        paths = list(dict.fromkeys(r["path"] for r in rs))
+        pages.append({
+            "file": rel(root, file), "lines": tmpl.count("\n") + 1 if tmpl else 0, "signals": signals, "classes": [],
+            "components": ng_template_tags(tmpl)[:6], "renders": renders,
+            "route": ", ".join(f"`{p}`" for p in paths[:3]) + (" (lazy)" if rs[0]["lazy"] else ""),
+            "template": (c["templateFile"].name if c and c["templateFile"] else "inline") if c else None,
+            "guards": rs[0]["guards"],
+        })
+    pages.sort(key=lambda p: p["file"])
+    shown_routes = []
+    for r in routes:
+        if r["redirect"] is not None:
+            shown_routes.append((r["path"], f"`{r['redirect']}` (redirect)"))
+        elif r["cls"]:
+            shown_routes.append((r["path"], r["cls"] + (" (lazy)" if r["lazy"] else "") + (" (layout)" if r.get("hasChildren") else "")))
+    root_comp = angular_bootstrap(root, ws, comps, aliases)
+    layouts = []
+    if root_comp:
+        sel = next(iter(root_comp["selectors"]), "app-root")
+        layouts.append({"file": rel(root, root_comp["file"]), "scopeText": f"is the root (`<{sel}>`): wraps every page",
+                        "css": [s for s in (ws or {}).get("styles", [])][:4], "fonts": [], "providers": [],
+                        "chrome": ng_template_tags(root_comp["template"])[:8]})
+    seen = set()
+    for r in routes:
+        lay = r["layout"]
+        if not lay or not lay.get("file") or (lay["cls"], lay["file"]) in seen:
+            continue
+        seen.add((lay["cls"], lay["file"]))
+        under = [p["route"].split(",")[0].split(" ")[0] for p in pages if p["renders"] and p["renders"]["name"] == lay["cls"]]
+        lc = _ng_comp(comps, lay["cls"], lay["file"])
+        layouts.append({"file": rel(root, lay["file"]),
+                        "scopeText": f"wraps the {len(under)} page{'s' if len(under) != 1 else ''} under `{lay['path']}`" + (f" ({', '.join(under[:4])}{', …' if len(under) > 4 else ''})" if under else ""),
+                        "css": [], "fonts": [], "providers": [], "chrome": ng_template_tags(lc["template"])[:8] if lc else []})
+    before = angular_guards(root, routes, rt["file"], aliases)
+    before += angular_interceptors(root, src_files, aliases)
+    for f, svc in list(http.items())[:4]:
+        reqs = [r for rs_ in svc["methods"].values() for r in rs_]
+        before.append(f"`{rel(root, f)}` ({svc['class']}) calls " + ", ".join(list(dict.fromkeys(reqs))[:5]) + (", …" if len(set(reqs)) > 5 else "")
+                      + " — mock what the page needs (`--mock`), or start the backend")
+    for s in (ws or {}).get("styles", []):
+        if not (root / s).exists() and not s.startswith(("@", "node_modules")):
+            before.append(f"`angular.json` lists the stylesheet `{s}`, which is not on disk" + (" (a git submodule: `git submodule update --init`)" if (root / ".gitmodules").is_file() and s.split("/")[0] in read(root / ".gitmodules") else "") + " — the build stops without it")
+    if ws and ws.get("ssr"):
+        before.append("server-side rendering (`@angular/ssr`): `ng serve` renders each page on the server first, then hydrates it")
+    uses = angular_selector_uses(comps)
+    pages_files = {p["file"] for p in pages}
+    used = [{"file": rel(root, u["component"]["file"]), "selector": u["component"]["selectors"][0] if u["component"]["selectors"] else "?",
+             "templates": u["templates"], "uses": u["uses"], "inputs": u["component"]["inputs"][:7], "outputs": u["component"]["outputs"][:4]}
+            for u in uses if rel(root, u["component"]["file"]) not in pages_files][:10]
+    major = re.search(r"(\d+)", deps.get("@angular/core", ""))
+    major = int(major.group(1)) if major else 0
+    modules = sum(1 for c in comps if c["standalone"] is False or (c["standalone"] is None and major and major < 19))
+    scoped = {s for c in comps if not c["unscoped"] for s in c["styles"]}
+    return {
+        "pages": pages[:24], "routes": shown_routes[:30], "layouts": layouts[:6], "stackBefore": before,
+        "ngUsed": used, "material": angular_material(root, css_files, ws, comps, deps),
+        "router": ("NgModules" if modules > len(comps) / 2 else "standalone components") + (f"; routes in `{rt['file']}`" if rt["file"] else ""),
+        "port": (ws or {}).get("port"), "proxies": angular_proxies(root, ws), "scopedCss": scoped, "components": len(comps),
+        "inlineTemplates": [c["template"] for c in comps if not c["templateFile"] and c["template"]],
+    }
+
+
 def page_signatures(root: Path, src_files: list[Path], vocab_names: list[str], framework: str | None = None) -> dict:
     pages, routes = [], []
     is_next, is_nuxt = framework == "Next.js", framework == "Nuxt"
@@ -1471,7 +2359,7 @@ def storage_keys(root: Path, src_files: list[Path]) -> list[str]:
         t = read(p, 200_000)
         if "localStorage" not in t and "sessionStorage" not in t and "indexedDB" not in t and "openDB(" not in t:
             continue
-        keys = re.findall(r"(?:localStorage|sessionStorage)\.(?:getItem|setItem)\(\s*['\"`]([^'\"`$]+)['\"`]", t)
+        keys = re.findall(r"(?:localStorage|sessionStorage)(?:\.(?:getItem|setItem)\(\s*|\[\s*)['\"`]([^'\"`$]+)['\"`]", t)
         for name, value in re.findall(r"(?:const|let|var)\s+(\w+)\s*=\s*['\"`]([\w.:/-]+)['\"`]", t):
             if re.search(r"(?:localStorage|sessionStorage)\.(?:getItem|setItem)\(\s*" + re.escape(name) + r"\b", t):
                 keys.append(value)
@@ -1513,36 +2401,51 @@ def gates(root: Path, src_files: list[Path]) -> list[str]:
 def start_here(root: Path, src_files: list[Path], css_files: list[Path], stack: dict, deps: dict) -> dict:
     ui_files = [p for p in src_files if p.suffix in {".tsx", ".jsx", ".vue", ".svelte", ".astro", ".html", ".mdx"}]
     texts = [read(p, 200_000) for p in ui_files[:MAX_SRC_FILES]]
-    vocab = css_vocabulary(root, css_files, texts)
-    sig = page_signatures(root, src_files, [v["name"] for v in vocab], stack.get("framework"))
+    ng = angular_start(root, src_files, css_files, deps) if stack.get("framework") == "Angular" else None
+    if ng:      # a component's own stylesheet is scoped to it: only the global ones make a vocabulary
+        texts += ng["inlineTemplates"]
+        vocab = css_vocabulary(root, [c for c in css_files if c not in ng["scopedCss"]], texts, skip=r"(?:mat|mdc|cdk)-")
+        sig = {"pages": ng["pages"], "routes": ng["routes"]}
+    else:
+        vocab = css_vocabulary(root, css_files, texts)
+        sig = page_signatures(root, src_files, [v["name"] for v in vocab], stack.get("framework"))
     is_next = stack.get("framework") == "Next.js"
     is_nuxt = stack.get("framework") == "Nuxt"
     is_kit, is_astro = stack.get("framework") == "SvelteKit", stack.get("framework") == "Astro"
     notes = {"Nuxt": "references/stacks/nuxt.md", "Vue": "references/stacks/vue.md", "SvelteKit": "references/stacks/sveltekit.md",
-             "Svelte": "references/stacks/sveltekit.md", "Astro": "references/stacks/astro.md"}.get(stack.get("framework") or "")
+             "Svelte": "references/stacks/sveltekit.md", "Astro": "references/stacks/astro.md",
+             "Angular": "references/stacks/angular.md"}.get(stack.get("framework") or "")
+    dev = dev_setup(root)
+    theme = theme_mechanism(root, css_files, stack, src_files)
+    if ng:
+        dev["proxies"] = ng["proxies"] + dev["proxies"]
     return {
         "vocabulary": vocab,
-        "imported": import_fanin(root, src_files),
+        "imported": [] if ng else import_fanin(root, src_files),
         **sig,
         "layouts": (next_layouts(root) if is_next else nuxt_layouts(root, src_files) if is_nuxt else sveltekit_layouts(root) if is_kit
-                    else astro_layouts(root, src_files) if is_astro else []),
-        "stackBefore": sveltekit_before(root, deps) if is_kit else astro_before(root, deps) if is_astro else [],
+                    else astro_layouts(root, src_files) if is_astro else ng["layouts"] if ng else []),
+        "stackBefore": sveltekit_before(root, deps) if is_kit else astro_before(root, deps) if is_astro else ng["stackBefore"] if ng else [],
+        "ngUsed": ng["ngUsed"] if ng else [],
+        "material": ng["material"] if ng else None,
+        "ng": {"port": ng["port"], "router": ng["router"], "components": ng["components"]} if ng else None,
         "astro": is_astro,
         "autoImported": vue_component_uses(root, src_files, nuxt_components(root)) if is_nuxt else [],
         "nuxtui": nuxt_ui(root, src_files, deps),
         "nuxtBefore": nuxt_before(root, deps, src_files) if is_nuxt else [],
         "nuxt": is_nuxt,
-        "vite": "vite" in deps and not is_next and not is_nuxt and not is_astro,
+        "vite": "vite" in deps and not is_next and not is_nuxt and not is_astro and not ng,
         "stackNotes": notes,
-        "theme": theme_mechanism(root, css_files, stack, src_files),
+        "theme": theme,
         "middleware": middleware_line(root) if is_next else None,
         "locale": locale_routing(root, src_files, sig["routes"]),
         "next": is_next,
         "contentlayer": any(k in deps for k in ("contentlayer", "contentlayer2", "next-contentlayer", "next-contentlayer2")),
         "copy": copy_mechanism(root, src_files, deps),
         "boot": boot_requests(root, src_files),
-        "dev": dev_setup(root),
-        "gates": gates(root, src_files) + storage_keys(root, src_files),
+        "dev": dev,
+        "gates": gates(root, src_files) + [s for s in storage_keys(root, src_files)      # a key a guard or the theme line already names
+                                           if not ng or not any(s.split("`")[1] in b for b in ng["stackBefore"] + [theme or ""])],
     }
 
 
@@ -1558,6 +2461,29 @@ def md_start_here(sh: dict) -> list[str]:
         out.append("- Nuxt UI" + (f" — colours {cols}" + (f" (`{nu['config']}`)" if nu["config"] else "") if cols else "")
                    + (": its components by use, " + " · ".join(f"{n} ×{c}" for n, c in nu["components"]) if nu["components"] else "")
                    + ". A match task builds with these and the colour names, not hand-rolled Tailwind.")
+    mt = sh.get("material")
+    if mt and (mt["file"] or mt["prebuilt"] or mt["components"]):
+        bits = []
+        if mt["file"]:
+            cols = ", ".join(f"{k} `{v}`" for k, v in mt["colors"].items())
+            extra = [x for x in (cols, f"typography {mt['typography']}" if mt["typography"] else "", f"density {mt['density']}" if mt["density"] else "") if x]
+            bits.append(f"{mt['kind']} theme at `{mt['file']}`" + (f" ({'; '.join(extra)})" if extra else ""))
+        elif mt["prebuilt"]:
+            bits.append(f"prebuilt theme `{mt['prebuilt']}` (angular.json)")
+        if len(mt.get("themes") or []) > 1:
+            bits.append("themes " + ", ".join(f"`${n}`" for n in mt["themes"]))
+        if mt["sysVars"]:
+            bits.append(f"component styles read its `--mat-sys-*` variables ({mt['sysVars']} uses)")
+        if mt["overrides"]:
+            bits.append("overrides for " + ", ".join(mt["overrides"]))
+        out.append("- Angular Material — " + " · ".join(bits)
+                   + (": its components by use, " + " · ".join(f"{n} ×{c}" for n, c in mt["components"]) if mt["components"] else "")
+                   + ". A match task builds with these components and " + ("the `--mat-sys-*` variables" if mt["kind"] == "M3" else "the theme's palettes")
+                   + ", not hand-picked colours.")
+    if sh.get("ngUsed"):
+        out.append("- Used most (by selector, counted by the templates that use them): " + " · ".join(
+            f"`{u['file']}` `<{u['selector']}>` ({u['templates']}" + (f"; inputs {', '.join(u['inputs'])}" if u["inputs"] else "")
+            + (f"; outputs {', '.join(u['outputs'])}" if u["outputs"] else "") + ")" for u in sh["ngUsed"]))
     if sh.get("autoImported"):
         out.append("- Used most (auto-imported: counted by the templates that use them): " + " · ".join(
             f"`{m['file']}` ({m['importers']}" + (f"; props {', '.join(m['props'])}" if m.get("props") else "") + ")" for m in sh["autoImported"]))
@@ -1569,15 +2495,18 @@ def md_start_here(sh: dict) -> list[str]:
         wrappers_named = set()  # a wrapper's path and role once; later pages say only "inside X"
         for pg in sh["pages"]:
             bits = [f"{pg['lines']} lines"]
+            if pg.get("route"):                     # Angular: the route, then the template the page draws with
+                bits = [pg["route"], (f"template `{pg['template']}`, " if pg["template"] not in (None, "inline") else "inline template, ") + f"{pg['lines']} lines"]
             if pg["signals"]:
                 bits.append(", ".join(pg["signals"]))
             if pg["classes"]:
                 bits.append(", ".join(pg["classes"]))
             if pg["components"]:
-                bits.append(("uses " if pg["file"].endswith((".vue", ".svelte", ".astro", ".md", ".mdx")) else "imports ") + ", ".join(pg["components"]))
+                bits.append(("uses " if pg["file"].endswith((".vue", ".svelte", ".astro", ".md", ".mdx")) or pg.get("route") else "imports ") + ", ".join(pg["components"]))
             r = pg.get("renders")
             if r and r.get("wrapper"):
-                bits.append(f"inside {r['name']}" + ("" if r["file"] in wrappers_named else f" (`{r['file']}` · {r['lines']} lines: the chrome, its slot holds the page)"))
+                bits.append(f"inside {r['name']}" + ("" if r["file"] in wrappers_named else f" (`{r['file']}` · {r['lines']} lines: the chrome, its "
+                                                        + ("`<router-outlet>`" if r.get("outlet") else "slot") + " holds the page)"))
                 wrappers_named.add(r["file"])
             elif r:
                 bits.append(f"renders {r['name']} (`{r['file']}` · {r['lines']} lines" + (f" · {', '.join(r['signals'])}" if r["signals"] else "") + ")")
@@ -1649,6 +2578,9 @@ def md_start_here(sh: dict) -> list[str]:
             line += " — `nuxt dev` listens on :3000 unless `--port` says otherwise"
         elif sh.get("astro"):
             line += " — `astro dev` listens on :4321 unless `--port` says otherwise"
+        elif sh.get("ng"):
+            port = sh["ng"].get("port")
+            line += f" — `ng serve` listens on :{port} (`angular.json`)" if port else " — `ng serve` listens on :4200 unless `--port` says otherwise"
         elif sh.get("vite"):
             line += " — Vite listens on :5173 unless `--port` or `server.port` says otherwise"
         before.append(line)
@@ -1734,6 +2666,8 @@ def md(data: dict) -> str:
         out.append("- next/font: " + ", ".join(f["nextFont"]))
     if f["googleLinks"]:
         out.append("- Google Fonts links: " + ", ".join(f["googleLinks"]))
+    if f.get("iconFonts"):
+        out.append("- icon font: " + ", ".join(f["iconFonts"]) + " (Google Fonts) — its icons are ligatures: where the font cannot load, each shows as its name (`menu`, `more_vert`)")
     if f["fontFace"]:
         out.append("- @font-face: " + ", ".join(f["fontFace"]))
     for name, value in f["tokenFonts"]:
@@ -1814,11 +2748,14 @@ def main() -> int:
     comps = component_inventory(root, src_files)
     usage = usage_stats(src_files)
     docs = find_docs(root)
+    sh = start_here(root, src_files, css_files, stack, stack.get("deps") or {}) if not stack.get("workspaceApps") else None
+    if sh and sh.get("ng"):
+        stack["router"] = sh["ng"]["router"]
     data = {
         "root": str(root), "stack": stack, "tokens": tokens, "fonts": fonts,
         "components": comps, "usage": usage, "docs": docs,
-        "verdict": verdict(stack, tokens, fonts, comps, usage, docs),
-        "startHere": start_here(root, src_files, css_files, stack, stack.get("deps") or {}) if not stack.get("workspaceApps") else None,
+        "verdict": verdict(stack, tokens, fonts, comps, usage, docs, sh),
+        "startHere": sh,
     }
     if as_json:
         print(json.dumps(data, ensure_ascii=False, indent=2))

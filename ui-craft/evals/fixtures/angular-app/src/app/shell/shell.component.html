@@ -1,0 +1,37 @@
+<mat-sidenav-container class="sidenav-container">
+  <mat-sidenav
+    #drawer
+    class="sidenav"
+    fixedInViewport
+    [attr.role]="(isHandset$ | async) ? 'dialog' : 'navigation'"
+    [mode]="(isHandset$ | async) ? 'over' : 'side'"
+    [opened]="(isHandset$ | async) === false"
+  >
+    <mat-toolbar>Acme Ops</mat-toolbar>
+    <mat-nav-list>
+      @for (link of links; track link.path) {
+        <a mat-list-item [routerLink]="link.path" routerLinkActive #rla="routerLinkActive" [activated]="rla.isActive">
+          <mat-icon matListItemIcon>{{ link.icon }}</mat-icon>
+          <span matListItemTitle>{{ link.label }}</span>
+        </a>
+      }
+    </mat-nav-list>
+  </mat-sidenav>
+  <mat-sidenav-content>
+    <mat-toolbar>
+      @if (isHandset$ | async) {
+        <button type="button" aria-label="Toggle sidenav" matIconButton (click)="drawer.toggle()">
+          <mat-icon aria-label="Side nav toggle icon">menu</mat-icon>
+        </button>
+      }
+      <span class="spacer"></span>
+      <button type="button" matIconButton (click)="theme.toggle()" [attr.aria-label]="theme.dark() ? 'Use light theme' : 'Use dark theme'">
+        <mat-icon>{{ theme.dark() ? 'light_mode' : 'dark_mode' }}</mat-icon>
+      </button>
+      <button type="button" matButton (click)="logout()">Sign out</button>
+    </mat-toolbar>
+    <main class="content">
+      <router-outlet />
+    </main>
+  </mat-sidenav-content>
+</mat-sidenav-container>

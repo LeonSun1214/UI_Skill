@@ -1,14 +1,14 @@
 ---
 name: ui-craft
 metadata:
-  version: 0.13.0
+  version: 0.14.0
 description: >-
-  Build, change, and review UI in web projects built with React, Vue, Svelte or Astro (Vite, Next.js, Nuxt, SvelteKit, Astro; Tailwind or plain CSS) with a render → look → measure → fix loop, so what ships is checked against a real screenshot and real DOM measurements (contrast, tap targets, overflow, keyboard focus, hover, motion, dark mode) instead of guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even when they never say "design" or "UI". Also use it to inspect an existing project's design conventions before adding to it.
+  Build, change, and review UI in web projects built with React, Vue, Svelte, Astro or Angular (Vite, Next.js, Nuxt, SvelteKit, Astro, Angular CLI; Tailwind, plain CSS or Angular Material) with a render → look → measure → fix loop, so what ships is checked against a real screenshot and real DOM measurements (contrast, tap targets, overflow, keyboard focus, hover, motion, dark mode) instead of guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even when they never say "design" or "UI". Also use it to inspect an existing project's design conventions before adding to it.
 ---
 
 # ui-craft
 
-Version 0.13.0. (An older copy of this file means the installed skill is behind the
+Version 0.14.0. (An older copy of this file means the installed skill is behind the
 repository: re-run `install.sh`; `doctor.mjs` says when that is the case.)
 
 UI work has a gap that code review can't close: the first draft always has two or
@@ -91,7 +91,7 @@ Decide which of these you're doing, because they start differently:
 - **Greenfield** (empty project, prototype, single page) → step 2, then 3.
 - **Review or fix** ("polish", "looks off", "is it accessible") → step 4 on the existing page, then fix.
 
-Never assume the stack. Check `package.json` for `next` / `nuxt` / `@sveltejs/kit` / `astro` / `vite` / `react-router` / `vue-router`
+Never assume the stack. Check `package.json` for `next` / `nuxt` / `@sveltejs/kit` / `astro` / `@angular/core` / `vite` / `react-router` / `vue-router`
 and the Tailwind major (v4 is CSS-first with `@theme`; v3 uses `tailwind.config.*`).
 
 ### 1. Inspect the project before touching it (existing projects)
@@ -115,7 +115,10 @@ file routes or the route table, the layouts and the pages each wraps, the auto-i
 components, the route middleware and `server/api`; on SvelteKit and Astro, the file
 routes, each layout and the pages it wraps, what loads a page's data (`load`, form
 actions, content collections), the islands, and the hooks or middleware and the paths
-they guard. Each stack has notes to read once (`references/stacks/<stack>.md`, named
+they guard; on Angular, the route table followed through lazy components and modules,
+the layouts with a `<router-outlet>`, each guard with the pages it covers and the session
+it reads, the requests each page's services make, components by selector with their
+inputs and outputs, and the Material theme. Each stack has notes to read once (`references/stacks/<stack>.md`, named
 in the output). Read the one page whose
 signals match yours (or the file it renders) and the vocabulary lines; that is
 the whole of the reading for a match task. Below it the report has the tokens the project
@@ -234,8 +237,10 @@ node <skill-dir>/scripts/render.mjs http://localhost:5173/pricing --out .ui-craf
 ```
 
 Options: `--viewports 375,768,1440` (default) · `--dark` / `--no-dark` (dark mode is
-rendered automatically when the page has a `prefers-color-scheme: dark` rule or
-`.dark` class styles) · `--no-hover` · `--wait <ms>` · `--act STEP` (repeatable: what a
+rendered automatically when the page has a `prefers-color-scheme: dark` rule, theme-class
+styles (`.dark`, `.dark-theme`, `.theme-dark`, a class that sets `color-scheme: dark`) or
+`color-scheme: light dark`) · `--dark-storage KEY=VALUE` (dark through the app's own stored
+choice, then a reload: for a theme service that does more than a class) · `--no-hover` · `--wait <ms>` · `--act STEP` (repeatable: what a
 person does before the state you want measured — `click:SEL`, `type:SEL=TEXT`,
 `press:KEY`, `hover:SEL`, `focus:SEL`, `select:SEL=VALUE`, `wait:MS|SEL`; SEL is any
 Playwright selector, `text=Save` and `role=button[name="Delete"]` included) ·
@@ -326,13 +331,13 @@ read only the section you hit.
 | Content appears after hydration or a fetch | `--wait-for SELECTOR` |
 | A splash or cookie bar covers the page | `--dismiss Escape` or `--dismiss SELECTOR` |
 | The theme is set by a script at boot | nothing: the dark pass reloads |
-| One component, not a page | `scripts/harness.mjs` (Vite + React); in Vue, Svelte or Astro, render a page that holds it |
+| One component, not a page | `scripts/harness.mjs` (Vite + React); in Vue, Svelte, Astro or Angular, render a page that holds it |
 | Changing a page that exists, or proving one did not change | render before touching it, `--compare` after; restore generated files (contentlayer, codegen) before each render |
 | A dialog, drawer, menu, dropdown, or form error | `--act 'click:text=Delete'`, `--act 'type:SEL=x' --act press:Enter`; render the closed state too |
 | The project has checks (`tsc`, lint, tests) | run them after the last render; revert what a `lint --fix` reformats |
 | Monorepo | inspect, serve and render the one app you change |
 | Next.js | render `http://localhost:PORT`, never `127.0.0.1`; `requests: none` means the data came with the HTML: start what `dev` starts instead of mocking |
-| Nuxt, Vue, SvelteKit or Astro | the stack notes the inspector names; a kit's own defaults (Nuxt UI's faint rings, Starlight's theme) are inherited |
+| Nuxt, Vue, SvelteKit, Astro or Angular | the stack notes the inspector names; a kit's own defaults (Nuxt UI's faint rings, Material's faint focus tint, Starlight's theme) are inherited |
 
 ### 5. Report
 
@@ -366,7 +371,7 @@ never a temp directory.
 |---|---|
 | Starting on any existing codebase | run `scripts/inspect.py` — nothing else for a match task |
 | The page won't just render (a login, a backend, a splash, a dialog, Next.js) | that section of `references/real-projects.md` |
-| A Nuxt, Vue, SvelteKit or Astro project | `references/stacks/<stack>.md`, once (the inspector names it) |
+| A Nuxt, Vue, SvelteKit, Astro or Angular project | `references/stacks/<stack>.md`, once (the inspector names it) |
 | Choosing a look, or the output feels generic | `references/anti-generic.md` |
 | Picking token values, light or dark | run `scripts/contrast.py` |
 | A project the user will keep building on (tokens to persist) | `scripts/direction.py` — brief.json → check --fix → write |
