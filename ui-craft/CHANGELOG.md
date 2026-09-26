@@ -1,5 +1,31 @@
 # Changelog
 
+## Evals, after 0.11.4 — the judge knows what a match task is
+
+No change to the skill. The sixth trial's judge sent every Uses page back as
+"template-grade" for doing what the brief asked, because the generic rubric
+rewards distinctiveness and its score prompt never sees the brief.
+
+- `judge.py`: a match task (`"task_type": "match"` and a `"reference"` contact
+  sheet in `eval_metadata.json`) is scored against the page the brief names, on
+  fit, finish, hierarchy, brief and overall. Its pair asks which page the site's
+  owner would merge, and counts a new visual idea against a page.
+  Results go to `judge-match.json` / `judge-pairs-match.json`. `--rubric` forces
+  one, `--dry-run` prints what each run would be shown. `evals.json` tags each
+  eval with its task type. `summarize.py` prefers a match verdict and lists both
+  rubrics' pairs.
+- Validated on the sixth trial with an off-brief control: a page with the same
+  content, a gradient hero and violet cards. The generic score gives it 2, the
+  same as the three pages that followed the brief. The match score gives it 1
+  and them 3. The match rubric also resolved the ui-craft vs no-skill split,
+  which was a position split: ui-craft now wins in both orders.
+  ui-ux-pro-max still wins its pairs, at the lowest confidence. The seventh
+  trial's archive page scores 4, the highest of any trial page.
+  `evals/notes/trial-next-6.md`, `trial-next-7.md`.
+- The fixture numbers in the README (task 2 is a match task) are still generic
+  scores; re-judging them needs a render of the fixture's sibling page as the
+  reference.
+
 ## 0.11.4 — the seventh trial: a thin sibling
 
 A fresh agent added an archive page whose sibling, the Blog list, is 29 lines

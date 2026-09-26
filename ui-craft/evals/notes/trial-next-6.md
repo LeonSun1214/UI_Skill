@@ -79,3 +79,51 @@ here a single content choice (three samples or four) decided the judge. The
 claim the README can make from real repositories is narrower than the fixture
 claim: fewer defects and fewer reads at a similar cost, not a wide margin on
 what a design lead sees.
+
+## Re-judged with the match rubric (after 0.11.4)
+
+This is a match task: the brief says to follow the Projects page and not to improvise.
+The generic rubric scores distinctiveness, and its score prompt never shows the brief.
+`judge.py` now has a match rubric. It shows the reference first (a contact sheet of the
+page the brief names), scores fit, finish, hierarchy, brief and overall, and asks which
+page the site's owner would merge. It counts a new visual idea against a page.
+
+Both rubrics ran on the same model (the one used for the earlier verdicts was out of
+credit) and the same contact sheets. A fourth page went in as a control: the same
+content as the Uses page, styled with a gradient hero, italic serif headings, violet
+rounded cards and pill buttons. It is striking, and nothing like the site.
+
+| | generic, overall | match: fit · finish · hierarchy · brief · overall |
+|---|---|---|
+| ui-craft | 2 | 4 · 3 · 4 · 4 · **3** |
+| ui-ux-pro-max | 2 | 4 · 3 · 3 · 4 · **3** |
+| no skill | 2 | 4 · 4 · 3 · 4 · **3** |
+| off-brief control | 2 | 1 · 3 · 3 · 4 · **1** |
+
+| pair, both orders | generic | match |
+|---|---|---|
+| ui-craft vs no skill | split (each order picked the first image) | **ui-craft 2–0** (confidence 4, 3) |
+| ui-craft vs ui-ux-pro-max | ui-ux-pro-max 2–0 (2, 2) | ui-ux-pro-max 2–0 (2, 2) |
+| no skill vs ui-ux-pro-max | ui-ux-pro-max 2–0 (4, 3) | ui-ux-pro-max 2–0 (3, 4) |
+| ui-craft vs control | ui-craft 2–0 (4, 4) | ui-craft 2–0 (5, 5) |
+
+What it shows:
+
+1. **The generic score cannot see the brief.** It gives the control the same overall 2 as
+   the three pages that followed the brief. The match score gives the control 1 and the
+   others 3, and its notes say why: "This doesn't read as the same site." The generic
+   pair prompt does quote the brief, so it already preferred the matching page to the
+   control; the match rubric raised that from confidence 4 to 5.
+2. **A position split resolved.** Under the generic rubric, ui-craft against no skill was
+   a split in which each order picked the first image; the earlier model split the same
+   pair the other way round. Under the match rubric both orders pick ui-craft: its bordered
+   cards follow the Projects page, the unaided divider list does not.
+3. **ui-ux-pro-max still wins its pairs**, now for the fuller grid and item titles closer
+   in size to the Projects cards. It wins at confidence 2 against ui-craft, the lowest the
+   judge gives.
+4. **All three real pages score overall 3** ("belongs but needs a round of notes"). Fit 4
+   for all three. Finish is where they differ: no skill 4, the other two 3.
+
+Cost: 25 judge calls, $3.58 ($1.59 for the generic rubric, $1.99 for the match rubric and
+the archive page). The earlier generic verdicts, from the other model, are kept beside the
+new ones as `judge-fable.json` and `judge-pairs-fable.json`.

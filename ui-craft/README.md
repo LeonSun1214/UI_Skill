@@ -33,18 +33,21 @@ noted); ui-ux-pro-max once per task:
 | dark-mode task (12, earlier iteration) | **12 / 12** | 11 / 12 | 11 / 12 |
 | tokens per task (comparable, tasks 1–3) | 212k | 201k | 176k |
 | tokens, review task | **162k** | 275k | 180k |
-| visual judge, overall 1–5 (tasks 1–3) | 3.67 | 3.33 | 3.56 |
+| visual judge, overall 1–5 (tasks 1–3, generic rubric) | 3.67 | 3.33 | 3.56 |
 | pairwise vs ui-craft, both orders (tasks 1–3) | — | 0–2, 1 split | 0–3 |
 
 On a real repository (the Tailwind Next.js starter blog, one "add a Uses page
 that matches Projects" task, one run per configuration, `evals/notes/trial-next-6.md`)
 the three are closer: ui-craft's page has the fewest measured defects (8 text
 contrast failures against 10 and 10, 7 small targets against 17 and 7) and read
-11 project files before its first look against 21 and 25; the judge preferred
-ui-ux-pro-max's page in both orders for one reason, four sample items per group
-where ui-craft's three left an orphan card (a check since 0.11.2); no skill was
-cheapest (188k tokens against 207k and 264k). Fewer defects and fewer reads at a
-similar cost, not a wide margin on what a design lead sees.
+11 project files before its first look against 21 and 25; no skill was cheapest
+(188k tokens against 207k and 264k). Judged against the Projects page it had to
+match, all three pages score overall 3 of 5 (an off-brief control scores 1);
+head to head, ui-craft's page beats the unaided one in both orders, and
+ui-ux-pro-max's beats ui-craft's at the judge's lowest confidence, for a fuller
+grid (ui-craft's three sample items left an orphan card; a check since 0.11.2).
+Fewer defects and fewer reads at a similar cost, not a wide margin on what a
+design lead sees.
 
 The misses of the other two are what a renderer catches and a database cannot, and
 they repeat run after run: body text at 3.7:1, 20 px nav links, focus rings at
@@ -146,7 +149,8 @@ a screenshot), `constraints.md` (the rules with sources, marked measured or manu
 `evals/` is the benchmark: prompts and assertions (`evals.json`), three fixture
 projects plus a Next.js one, an objective grader that re-renders every output
 (`grade.py`), a visual judge that scores the contact sheets and compares
-configurations pairwise (`judge.py`), token accounting from transcripts
+configurations pairwise (`judge.py`; a match task is judged against a contact sheet
+of the page it must match, a greenfield task on its own), token accounting from transcripts
 (`timing_from_transcript.py`, `transcript_profile.py`) and a three-way summary
 (`summarize.py`). `evals/notes/` holds the sprint notes — what each iteration
 changed and why — and every iteration's summary table; the raw runs live in a

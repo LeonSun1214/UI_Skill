@@ -56,5 +56,10 @@ What it exposed:
    matter, not the skill's; its reply text is in the run's report, and future
    trials should ask for the summary in the final message instead of a file.
 
+**Judged against the Blog list page** (the match rubric, after 0.11.4): fit 4, finish 4,
+hierarchy 4, brief 5, overall 4. That is the highest score any trial page has had: "I'd
+merge it with at most a small note: make the mobile H1 stand out more from the year
+headings". None of the Uses pages scored above 3.
+
 Open: the no-skill and ui-ux-pro-max runs of this task, to see whether they also
 find the layout directly or read their way to it.
