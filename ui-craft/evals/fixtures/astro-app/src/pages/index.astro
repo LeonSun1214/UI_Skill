@@ -1,0 +1,27 @@
+---
+import BaseHead from '../components/BaseHead.astro';
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+import Newsletter from '../components/Newsletter.tsx';
+import { SITE_TITLE, SITE_DESCRIPTION } from '../consts';
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<BaseHead title={SITE_TITLE} description={SITE_DESCRIPTION} />
+	</head>
+	<body>
+		<Header />
+		<main>
+			<h1>Small, durable software</h1>
+			<p>
+				Field Notes collects what we learn building tools meant to last a decade: boring stacks,
+				small teams, and interfaces that explain themselves.
+			</p>
+			<p><a href="/blog">Read the notes</a> or <a href="/about">learn about us</a>.</p>
+			<Newsletter client:visible heading="One note a month" />
+		</main>
+		<Footer />
+	</body>
+</html>

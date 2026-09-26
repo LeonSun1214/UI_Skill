@@ -210,6 +210,10 @@ def detect_stack(root: Path) -> dict:
     if framework == "Nuxt":
         src = root / "app" if (root / "app" / "pages").is_dir() or (root / "app" / "app.vue").is_file() else root
         router = f"file routes in {rel(root, src / 'pages')}/" if (src / "pages").is_dir() else None
+    if framework == "SvelteKit" and (root / "src" / "routes").is_dir():
+        router = "file routes in src/routes/"
+    if framework == "Astro" and (root / "src" / "pages").is_dir():
+        router = "file routes in src/pages/"
     if framework == "Next.js":
         if (root / "app").is_dir() or (root / "src" / "app").is_dir():
             router = "App Router"
@@ -246,8 +250,10 @@ def detect_stack(root: Path) -> dict:
         "router": router,
         "react": deps.get("react"),
         "vue": deps.get("vue"),
+        "svelte": deps.get("svelte"),
         "frameworkVersion": next((deps.get(key) for key, label in KNOWN_FRAMEWORKS if label == framework and key in deps), None),
         "workspaceApps": workspace_apps,
+        "integrations": astro_integrations(root) if framework == "Astro" else [],
         "tailwind": tw,
         "tailwindMajor": tw_major,
         "tailwindConfigFiles": [rel(root, p) for p in config_files],
@@ -503,6 +509,15 @@ def props_of(path: Path) -> list[str]:
     """Prop names of a component file's main export, from its destructured signature or its
     Props type — enough to use it without opening the file."""
     t = read(path, 120_000)
+    if path.suffix in {".svelte", ".astro"}:
+        code = re.sub(r"//[^\n]*", "", re.sub(r"/\*.*?\*/", "", _script_blocks(t), flags=re.S))
+        m = re.search(r"let\s*\{(.*?)\}\s*(?::[^=]*)?=\s*\$props\(\)", code, re.S) \
+            or re.search(r"const\s*\{(.*?)\}\s*=\s*Astro\.props", code, re.S)
+        names = _destructured(m.group(1)) if m else re.findall(r"export\s+let\s+(\w+)", code)
+        if not names:
+            pm = re.search(r"(?:interface|type)\s+Props\b[^{]*\{([^}]*)\}", code)
+            names = re.findall(r"^\s*(\w+)\??\s*:", pm.group(1), re.M) if pm else []
+        return names[:9]
     t = re.sub(r"//[^\n]*", "", re.sub(r"/\*.*?\*/", "", t, flags=re.S))
     m = re.search(r"export\s+(?:default\s+)?function\s+\w+\s*\(\s*\{([^}]*)\}", t) \
         or re.search(r"export\s+(?:const|default)\s+\w*\s*=?\s*(?:React\.forwardRef[^(]*)?\(?\s*\{([^}]*)\}", t)
@@ -568,6 +583,8 @@ def import_fanin(root: Path, src_files: list[Path]) -> list[dict]:
                 target = (p.parent / spec).resolve()
             elif spec.startswith(("@/", "~/")):
                 target = (src_dir / spec[2:]).resolve()
+            elif spec.startswith("$lib/"):
+                target = (root / "src" / "lib" / spec[5:]).resolve()
             else:
                 continue
             if target in seen:
@@ -577,7 +594,7 @@ def import_fanin(root: Path, src_files: list[Path]) -> list[dict]:
     out = []
     for target, n in counts.most_common(80):
         found = None
-        for suffix in ("", ".tsx", ".ts", ".jsx", ".js", ".vue", ".svelte", "/index.tsx", "/index.ts", "/index.js"):
+        for suffix in ("", ".tsx", ".ts", ".jsx", ".js", ".vue", ".svelte", ".astro", "/index.tsx", "/index.ts", "/index.js"):
             c = Path(str(target) + suffix)
             if c.is_file():
                 found = c
@@ -603,12 +620,16 @@ def _signals(text: str) -> list[str]:
         signals.append(f"{n_fields} field{'s' if n_fields > 1 else ''}")
     if re.search(r"<(?:table|UTable|u-table|el-table|ElTable|VDataTable|v-data-table)\b", text):
         signals.append("table")
-    elif (".map(" in text and re.search(r"<(?:li|article|tr)\b", text)) or "v-for=" in text:
+    elif (".map(" in text and re.search(r"<(?:li|article|tr)\b", text)) or "v-for=" in text or "{#each" in text:
         signals.append("list")
     if re.search(r'role="dialog"|<dialog\b|<Dialog\b|<(?:UModal|USlideover|u-modal|el-dialog|ElDialog|VDialog|v-dialog)\b', text):
         signals.append("dialog")
     data = [f"content `{c}`" for c in dict.fromkeys(re.findall(r"queryCollection(?:Navigation)?\(\s*['\"](\w+)['\"]", text))]
     data += [f"fetch `{u}`" for u in dict.fromkeys(re.findall(r"(?:useFetch|useLazyFetch|\$fetch)\(\s*['\"`]([^'\"`$]+)", text))]
+    data += [f"collection `{c}`" for c in dict.fromkeys(re.findall(r"\b(?:getCollection|getEntry|getEntries)\(\s*['\"](\w+)['\"]", text))]
+    islands = list(dict.fromkeys(re.findall(r"<([A-Z]\w*)[^>]*\sclient:(load|idle|visible|only|media)\b", text)))
+    if islands:
+        signals.append("islands " + ", ".join(f"{n} (client:{d})" for n, d in islands[:3]))
     if data:
         signals.append("data: " + ", ".join(data[:3]))
     return signals
@@ -618,14 +639,16 @@ def _resolve_import(root: Path, from_file: Path, spec: str) -> Path | None:
     """A local import's file: relative, `@/` and `~/` aliases, or a bare path from the root or src/."""
     if spec.startswith("."):
         bases = [from_file.parent / spec]
+    elif spec.startswith("$lib/"):                          # SvelteKit's alias for src/lib
+        bases = [root / "src" / "lib" / spec[5:]]
     else:
         stripped = re.sub(r"^[@~]/", "", spec)
         bases = [root / stripped, root / "src" / stripped]
     for b in bases:
-        for ext in ("", ".tsx", ".jsx", ".ts", ".js", "/index.tsx", "/index.jsx", "/index.ts", "/index.js"):
+        for ext in ("", ".tsx", ".jsx", ".ts", ".js", ".svelte", ".astro", ".vue", "/index.tsx", "/index.jsx", "/index.ts", "/index.js"):
             c = Path(str(b) + ext)
             if c.is_file():
-                return c
+                return Path(os.path.normpath(c))
     return None
 
 
@@ -708,11 +731,41 @@ def theme_mechanism(root: Path, css_files: list[Path], stack: dict, src_files: l
         if how is None:
             how = f"`.{color_mode['cls']}` on `<html>`"
             where = "the class @nuxtjs/color-mode sets" + (" (Nuxt UI brings it)" if nuxt_ui_on else "")
+    plain = False
+    if how is None and "@astrojs/starlight" in deps:
+        how, where, plain = "`[data-theme=dark]` on `<html>`", "Starlight's own CSS (`--sl-color-*` properties)", True
+    if how is None:                                  # plain CSS: dark rules keyed on an attribute, a class, or the OS scheme
+        for c in css_files:
+            t = read(c)
+            for pat, label in ((r"\[data-theme=['\"]?dark", "`[data-theme=dark]` on `<html>`"),
+                               (r"(?:^|[\s,}])(?::root|html)?\.dark\b", "`.dark` on `<html>`"),
+                               (r"prefers-color-scheme:\s*dark", "the OS scheme (`prefers-color-scheme`)")):
+                m = re.search(pat, t, re.M)
+                if m:
+                    how, where, plain = label, f"`{rel(root, c)}:{t[:m.start()].count(chr(10)) + 1}` (plain CSS)", True
+                    break
+            if how:
+                break
     if how is None:
         if not stack.get("tailwind") or not uses_dark:
             return None
         how, where = "the OS scheme (`prefers-color-scheme`)", "Tailwind's default, no toggle in the app"
     setter = None
+    if "mode-watcher" in deps:
+        setter = "set before paint by mode-watcher (`<ModeWatcher />` in the root layout; localStorage `mode-watcher-mode`)"
+    elif "@astrojs/starlight" in deps:
+        setter = "set before paint by Starlight's theme select (localStorage `starlight-theme`; follows the OS until chosen)"
+    else:                                            # an inline script at boot: SvelteKit's app.html, an Astro head component
+        for f in [root / "src" / "app.html", *(q for q in src_files if q.suffix == ".astro")]:
+            if not f.is_file():
+                continue
+            for body in re.findall(r"<script\b[^>]*>(.*?)</script>", read(f, 200_000), re.S):
+                if "localStorage" in body and re.search(r"dataset\.theme|classList\.(?:add|toggle)|setAttribute\(\s*['\"]data-theme|colorScheme", body):
+                    key = re.search(r"localStorage\.getItem\(\s*['\"]([^'\"]+)", body)
+                    setter = f"set before paint by an inline script in `{rel(root, f)}`" + (f" (localStorage `{key.group(1)}`)" if key else "")
+                    break
+            if setter:
+                break
     if "next-themes" in (stack.get("deps") or {}):
         for p in src_files:
             if p.suffix not in {".tsx", ".jsx"}:
@@ -741,6 +794,8 @@ def theme_mechanism(root: Path, css_files: list[Path], stack: dict, src_files: l
                   + ("; Nuxt UI's components switch through their CSS variables" if color_mode["nuxtui"] else ""))
         if color_mode["nuxtui"]:
             uses_dark = True
+    if plain:
+        return f"dark styles apply under {how} — {where}" + (f"; {setter}" if setter else "")
     return f"`dark:` applies under {how} — {where}" + (f"; {setter}" if setter else "") + ("" if uses_dark else " — no `dark:` class uses it yet")
 
 
@@ -850,11 +905,11 @@ def vue_component_uses(root: Path, src_files: list[Path], names: dict[str, Path]
     for p in src_files:
         if p.suffix != ".vue":
             continue
-        for tag in set(vue_tags(vue_template(read(p, 200_000)))):
+        for tag in dict.fromkeys(vue_tags(vue_template(read(p, 200_000)))):
             if tag in names and names[tag] != p:
                 counts[tag] += 1
-    return [{"file": rel(root, names[n]), "importers": c, "component": True, "props": props_of(names[n])}
-            for n, c in counts.most_common(12) if c >= 1][:12]
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], rel(root, names[kv[0]])))   # ties by path: the same order every run
+    return [{"file": rel(root, names[n]), "importers": c, "component": True, "props": props_of(names[n])} for n, c in ranked[:12]]
 
 
 def nuxt_ui(root: Path, src_files: list[Path], deps: dict) -> dict | None:
@@ -1012,31 +1067,286 @@ def _vue_wrapper(root: Path, page: Path, text: str, comps: dict[str, Path]) -> d
     return {"name": name, "file": rel(root, target), "lines": t.count("\n") + 1, "signals": _signals(t), "wrapper": wrapper}
 
 
+# ------------------------------------------------------------- SvelteKit / Astro
+def _script_blocks(text: str) -> str:
+    """The code of a component: a .svelte file's <script> blocks, or an .astro file's frontmatter."""
+    fm = re.match(r"\s*---\n(.*?)\n---", text, re.S)
+    return (fm.group(1) + "\n" if fm else "") + "\n".join(re.findall(r"<script\b[^>]*>(.*?)</script>", text, re.S))
+
+
+def _markup(text: str) -> str:
+    """The markup of a .svelte or .astro file: no frontmatter, no scripts, no styles."""
+    t = re.sub(r"^\s*---\n.*?\n---", "", text, count=1, flags=re.S)
+    return re.sub(r"<(script|style)\b[^>]*>.*?</\1>", "", t, flags=re.S)
+
+
+def component_tags(markup: str) -> list[str]:
+    """The components a Svelte or Astro template uses: capitalised tags, in order of first use."""
+    return list(dict.fromkeys(re.findall(r"<([A-Z]\w*(?:\.[A-Z]\w*)?)[\s/>]", markup)))
+
+
+def _destructured(block: str) -> list[str]:
+    """Names bound by a destructuring pattern's body: `a, b = 1, class: cls, ...rest` → a, b, class, rest."""
+    names, depth, cur = [], 0, ""
+    for ch in block + ",":
+        if ch in "([{<":
+            depth += 1
+        elif ch in ")]}>":
+            depth -= 1
+        if ch == "," and depth == 0:
+            m = re.match(r"\s*(?:\.\.\.)?\s*([\w$]+)", cur)
+            if m:
+                names.append(m.group(1))
+            cur = ""
+        else:
+            cur += ch
+    return names
+
+
+def _route_from(parts: list[str]) -> str:
+    """A route from folder names, route groups `(name)` dropped: ["(app)", "blog", "[slug]"] → /blog/[slug]."""
+    return "/" + "/".join(x for x in parts if not (x.startswith("(") and x.endswith(")")))
+
+
+def sveltekit_routes(root: Path) -> list[tuple[str, str]]:
+    d = root / "src" / "routes"
+    if not d.is_dir():
+        return []
+    return [(_route_from(list(f.relative_to(d).parent.parts)), rel(root, f))
+            for f in sorted(d.rglob("+page.svelte")) if not set(f.parts) & SKIP_DIRS]
+
+
+def sveltekit_page_data(page: Path) -> list[str]:
+    """What the files beside a +page.svelte do: load its data (on the server, or anywhere), handle form actions, render options."""
+    out = []
+    for stem, where in (("+page.server", "on the server"), ("+page", "on the server, then in the browser after a navigation")):
+        for ext in (".ts", ".js"):
+            f = page.parent / f"{stem}{ext}"
+            if not f.is_file():
+                continue
+            t = read(f, 100_000)
+            if re.search(r"export\s+(?:const|async\s+function|function)\s+load\b", t):
+                out.append(f"loads data {where} (`{f.name}`)")
+            if re.search(r"export\s+const\s+actions\b", t):
+                out.append("form actions")
+            out += [f"{opt} {v}" for opt, v in re.findall(r"export\s+const\s+(prerender|ssr|csr)\s*=\s*(\w+)", t)]
+    return out
+
+
+def _chrome_of(root: Path, text: str) -> dict:
+    """What a layout wraps each page in: its components, providers, stylesheets and font packages."""
+    code, tags = _script_blocks(text), component_tags(_markup(text))
+    return {
+        "css": [x for x in re.findall(r"""import\s+['"]([^'"]+\.(?:css|scss|pcss))['"]""", code)][:4],
+        "fonts": [x for x in re.findall(r"""import\s+['"](@fontsource[^'"]*)['"]""", code)][:3],
+        "providers": [t for t in tags if re.search(r"Provider$|^ModeWatcher$|^Toaster$|^ViewTransitions$|^ClientRouter$", t)],
+        "chrome": [t for t in tags if not re.search(r"Provider$|^ModeWatcher$|^Toaster$|^ViewTransitions$|^ClientRouter$", t)][:8],
+    }
+
+
+def sveltekit_layouts(root: Path) -> list[dict]:
+    d = root / "src" / "routes"
+    if not d.is_dir():
+        return []
+    pages = [f for f in d.rglob("+page.svelte") if not set(f.parts) & SKIP_DIRS]
+    out = []
+    for f in sorted((f for f in d.rglob("+layout*.svelte") if not set(f.parts) & SKIP_DIRS),
+                    key=lambda x: (len(x.relative_to(d).parts), str(x))):
+        parts = list(f.relative_to(d).parent.parts)
+        under = [p for p in pages if f.parent in p.parents or p.parent == f.parent]
+        group = next((x for x in reversed(parts) if x.startswith("(") and x.endswith(")")), None)
+        if not parts:
+            scope = "wraps every page"
+        elif group and _route_from(parts) == "/":
+            scope = f"wraps the pages in `{group}` ({len(under)}: {', '.join(rel(d, p.parent) for p in under[:3])})"
+        else:
+            scope = f"wraps `{_route_from(parts)}` and the pages below it ({len(under)})"
+        if "@" in f.stem:
+            scope += "; `@` resets it to an outer layout"
+        loads = [x.name for x in (f.parent / "+layout.server.ts", f.parent / "+layout.server.js", f.parent / "+layout.ts", f.parent / "+layout.js") if x.is_file()]
+        lay = {"file": rel(root, f), "scope": rel(root, f.parent), "scopeText": scope, **_chrome_of(root, read(f, 200_000))}
+        if loads:
+            lay["data"] = f"loads data for every page below (`{loads[0]}`)"
+        out.append(lay)
+    return out
+
+
+AUTH_HINTS = {"@auth/sveltekit": "Auth.js", "lucia": "Lucia", "@supabase/ssr": "Supabase", "@clerk/astro": "Clerk",
+              "clerk-sveltekit": "Clerk", "better-auth": "Better Auth", "@kinde-oss": "Kinde"}
+
+
+def _guard_line(root: Path, f: Path, t: str) -> str:
+    """A server hook or middleware: the auth it uses, the paths it guards, whether it redirects."""
+    bits = [lbl for key, lbl in AUTH_HINTS.items() if key in t]
+    guarded = list(dict.fromkeys(re.findall(r"pathname\.startsWith\(\s*['\"](/[^'\"]*)", t)))
+    if re.search(r"\bredirect\(", t):
+        bits.append((f"guards {', '.join(f'`{g}`' for g in guarded[:4])} and " if guarded else "")
+                    + "can redirect: a render there needs a session (`--cookie` / `--storage-state`)")
+    return f"`{rel(root, f)}` runs before every request" + (": " + "; ".join(bits) if bits else "")
+
+
+def sveltekit_before(root: Path, deps: dict) -> list[str]:
+    out = []
+    for stem in ("hooks.server", "hooks"):
+        for ext in (".ts", ".js"):
+            f = root / "src" / f"{stem}{ext}"
+            if not f.is_file():
+                continue
+            t = read(f, 100_000)
+            out.append(_guard_line(root, f, t))
+    d = root / "src" / "routes"
+    eps = [_route_from(list(f.relative_to(d).parent.parts)) for f in sorted(d.rglob("+server.*")) if not set(f.parts) & SKIP_DIRS] if d.is_dir() else []
+    if eps:
+        out.append(f"endpoints (`+server.ts`): " + ", ".join(f"`{e}`" for e in eps[:6]) + " — the dev server answers them: start it, don't mock them")
+    errs = [rel(root, f) for f in sorted(d.rglob("+error.svelte"))] if d.is_dir() else []
+    if errs:
+        out.append("error pages: " + ", ".join(f"`{e}`" for e in errs[:3]))
+    return out
+
+
+def astro_routes(root: Path) -> list[tuple[str, str]]:
+    d = root / "src" / "pages"
+    if not d.is_dir():
+        return []
+    out = []
+    for f in sorted(d.rglob("*")):
+        if not f.is_file() or set(f.parts) & SKIP_DIRS or any(x.startswith("_") for x in f.relative_to(d).parts):
+            continue
+        parts = list(f.relative_to(d).with_suffix("").parts)
+        if f.suffix in {".astro", ".md", ".mdx", ".html"}:
+            if parts[-1] == "index":
+                parts = parts[:-1]
+            out.append(("/" + "/".join(parts), rel(root, f)))
+        elif f.suffix in {".ts", ".js"}:                       # an endpoint: rss.xml.js → /rss.xml
+            out.append(("/" + "/".join(parts) + " (endpoint)", rel(root, f)))
+    return out
+
+
+def _astro_wrapper(root: Path, page: Path, text: str) -> dict | None:
+    """The layout a page sits in: the outermost component it imports from a layouts folder, or a Markdown page's `layout:`."""
+    target, name = None, None
+    if page.suffix in {".md", ".mdx"}:
+        m = re.search(r"^layout:\s*['\"]?([^'\"\n]+)", text, re.M)
+        if m:
+            target = Path(os.path.normpath(page.parent / m.group(1).strip()))
+            name = target.stem
+    else:
+        code, tags = _script_blocks(text), component_tags(_markup(text))
+        for tag in tags[:1]:
+            m = re.search(r"import\s+" + re.escape(tag) + r"\s+from\s+['\"]([^'\"]+)['\"]", code)
+            if m and re.search(r"layouts?/", m.group(1)):
+                target, name = _resolve_import(root, page, m.group(1)), tag
+    if not target or not target.is_file():
+        return None
+    return {"name": name, "file": rel(root, target), "lines": read(target, 200_000).count("\n") + 1, "signals": [], "wrapper": True}
+
+
+def astro_layouts(root: Path, src_files: list[Path]) -> list[dict]:
+    pages = [f for f in src_files if (root / "src" / "pages") in f.parents and f.suffix in {".astro", ".md", ".mdx"}]
+    users: dict[str, list[str]] = collections.defaultdict(list)
+    for pg in pages:
+        w = _astro_wrapper(root, pg, read(pg, 200_000))
+        if w:
+            users[w["file"]].append(pg.name)
+    out = []
+    for f in sorted({*users, *(rel(root, p) for p in src_files if p.suffix == ".astro" and "layouts" in [x.lower() for x in p.parts])}):
+        us = users.get(f, [])
+        scope = f"wraps the pages that use it ({len(us)}: {', '.join(us[:4])})" if us else "used by no page directly"
+        out.append({"file": f, "scope": f, "scopeText": scope, **_chrome_of(root, read(root / f, 200_000))})
+    return out
+
+
+def astro_integrations(root: Path) -> list[str]:
+    for cfg in root.glob("astro.config.*"):
+        t = read(cfg)
+        m = re.search(r"integrations\s*:\s*\[", t)
+        if m:
+            depth, i = 0, m.end() - 1
+            for i in range(m.end() - 1, len(t)):
+                depth += {"[": 1, "(": 1, "{": 1, "]": -1, ")": -1, "}": -1}.get(t[i], 0)
+                if depth == 0:
+                    break
+            body, prev = t[m.end():i], None
+            while prev != body:                            # innermost call arguments first: starlight({ … }) → starlight\x00
+                prev, body = body, re.sub(r"\([^()]*\)", "\x00", body)
+            return list(dict.fromkeys(re.findall(r"(?<![\w.])([a-z]\w*)\s*\x00", body)))[:8]
+    return []
+
+
+def starlight_pages(root: Path) -> list[tuple[str, str, str]]:
+    """Starlight renders every file in src/content/docs as a page: (route, file, template)."""
+    d = root / "src" / "content" / "docs"
+    out = []
+    for f in sorted(d.rglob("*")) if d.is_dir() else []:
+        if f.suffix not in {".md", ".mdx", ".mdoc"} or set(f.parts) & SKIP_DIRS:
+            continue
+        parts = list(f.relative_to(d).with_suffix("").parts)
+        if parts[-1] == "index":
+            parts = parts[:-1]
+        m = re.search(r"^template:\s*(\w+)", read(f, 20_000), re.M)
+        out.append(("/" + "/".join(parts), rel(root, f), m.group(1) if m else "doc"))
+    return out
+
+
+def astro_before(root: Path, deps: dict) -> list[str]:
+    out = []
+    for ext in (".ts", ".js"):
+        f = root / "src" / f"middleware{ext}"
+        if f.is_file():
+            out.append(_guard_line(root, f, read(f, 100_000)))
+    if "@astrojs/starlight" in deps:
+        sp = starlight_pages(root)
+        splash = [f for _, f, t in sp if t == "splash"]
+        out.append(f"Starlight renders each of the {len(sp)} files in `src/content/docs/` as a page (listed above)"
+                   + (f"; `{splash[0]}` uses the splash template" if splash else "")
+                   + " — its layout, sidebar (`astro.config.*`), search and theme come from the integration: a new page is a new file there, styled by its Markdown and Starlight's components")
+    for cfg in (root / "src" / "content.config.ts", root / "src" / "content.config.js", root / "src" / "content" / "config.ts", root / "src" / "content" / "config.js"):
+        if cfg.is_file():
+            t = read(cfg, 100_000)
+            m = re.search(r"collections\s*=\s*\{", t)
+            names = _destructured(block_after(t, m.end() - 1)) if m else []
+            loaders = dict(re.findall(r"(\w+)\s*=\s*defineCollection\(\{[^}]*?base\s*:\s*['\"]([^'\"]+)", t, re.S))
+            coll = ", ".join(f"`{n}`" + (f" from `{loaders[n]}`" if n in loaders else "") for n in dict.fromkeys(names))
+            out.append(f"content collections in `{rel(root, cfg)}`: {coll or '?'} — pages read them with `getCollection`; new entries are files, no data to mock")
+            break
+    return out
+
+
 def page_signatures(root: Path, src_files: list[Path], vocab_names: list[str], framework: str | None = None) -> dict:
     pages, routes = [], []
     is_next, is_nuxt = framework == "Next.js", framework == "Nuxt"
+    is_kit, is_astro = framework == "SvelteKit", framework == "Astro"
+    file_routes = sveltekit_routes(root) if is_kit else astro_routes(root) if is_astro else []
+    if is_astro and "starlight" in astro_integrations(root):
+        file_routes += [(r, f) for r, f, _ in starlight_pages(root)]
     # Next.js: app/ (page files only) and pages/; Nuxt: pages/ only (app/ is its source folder);
     # everything else: the usual page folders.
     page_dirs = {"pages", "app"} if is_next else {"pages"} if is_nuxt else PAGE_DIR_NAMES - {"app"}
     comps = nuxt_components(root) if is_nuxt else {}
-    for p in src_files:
-        if p.suffix not in {".tsx", ".jsx", ".vue", ".svelte", ".astro"}:
+    # SvelteKit and Astro name their pages by convention: take them from the route readers.
+    candidates = [root / f for r, f in file_routes if not r.endswith("(endpoint)")] if (is_kit or is_astro) else src_files
+    for p in candidates:
+        if p.suffix not in {".tsx", ".jsx", ".vue", ".svelte", ".astro", ".md", ".mdx"}:
             continue
         rp = p.relative_to(root)
         dirs = [x.lower() for x in rp.parts[:-1]]
-        if not (set(dirs) & page_dirs) or re.search(r"\.(test|spec|stories)$", p.stem):
-            continue
-        if is_next and "app" in dirs and p.stem != "page":          # Next.js App Router: page files only
-            continue
-        if p.stem in {"layout", "template", "loading", "error", "not-found", "index"} and "app" not in dirs and p.stem != "index":
-            continue
+        if not (is_kit or is_astro):
+            if not (set(dirs) & page_dirs) or re.search(r"\.(test|spec|stories)$", p.stem) or p.suffix == ".md":
+                continue
+            if is_next and "app" in dirs and p.stem != "page":          # Next.js App Router: page files only
+                continue
+            if p.stem in {"layout", "template", "loading", "error", "not-found", "index"} and "app" not in dirs and p.stem != "index":
+                continue
         text = read(p, 200_000)
-        signals = _signals(text)
-        rendered = _vue_wrapper(root, p, text, comps) if p.suffix == ".vue" else _rendered_by(root, p, text)
+        signals = _signals(text) + (sveltekit_page_data(p) if is_kit else [])
+        rendered = (_astro_wrapper(root, p, text) if is_astro else _vue_wrapper(root, p, text, comps) if p.suffix == ".vue"
+                    else None if p.suffix in {".svelte", ".md", ".mdx"} else _rendered_by(root, p, text))
         used = sorted(((n, _cls_uses(n, [text])) for n in vocab_names), key=lambda x: -x[1])
         page_comps: list[str] = []
         if p.suffix == ".vue":                   # the components its template uses, library ones included
             page_comps = [t for t in vue_tags(vue_template(text)) if t not in VUE_BUILTINS and (not rendered or t != rendered["name"])]
+        elif p.suffix in {".svelte", ".astro", ".mdx"}:
+            page_comps = [t for t in component_tags(_markup(text)) if not rendered or t != rendered["name"]]
         for names in re.findall(r"import\s*\{([^}]+)\}\s*from\s*['\"][^'\"]*components/[^'\"]+['\"]", text):
             page_comps += [x.strip().split(" as ")[0] for x in names.split(",") if x.strip() and not x.strip().startswith("type ")]
         pages.append({
@@ -1050,7 +1360,9 @@ def page_signatures(root: Path, src_files: list[Path], vocab_names: list[str], f
             if "<Route" in text:
                 routes += re.findall(r"<Route\s+[^>]*?path=\{?['\"]([^'\"]+)['\"]\}?[^>]*?element=\{<(\w+)", text)
                 routes += [("(index)", comp) for comp in re.findall(r"<Route\s+index\b[^>]*?element=\{<(\w+)", text)]
-    if is_nuxt:
+    if is_kit or is_astro:
+        routes += file_routes
+    elif is_nuxt:
         routes += nuxt_routes(root)
     elif framework == "Vue" or any(p.suffix == ".vue" for p in src_files[:200]):
         routes += vue_router_routes(root, src_files)
@@ -1205,17 +1517,22 @@ def start_here(root: Path, src_files: list[Path], css_files: list[Path], stack: 
     sig = page_signatures(root, src_files, [v["name"] for v in vocab], stack.get("framework"))
     is_next = stack.get("framework") == "Next.js"
     is_nuxt = stack.get("framework") == "Nuxt"
-    notes = {"Nuxt": "references/stacks/nuxt.md", "Vue": "references/stacks/vue.md"}.get(stack.get("framework") or "")
+    is_kit, is_astro = stack.get("framework") == "SvelteKit", stack.get("framework") == "Astro"
+    notes = {"Nuxt": "references/stacks/nuxt.md", "Vue": "references/stacks/vue.md", "SvelteKit": "references/stacks/sveltekit.md",
+             "Svelte": "references/stacks/sveltekit.md", "Astro": "references/stacks/astro.md"}.get(stack.get("framework") or "")
     return {
         "vocabulary": vocab,
         "imported": import_fanin(root, src_files),
         **sig,
-        "layouts": next_layouts(root) if is_next else nuxt_layouts(root, src_files) if is_nuxt else [],
+        "layouts": (next_layouts(root) if is_next else nuxt_layouts(root, src_files) if is_nuxt else sveltekit_layouts(root) if is_kit
+                    else astro_layouts(root, src_files) if is_astro else []),
+        "stackBefore": sveltekit_before(root, deps) if is_kit else astro_before(root, deps) if is_astro else [],
+        "astro": is_astro,
         "autoImported": vue_component_uses(root, src_files, nuxt_components(root)) if is_nuxt else [],
         "nuxtui": nuxt_ui(root, src_files, deps),
         "nuxtBefore": nuxt_before(root, deps, src_files) if is_nuxt else [],
         "nuxt": is_nuxt,
-        "vite": "vite" in deps and not is_next and not is_nuxt,
+        "vite": "vite" in deps and not is_next and not is_nuxt and not is_astro,
         "stackNotes": notes,
         "theme": theme_mechanism(root, css_files, stack, src_files),
         "middleware": middleware_line(root) if is_next else None,
@@ -1257,7 +1574,7 @@ def md_start_here(sh: dict) -> list[str]:
             if pg["classes"]:
                 bits.append(", ".join(pg["classes"]))
             if pg["components"]:
-                bits.append(("uses " if pg["file"].endswith(".vue") else "imports ") + ", ".join(pg["components"]))
+                bits.append(("uses " if pg["file"].endswith((".vue", ".svelte", ".astro", ".md", ".mdx")) else "imports ") + ", ".join(pg["components"]))
             r = pg.get("renders")
             if r and r.get("wrapper"):
                 bits.append(f"inside {r['name']}" + ("" if r["file"] in wrappers_named else f" (`{r['file']}` · {r['lines']} lines: the chrome, its slot holds the page)"))
@@ -1292,9 +1609,11 @@ def md_start_here(sh: dict) -> list[str]:
         if lay["css"]:
             parts.append("css " + ", ".join(f"`{c}`" for c in lay["css"]))
         if lay["fonts"]:
-            parts.append("next/font " + ", ".join(lay["fonts"]))
+            parts.append(("next/font " if sh.get("next") else "fonts ") + ", ".join(lay["fonts"]))
         if lay["providers"]:
             parts.append("providers " + ", ".join(lay["providers"]))
+        if lay.get("data"):
+            parts.append(lay["data"])
         if lay["chrome"]:
             parts.append("chrome " + ", ".join(lay["chrome"]))
         scope = lay.get("scopeText") or ("wraps every page" if i == 0 else f"wraps `{lay['scope']}/*`")
@@ -1302,6 +1621,7 @@ def md_start_here(sh: dict) -> list[str]:
     if sh.get("middleware"):
         before.append(sh["middleware"])
     before += sh.get("nuxtBefore") or []
+    before += sh.get("stackBefore") or []
     before += list(sh["gates"])
     b = sh["boot"]
     for f in b["files"]:
@@ -1327,6 +1647,8 @@ def md_start_here(sh: dict) -> list[str]:
                 line += "; contentlayer compiles the content on start"
         elif sh.get("nuxt"):
             line += " — `nuxt dev` listens on :3000 unless `--port` says otherwise"
+        elif sh.get("astro"):
+            line += " — `astro dev` listens on :4321 unless `--port` says otherwise"
         elif sh.get("vite"):
             line += " — Vite listens on :5173 unless `--port` or `server.port` says otherwise"
         before.append(line)
@@ -1355,12 +1677,16 @@ def md(data: dict) -> str:
     bits = []
     if s["framework"]:
         bits.append(s["framework"] + (f" ({s['router']})" if s["router"] else ""))
-    if s["framework"] in ("Nuxt", "Vue") and s.get("frameworkVersion"):
+    if s["framework"] in ("Nuxt", "Vue", "SvelteKit", "Svelte", "Astro", "Angular") and s.get("frameworkVersion"):
         bits[-1] = bits[-1].replace(s["framework"], f"{s['framework']} {s['frameworkVersion']}", 1)
     if s["react"]:
         bits.append(f"React {s['react']}")
     if s.get("vue") and s["framework"] != "Vue":
         bits.append(f"Vue {s['vue']}")
+    if s.get("svelte") and s["framework"] != "Svelte":
+        bits.append(f"Svelte {s['svelte']}")
+    if s.get("integrations"):
+        bits.append("integrations " + ", ".join(s["integrations"]))
     if s["tailwind"] or s["tailwindMajor"]:
         mode = "CSS-first @theme" if s["tailwindMajor"] == 4 else "tailwind.config"
         bits.append(f"Tailwind {s['tailwind'] or s['tailwindMajor']} ({mode})")

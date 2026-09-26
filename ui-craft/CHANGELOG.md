@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.13.0 — SvelteKit and Astro
+
+The first of the web stacks ui-craft did not read. The render loop already worked on
+any page; the inspector did not understand these projects. On the SvelteKit demo it
+listed the layout and two components as pages and found no routes, no layout and no
+data loading; on an Astro site it found no layouts, no collections and, with plain CSS,
+no dark mode. Checked on the SvelteKit demo template (`sv create`), a Starlight docs
+site and an Astro blog laid out like the official template, and on two fixtures. Notes:
+`evals/notes/stacks-sveltekit-astro.md`.
+
+- `inspect.py`, SvelteKit: file routes from `+page.svelte` (route groups dropped),
+  each `+layout.svelte` with the pages it wraps and what it loads, what loads each
+  page's data (`+page.ts`, `+page.server.ts`) and whether it has form actions or render
+  options, `hooks.server.ts` and the paths it guards, `+server.ts` endpoints, error
+  pages, props from `$props()` or `export let`, the `$lib` alias, mode-watcher.
+- `inspect.py`, Astro: file routes and endpoints under `src/pages`, the layout each page
+  sits in (an imported layout tag, or a Markdown `layout:`), layouts with the pages that
+  use them, content collections with their folders, islands with their `client:`
+  directive, middleware and what it guards, integrations on the stack line, and
+  Starlight: its docs files as pages, its theme.
+- `inspect.py`, every stack: dark mode in plain CSS (`[data-theme=dark]`, `.dark`,
+  `prefers-color-scheme`), and the inline script that sets it before paint (SvelteKit's
+  `app.html`, an Astro head component). Paths through `..` are normalised. The
+  auto-imported components of a Nuxt project came out in a different order on each run
+  when two had the same count; ties now sort by path.
+- `render.mjs`: Astro's dev toolbar is hidden like the Nuxt and Vue devtools (it sat in
+  every screenshot); SvelteKit's `__data.json` and `/_app/`, and Astro's `/_astro/`, count
+  as framework traffic.
+- `references/stacks/sveltekit.md` and `astro.md`: where things are, how each serves a
+  page, dark mode, checks, and what the real projects showed (`astro dev` exiting with
+  no error until `astro sync` prints it; Starlight's sidebar syntax since 0.39; Astro's
+  dev server outliving its `npx` process).
+- CI runs the inspector on a SvelteKit fixture and an Astro fixture (20 assertions).
+  SKILL.md's description and routing name the new stacks.
+
 ## 0.12.2 — the Nuxt task three ways
 
 The eighth trial's archive task under ui-ux-pro-max and with no skill

@@ -1,6 +1,7 @@
 # ui-craft
 
-A Claude Code skill for UI work in React or Vue + Tailwind projects (Vite, Next.js, Nuxt) that
+A Claude Code skill for UI work in web projects built with React, Vue, Svelte or Astro
+(Vite, Next.js, Nuxt, SvelteKit, Astro; Tailwind or plain CSS) that
 **renders what it built and measures it** before calling it done.
 
 Most UI skills give the model a database of styles and palettes. ui-craft gives it
@@ -136,6 +137,8 @@ Verified (render.mjs · .ui-craft/pricing-2):
 | Next.js | works with `next dev` (render through `localhost`, not `127.0.0.1`: newer dev servers refuse their own scripts from another host); `inspect.py` reads the App Router — layouts, middleware, `[locale]`, the file a thin page renders — and `next/font` |
 | Nuxt | works with `nuxt dev`; `inspect.py` reads the file routes, layouts and the pages each wraps, auto-imported components, route middleware, `server/api`, @nuxt/content collections, Nuxt UI's colours and components and color-mode. Nuxt DevTools is hidden during renders. Notes: `references/stacks/nuxt.md` |
 | Vue + Vite | `inspect.py` reads the vue-router table (lazy imports, redirects), the wrapper component each view sits in, `defineProps`, Pinia's storage keys and the component kit (Element Plus, Vuetify, PrimeVue, Naive UI). Notes: `references/stacks/vue.md` |
+| SvelteKit | `inspect.py` reads the file routes (route groups dropped), each `+layout.svelte` and the pages it wraps, what loads a page's data (`+page.ts`, `+page.server.ts`, form actions), `hooks.server.ts` and the paths it guards, `+server.ts` endpoints, props from `$props()` or `export let`, mode-watcher. Notes: `references/stacks/sveltekit.md` |
+| Astro | `inspect.py` reads the file routes and endpoints, the layout each page sits in, content collections and their folders, islands (`client:*`), middleware, integrations, Starlight's docs pages, and dark mode set by an inline script over plain CSS variables. The render hides Astro's dev toolbar. Notes: `references/stacks/astro.md` |
 
 ## Scripts
 
@@ -157,7 +160,7 @@ All standard tools; the skill calls them, and so can you.
 (the defaults you reach for without noticing), `critique-rubric.md` (how to look at
 a screenshot), `constraints.md` (the rules with sources, marked measured or manual),
 `patterns.md` (what each page type owes the user), `real-projects.md` (a page that
-won't just render) and `stacks/` (what differs in a Nuxt or Vue project).
+won't just render) and `stacks/` (what differs in a Nuxt, Vue, SvelteKit or Astro project).
 
 ## Evals
 
@@ -173,11 +176,13 @@ git-ignored `ui-craft-workspace/`.
 
 ## Limits
 
-- Web only: React and Vue. `render.mjs` works on any URL; `inspect.py` understands
-  Tailwind (v3 config or v4 `@theme`), Next.js, Nuxt and Vue + Vite, and reads
-  Svelte/Astro files. The benchmark tasks are React; the Vue and Nuxt support is
-  checked on fixtures and two real templates, not yet on a full task. The component
-  harness is React only. No React Native, Flutter or SwiftUI.
+- Web only: React, Vue, Svelte and Astro. `render.mjs` works on any URL; `inspect.py`
+  understands Tailwind (v3 config or v4 `@theme`) and plain CSS variables, Next.js,
+  Nuxt, Vue + Vite, SvelteKit and Astro. The benchmark tasks are React and Nuxt;
+  SvelteKit and Astro are checked on fixtures and three real projects, not yet on a
+  full task. Not yet: Angular, server-rendered templates (Laravel, Rails, Django),
+  and the theme objects of CSS-in-JS kits (MUI, Chakra, styled-components). The
+  component harness is React only. No React Native, Flutter or SwiftUI.
 - It measures what the DOM exposes. Text over images and gradients is reported as
   unverifiable; colour-only meaning, zoom to 200%, dragging alternatives and flashing
   are listed in `constraints.md` as manual checks.

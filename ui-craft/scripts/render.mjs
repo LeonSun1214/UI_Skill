@@ -1032,8 +1032,8 @@ const widest = Math.max(...opt.viewports);
 
 // Requests a framework makes for itself: Next.js internals, RSC payloads and the dev overlay's stack
 // frames; Nuxt's build manifest, payloads, islands, icon sets and @nuxt/content's client database;
-// Vite's own endpoints.
-const FRAMEWORK_REQUEST = /^\/(_next\/|__nextjs|_nuxt\/|__nuxt|api\/_nuxt_icon\/|@vite\/|@fs\/|@id\/|__vite)|\/_payload\.json(\?|$)|[?&]_rsc=/;
+// SvelteKit's route data and build assets; Astro's assets and dev toolbar; Vite's own endpoints.
+const FRAMEWORK_REQUEST = /^\/(_next\/|__nextjs|_nuxt\/|__nuxt|api\/_nuxt_icon\/|_app\/|_astro\/|__astro|@vite\/|@fs\/|@id\/|__vite)|\/_payload\.json(\?|$)|\/__data\.json(\?|$)|[?&]_rsc=/;
 async function renderViewport(width) {
   const t0 = Date.now(); let tPrev = t0; const timings = {};
   const lap = (name) => { const now = Date.now(); timings[name] = (timings[name] || 0) + (now - tPrev); tPrev = now; };
@@ -1051,9 +1051,9 @@ async function renderViewport(width) {
   // `scroll-behavior: smooth` makes scrollTo() animate, so a fold screenshot taken right after
   // "scroll back to top" can land mid-way down the page. Measure with instant scrolling; the
   // page's own transitions are untouched. Dev chrome is hidden too: the error overlays (their errors
-  // still count), and the Nuxt / Vue devtools panels, which float over the page and take focus.
+  // still count), and the Nuxt / Vue devtools panels and Astro's dev toolbar, which float over the page.
   await context.addInitScript(() => {
-    const fix = () => { const st = document.createElement('style'); st.setAttribute('data-ui-craft', 'scroll'); st.textContent = 'html, body { scroll-behavior: auto !important; } nextjs-portal, vite-error-overlay, #nuxt-devtools-container, nuxt-devtools-inspect-panel, #vue-tracer-overlay, #__vue-devtools-container__, #vue-inspector-container { display: none !important; }'; (document.head || document.documentElement).appendChild(st); };
+    const fix = () => { const st = document.createElement('style'); st.setAttribute('data-ui-craft', 'scroll'); st.textContent = 'html, body { scroll-behavior: auto !important; } nextjs-portal, vite-error-overlay, #nuxt-devtools-container, nuxt-devtools-inspect-panel, #vue-tracer-overlay, #__vue-devtools-container__, #vue-inspector-container, astro-dev-toolbar { display: none !important; }'; (document.head || document.documentElement).appendChild(st); };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fix); else fix();
   });
   for (const m of opt.mocks) {

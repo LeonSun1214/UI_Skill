@@ -77,3 +77,27 @@ jobs:
           grep -q "BaseButton.vue. (2; props variant, size)" /tmp/inspect-vue.txt
           grep -q "localStorage .fixture-theme." /tmp/inspect-vue.txt
           grep -q "references/stacks/vue.md" /tmp/inspect-vue.txt
+          # SvelteKit: file routes with groups, the layouts and what they load, the hook's guard, endpoints, $props, mode-watcher
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/sveltekit-app | tee /tmp/inspect-sk.txt | head -5
+          grep -q "SvelteKit .*(file routes in src/routes/)" /tmp/inspect-sk.txt
+          grep -q "/reports. → src/routes/(app)/reports/+page.svelte" /tmp/inspect-sk.txt
+          grep -q "(app)/+layout.svelte. wraps the pages in .(app)." /tmp/inspect-sk.txt
+          grep -q "loads data for every page below (.+layout.server.ts.)" /tmp/inspect-sk.txt
+          grep -q "hooks.server.ts. runs before every request: guards ./settings." /tmp/inspect-sk.txt
+          grep -q "endpoints (.+server.ts.): ./api/reports." /tmp/inspect-sk.txt
+          grep -q "Button.svelte. (4; props variant, size, href, children)" /tmp/inspect-sk.txt
+          grep -q "form actions" /tmp/inspect-sk.txt
+          grep -q "set before paint by mode-watcher" /tmp/inspect-sk.txt
+          grep -q "references/stacks/sveltekit.md" /tmp/inspect-sk.txt
+          # Astro: file routes, the layout a page sits in, collections, islands, middleware, plain-CSS dark mode and its boot script
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/astro-app | tee /tmp/inspect-astro.txt | head -5
+          grep -q "Astro .*(file routes in src/pages/).*integrations mdx, sitemap, react" /tmp/inspect-astro.txt
+          grep -q "/blog/\[...slug\]. → src/pages/blog/\[...slug\].astro" /tmp/inspect-astro.txt
+          grep -q "inside Layout (.src/layouts/BlogPost.astro." /tmp/inspect-astro.txt
+          grep -q "islands Newsletter (client:visible)" /tmp/inspect-astro.txt
+          grep -q "content collections in .src/content.config.ts.: .blog. from ../src/content/blog., .notes." /tmp/inspect-astro.txt
+          grep -q "middleware.ts. runs before every request: guards ./drafts." /tmp/inspect-astro.txt
+          grep -q "under .\[data-theme=dark\]. on .<html>. — .src/styles/global.css" /tmp/inspect-astro.txt
+          grep -q "inline script in .src/components/BaseHead.astro. (localStorage .theme.)" /tmp/inspect-astro.txt
+          grep -q "BaseHead.astro. (3; props title, description)" /tmp/inspect-astro.txt
+          grep -q "references/stacks/astro.md" /tmp/inspect-astro.txt
