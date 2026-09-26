@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.12.2 — the Nuxt task three ways
+
+The eighth trial's archive task under ui-ux-pro-max and with no skill
+(`evals/notes/trial-nuxt-8.md`). The three pages are one page: the Blog list's
+frame, the same year and row styles, the nav entry in the header and the ⌘K list.
+They measure the same, and the Blog list changed only in the header on all three. The
+judge scores them 3, 3 and 4 (ui-craft, ui-ux-pro-max, no skill), and its head-to-heads
+split or disagree with its scores. The difference is
+cost, and what the agents told the user:
+
+- ui-craft read 9 project files before its first look, against 35 for ui-ux-pro-max
+  and 29 with no skill. It made 49 tool calls (106, 74) and used 204k tokens (287k,
+  201k). Its reading list
+  saved reads and calls, but not tokens: each of its turns carries SKILL.md, the
+  inspector and the render reports.
+- On a pre-existing date bug, the unaided agent measured, across time zones, that
+  the Blog list is a day early in China; ui-craft's agent asserted that it is not.
+  Rendered under `Asia/Shanghai`, the list is a day early. The renderer has no
+  time-zone option, so the loop could not check the claim.
+
+Fixed while grading: **the hover probe missed an underline that appears by colour**
+(`decoration-transparent` → `decoration-primary`, ui-ux-pro-max's titles), or that
+grows on `::after`. It reported six false "no hover feedback". It now compares the
+decoration's colour, thickness and offset, and the pseudo-elements.
+`selftest/layers.html` has both.
+
 ## 0.12.1 — what the Nuxt trial found
 
 A fresh agent did the seventh trial's archive task on the Nuxt UI template with 0.12.0

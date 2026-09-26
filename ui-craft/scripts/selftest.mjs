@@ -240,6 +240,8 @@ try {
     const small = a.targets.below24.map((t) => t.selector).join(' ');
     expect(!/post-/.test(small), `a link stretched over its card was measured by its text: ${small}`);
     expect(/tiny-help/.test(small), `a hidden tooltip grew a 20px button's target: ${small}`);
+    const still = (v(r).hover.noHoverFeedback || []).join(' ');
+    expect(!/hover-decoration|hover-after/.test(still), `an underline shown by colour or on ::after read as no hover feedback: ${still}`);
     expect(f.lowContrastRing.length === 3 && /nav-faint \(outline on ::before/.test(faint) && /ring-faint \(box-shadow/.test(faint) && /post-faint \(outline on a parent/.test(faint), `expected the faint ::before ring, the faint shadow ring and the faint card ring: ${faint}`);
     return `${text.join(' and ')} fail, the tab on the indicator passes, the photo is unverifiable · ${fields[0].selector} via ring · faint rings: ${faint}`;
   });

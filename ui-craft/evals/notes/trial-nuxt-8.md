@@ -131,9 +131,100 @@ the overlay covers the link's own box; a hidden tooltip inside a button does not
 regression check nothing changed, apart from the "… N more" lines and the named
 probe limits.
 
+## The same task under ui-ux-pro-max and with no skill
+
+Two more fresh agents, with the prompts of the seventh trial's three-way, side by
+side, each on its own copy, port and output folder (the seventh trial's pair shared a
+scratch folder). The ui-craft run above ran alone, on 0.12.0. All three pages were
+graded again with 0.12.2 against the warm baseline.
+
+**The three pages are one page.** All three use the Blog list's frame. Each year is
+an `h2` in `UBlogPost`'s title classes, and each post a row with the date in the
+card's date classes, formatted in UTC. All three put the nav entry in
+`AppHeader.vue` and in the ⌘K copy in `links.ts`. The differences:
+
+- ui-craft's title links are 44 px rows;
+- ui-ux-pro-max made the title hover an underline in primary, since blue text on
+  hover is 3.76:1, and added a `scroll-padding-top` for the sticky header on this
+  page only;
+- no skill put the header text in a new content file and collection, the pattern
+  Blog and Changelog use, and gave its `NuxtLink` `ULink`'s focus classes.
+
+Measured, the pages are the same except one count: 14 targets between 24 and 44 px
+on ui-craft's page, 20 on the other two, whose rows are shorter. On all three, the
+Blog list changed only within the header at 1440, typecheck and lint pass (rerun
+here), and every FAIL is in the header or footer.
+
+**The judge**, match rubric with the Blog list as reference, scores them overall
+3 · 3 · 4 (ui-craft, ui-ux-pro-max, no skill). Its "finish" scores (2, 3, 4) mark down
+the same thing on all three: the half-empty column at 1440 they share. Head to head,
+ui-craft beats no skill in both orders (confidence 2, then 3). ui-craft against
+ui-ux-pro-max splits, and so does ui-ux-pro-max against no skill. The pairs turn on
+the subtitle's wording and on titles wrapping at 375 px. As in the seventh trial,
+scores and pairs disagree: the judge cannot separate pages this close.
+
+| | ui-craft | ui-ux-pro-max | no skill |
+|---|---|---|---|
+| project files read before the first look | 9 | 35 | 29 |
+| first look at call | 9 | 37 | 19 |
+| tool calls | 49 | 106 | 74 |
+| tokens (billed) · output | 204k · 30k | 287k · 29k | 201k · 20k |
+| tokens per turn | 4.9k | 3.4k | 3.3k |
+| wall clock | 17 min, alone | 27 min | 17 min, side by side |
+
+What the other two read first:
+
+- **ui-ux-pro-max:** the file tree and 35 files, down to the CI workflow and all
+  six posts. Five skill searches (`--stack nuxt-ui`, `--domain ux`), none of which
+  shows in the page. Nuxt UI's bundle and `BlogPost.vue`, and the content database.
+- **No skill:** 29 files, then Nuxt UI's generated theme files, found on its own
+  (`.nuxt/ui/*.ts`, which `nuxt.md` now points to), and the kit's `BlogPost.vue`
+  and `Link.vue`.
+
+Against the seventh trial (Next.js): ui-craft 133k → 204k, ui-ux-pro-max 244k →
+287k, no skill 276k → 201k. On Nuxt, ui-craft's reading list saved reads (9 against
+29) and calls (49 against 74), but not tokens. Its turns cost half as much again as
+the unaided agent's, because its context carries SKILL.md, the inspector's output
+and five render reports. Part of that was the 0.12.1 gaps: the bundle, and the
+`report.json` lookups.
+
+## One claim, checked
+
+The agents told the user different things about a bug they did not touch:
+
+- **No skill:** in China the Blog list shows every date a day early.
+- **ui-craft:** the two pages agree in China, and only the Americas are off.
+- **ui-ux-pro-max:** Los Angeles is off, and said nothing about China.
+
+Rendered under `Asia/Shanghai`, the Blog list shows "Aug 24, 2023" for a post dated
+2023-08-25, with 13 hydration warnings. The unaided agent had measured it,
+emulating time zones from UTC+14 to UTC−11. ui-craft asserted without measuring, and
+was wrong. The cause is in the kit: the Blog page passes `UBlogPost` a formatted local
+string, which `UBlogPost` parses again as local midnight and formats in UTC. So the
+list is a day early everywhere but UTC. The one-line fix all three proposed
+(`timeZone: 'UTC'` in the Blog page) would not fix it east of UTC; passing
+`post.date` itself would. The renderer has no time-zone option, so the loop could
+not have caught this. A claim about another time zone was the one place the skill's
+"measure, don't guess" did not reach.
+
+## The hover probe, found while grading
+
+ui-ux-pro-max's titles show hover with an underline that appears by colour
+(`decoration-transparent` → `decoration-primary`). The hover probe compared the line
+of the decoration, not its colour, and did not look at `::before` / `::after` (an
+underline that grows on `::after` is common). It reported six false "no hover
+feedback". It now compares the decoration's colour, thickness and offset, and the
+pseudo-elements; `selftest/layers.html` has both kinds.
+
 ## Not answered
 
-One run, no comparison: the same task under ui-ux-pro-max and with no skill would
-say what the Nuxt reading list saves. The findings still do not say which part of the
-page they are in, so "is this mine or the chrome's" takes a lookup. And the reading
-list does not say where the nav is defined, or how many copies of it there are.
+- The judge cannot separate pages this close. On a match task this constrained,
+  what differs between the configurations is what they cost and what they tell the
+  user, not how the page looks.
+- ui-craft's cost per turn: the renders' output is the largest thing it carries.
+  Findings grouped by part of the page (header, main, footer) would shorten the
+  output and answer "is this mine" at once.
+- The reading list does not say where the nav is defined. All three found the ⌘K
+  copy anyway, by reading.
+- A render in another time zone (`--timezone`) would have let ui-craft check its
+  claim about China instead of making it.

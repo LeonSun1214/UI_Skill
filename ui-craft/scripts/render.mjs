@@ -874,7 +874,10 @@ async function hoverAudit(page, max = 20) {
       if (!isButton && (tag !== 'A' || inlineText)) return null; // only buttons and standalone links
       if (el.hasAttribute('aria-current')) return null; // "you are here" — inert by convention
       if (['aria-pressed', 'aria-checked', 'aria-selected'].some((a) => el.getAttribute(a) === 'true')) return null; // the chosen segment / tab / option
-      const sig = (node) => { const s = getComputedStyle(node); return [s.backgroundColor, s.color, s.borderColor, s.boxShadow, s.textDecorationLine, s.transform, s.opacity, s.outlineStyle, s.filter, s.backgroundImage].join('|'); };
+      // An underline that appears by colour (decoration-transparent → decoration-primary) or grows on a
+      // pseudo-element (::after scale-x-0 → scale-x-100) is hover feedback too.
+      const look = (s) => [s.backgroundColor, s.color, s.borderColor, s.boxShadow, s.textDecorationLine, s.textDecorationColor, s.textDecorationThickness, s.textUnderlineOffset, s.transform, s.opacity, s.outlineStyle, s.filter, s.backgroundImage].join('|');
+      const sig = (node) => look(getComputedStyle(node)) + (node === el ? ['::before', '::after'].map((ps) => { const p = getComputedStyle(node, ps); return p.content === 'none' ? '' : `|${ps}|${look(p)}|${p.width}|${p.height}`; }).join('') : '');
       const nodes = [el, ...[...el.querySelectorAll('*')].slice(0, 6)];
       let s = el.tagName.toLowerCase(); if (el.id) s += '#' + el.id; const t = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 28); if (t) s += ` "${t}"`;
       return { selector: s, before: nodes.map(sig).join('||'), cursor: cs.cursor, isButton, y: r.top + window.scrollY };
@@ -885,7 +888,10 @@ async function hoverAudit(page, max = 20) {
     catch { results.push({ ...info, hovered: false }); continue; }
     const after = await h.evaluate(async (el) => {
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); // script-driven hover states
-      const sig = (node) => { const s = getComputedStyle(node); return [s.backgroundColor, s.color, s.borderColor, s.boxShadow, s.textDecorationLine, s.transform, s.opacity, s.outlineStyle, s.filter, s.backgroundImage].join('|'); };
+      // An underline that appears by colour (decoration-transparent → decoration-primary) or grows on a
+      // pseudo-element (::after scale-x-0 → scale-x-100) is hover feedback too.
+      const look = (s) => [s.backgroundColor, s.color, s.borderColor, s.boxShadow, s.textDecorationLine, s.textDecorationColor, s.textDecorationThickness, s.textUnderlineOffset, s.transform, s.opacity, s.outlineStyle, s.filter, s.backgroundImage].join('|');
+      const sig = (node) => look(getComputedStyle(node)) + (node === el ? ['::before', '::after'].map((ps) => { const p = getComputedStyle(node, ps); return p.content === 'none' ? '' : `|${ps}|${look(p)}|${p.width}|${p.height}`; }).join('') : '');
       const nodes = [el, ...[...el.querySelectorAll('*')].slice(0, 6)];
       return { sig: nodes.map(sig).join('||'), cursor: getComputedStyle(el).cursor };
     });
