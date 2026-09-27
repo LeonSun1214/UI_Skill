@@ -265,6 +265,27 @@ jobs:
           grep -q "a widget test starts the app through its .main(). (.const TrailheadApp().)" /tmp/inspect-flutter.txt
           grep -q "references/stacks/flutter.md" /tmp/inspect-flutter.txt
           grep -q "Established conventions detected" /tmp/inspect-flutter.txt
+          # SwiftUI (read, not rendered): an app playground, tabs, a Route enum pushed from a View extension, a sheet, the asset
+          # colours in light and dark with the contrast of those used as text, fixed sizes, image-only buttons, taps with no trait
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/swiftui-app | tee /tmp/inspect-swiftui.txt | head -5
+          grep -q "SwiftUI · iOS 17.0+ · Swift 5.9 · state: Observation (@Observable)" /tmp/inspect-swiftui.txt
+          grep -q "an app playground (..iOSApplication. in .Package.swift." /tmp/inspect-swiftui.txt
+          grep -q "Screens: 8 (of 9 views)" /tmp/inspect-swiftui.txt
+          grep -q "BerthsView.swift. · “Berths” · BerthsView · 37 lines · list, search, toolbar, preview · uses BerthRow, FiltersView · reached as tab “Berths”" /tmp/inspect-swiftui.txt
+          grep -q "BerthDetailView.swift. · “Berth” · BerthDetailView · 36 lines · reached as .Route.berth. (pushed)" /tmp/inspect-swiftui.txt
+          grep -q "FiltersView.swift. · “Filters” · FiltersView · 21 lines · form, toolbar · reached as a sheet in BerthsView" /tmp/inspect-swiftui.txt
+          grep -q ".Route. picks the screen (pushed by .navigationDestination.): ..berth. → BerthDetailView, ..booking. → BookingDetailView, ..receipt. → ReceiptView" /tmp/inspect-swiftui.txt
+          grep -q "tabs: “Berths” → BerthsView · “Bookings” → BookingsView · “Account” → AccountView" /tmp/inspect-swiftui.txt
+          grep -q "Brand #0E7490 / #22D3EE · Muted #9CA3AF (no dark)" /tmp/inspect-swiftui.txt
+          grep -q "Muted 2.5 / 8.3 ✗" /tmp/inspect-swiftui.txt
+          grep -q "1 button whose label is only an image and has no ..accessibilityLabel. (VoiceOver reads the symbol's name): .Screens/BerthsView.swift:20." /tmp/inspect-swiftui.txt
+          grep -q "1 ..onTapGesture." /tmp/inspect-swiftui.txt
+          grep -q "fixed sizes ×2" /tmp/inspect-swiftui.txt
+          grep -q "custom font .Avenir Next. ×1 — a fixed size" /tmp/inspect-swiftui.txt
+          grep -q "..secondary. is iOS's secondaryLabel: 3.5:1 on white" /tmp/inspect-swiftui.txt
+          grep -q "render: needs macOS with Xcode" /tmp/inspect-swiftui.txt
+          grep -q "references/stacks/swiftui.md" /tmp/inspect-swiftui.txt
+          grep -q "Established conventions detected" /tmp/inspect-swiftui.txt
           # Laravel: routes to views (Route::view, controllers, a Livewire page, Fortify), middleware from groups and
           # controllers (except, only), @extends and component layouts, Blade components, Flux, Inertia, @vite
           python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/laravel-app | tee /tmp/inspect-laravel.txt | head -5

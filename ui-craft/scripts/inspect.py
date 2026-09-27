@@ -142,6 +142,9 @@ def detect_stack(root: Path) -> dict:
     fps = flutter_pubspec(root)
     if fps is not None:                              # Dart and Flutter: pubspec.yaml, not package.json
         return flutter_stack(root, fps)
+    swp = swiftui_project(root)
+    if swp is not None:                              # an Xcode project or a Swift package, with no package.json
+        return swiftui_stack(root, swp)
     pkg_path = root / "package.json"
     deps: dict[str, str] = {}
     name = None
@@ -538,6 +541,7 @@ def verdict(stack: dict, tokens: dict, fonts: dict, comps: dict, usage: dict, do
     sh = sh or {}
     ng, mt, site, lv, rn = sh.get("ng"), sh.get("material"), sh.get("site"), sh.get("laravel"), sh.get("rn")
     fl = sh.get("flutter")
+    sw = sh.get("swiftui")
     pages = len(sh.get("pages") or [])
     kk = sh.get("kits") or {}
     kit_list = kk.get("kits") or []
@@ -557,6 +561,7 @@ def verdict(stack: dict, tokens: dict, fonts: dict, comps: dict, usage: dict, do
         or bool(rn and (rn["theme"]["maps"] or any(sum(c for _, c in uses) >= 6 for _, uses in rn["kits"]) or rn["usage"]["themeColors"] >= 10))
         or bool(fl and (fl["theme"]["schemes"] or (fl["theme"]["seeds"] and not fl.get("template")) or fl["theme"]["textStyles"]
                         or len(sh.get("widgets") or []) >= 4 or fl["usage"]["themeColorTotal"] >= 10))
+        or bool(sw and (len(sw["assets"]) >= 3 or sw["palettes"] or sw["views"] >= 8 or sw["usage"]["styleTotal"] >= 10))
     )
     lines = []
     if mt and (mt["file"] or mt["prebuilt"]):
@@ -597,6 +602,24 @@ def verdict(stack: dict, tokens: dict, fonts: dict, comps: dict, usage: dict, do
             lines.append(f"Spacing: **{fu['spacing'][0][0]}** most used (EdgeInsets, SizedBox)")
         if fu["literal"] >= 10 and fu["literal"] > fu["themeColorTotal"]:
             lines.append(f"Colour drift: {fu['literal']} literal colours in widgets against {fu['themeColorTotal']} read from the theme")
+    if sw:
+        su = sw["usage"]
+        if sw["assets"]:
+            nd = sum(1 for a in sw["assets"] if a["dark"])
+            lines.append(f"Colours: **the asset catalog** ({len(sw['assets'])} colours, {nd} with a dark variant) and the system styles (`.secondary`, `.tint`)"
+                         " — a new view reads `Color(\"Name\")` or the generated `.name`, not `Color(red:…)`")
+        elif sw["palettes"]:
+            lines.append(f"Colours: **`{sw['palettes'][0]['name']}`** in `{sw['palettes'][0]['file']}` — a new view reads it, not new literals")
+        fixed = su["sizeTotal"] + sum(n for _, k, n in su["customs"] if k == "fixed")
+        if su["styleTotal"] or fixed:
+            lines.append(f"Type: **text styles** ×{su['styleTotal']}" + (f" (`.{su['styles'][0][0]}` most)" if su["styles"] else "")
+                         + f" against {fixed} fixed size{'s' if fixed != 1 else ''} — new text uses a text style, so it follows Dynamic Type")
+        if su["spacing"]:
+            lines.append(f"Spacing: **{su['spacing'][0][0]}** most used (`.padding`, `spacing:`)")
+        if su["radius"]:
+            lines.append(f"Radius: **{su['radius'][0][0]}** most used")
+        if su["literal"] >= 8 and su["literal"] > su["assetUses"] + su["semantic"]:
+            lines.append(f"Colour drift: {su['literal']} literal colours in modifiers against {su['assetUses'] + su['semantic']} from the assets and the system")
     if rn:
         for label, uses in rn["kits"]:
             lines.append(f"UI kit: **{label}** — build with its components and its theme, not hand-rolled views")
@@ -4090,6 +4113,783 @@ def md_kit_tokens(k: dict) -> list[str]:
     return out
 
 
+# ------------------------------------------------------------------ SwiftUI
+# An Xcode project (or a Swift package) whose views import SwiftUI. Nothing here serves a page: the render
+# needs macOS (Xcode's previews, a snapshot test, the simulator). On any other machine the report is what
+# the code says: the screens and how each is reached, the asset catalog's colours in light and dark with
+# their contrast, what text follows Dynamic Type, and the accessibility modifiers. The Mac workflow is in
+# references/stacks/swiftui.md.
+SW_SKIP = {".build", "DerivedData", "Carthage", ".swiftpm", "fastlane", "Pods", "SourcePackages", "xcuserdata"}
+_SWIFT_STR_OR_COMMENT = re.compile(r'("""[\s\S]*?"""|"(?:\\.|[^"\\\n])*")|/\*[\s\S]*?\*/|//[^\n]*')
+# iOS's system colours, light / dark (UIKit's documented values; the label colours are translucent)
+SW_SYSTEM = {
+    "label": ("#000000", "#FFFFFF"), "secondaryLabel": ("rgba(60, 60, 67, 0.6)", "rgba(235, 235, 245, 0.6)"),
+    "tertiaryLabel": ("rgba(60, 60, 67, 0.3)", "rgba(235, 235, 245, 0.3)"), "quaternaryLabel": ("rgba(60, 60, 67, 0.18)", "rgba(235, 235, 245, 0.16)"),
+    "placeholderText": ("rgba(60, 60, 67, 0.3)", "rgba(235, 235, 245, 0.3)"), "link": ("#007AFF", "#0984FF"),
+    "systemBackground": ("#FFFFFF", "#000000"), "secondarySystemBackground": ("#F2F2F7", "#1C1C1E"),
+    "tertiarySystemBackground": ("#FFFFFF", "#2C2C2E"), "systemGroupedBackground": ("#F2F2F7", "#000000"),
+    "secondarySystemGroupedBackground": ("#FFFFFF", "#1C1C1E"), "separator": ("rgba(60, 60, 67, 0.29)", "rgba(84, 84, 88, 0.6)"),
+    "systemBlue": ("#007AFF", "#0A84FF"), "systemGreen": ("#34C759", "#30D158"), "systemIndigo": ("#5856D6", "#5E5CE6"),
+    "systemOrange": ("#FF9500", "#FF9F0A"), "systemPink": ("#FF2D55", "#FF375F"), "systemPurple": ("#AF52DE", "#BF5AF2"),
+    "systemRed": ("#FF3B30", "#FF453A"), "systemTeal": ("#30B0C7", "#40C8E0"), "systemYellow": ("#FFCC00", "#FFD60A"),
+    "systemMint": ("#00C7BE", "#63E6E2"), "systemCyan": ("#32ADE6", "#64D2FF"), "systemBrown": ("#A2845E", "#AC8E68"),
+    "systemGray": ("#8E8E93", "#8E8E93"), "systemGray2": ("#AEAEB2", "#636366"), "systemGray3": ("#C7C7CC", "#48484A"),
+    "systemGray4": ("#D1D1D6", "#3A3A3C"), "systemGray5": ("#E5E5EA", "#2C2C2E"), "systemGray6": ("#F2F2F7", "#1C1C1E"),
+}
+# SwiftUI's named colours and styles → the system colour they are
+SW_NAMED = {"red": "systemRed", "orange": "systemOrange", "yellow": "systemYellow", "green": "systemGreen", "mint": "systemMint",
+            "teal": "systemTeal", "cyan": "systemCyan", "blue": "systemBlue", "indigo": "systemIndigo", "purple": "systemPurple",
+            "pink": "systemPink", "brown": "systemBrown", "gray": "systemGray", "primary": "label", "secondary": "secondaryLabel",
+            "tertiary": "tertiaryLabel", "quaternary": "quaternaryLabel"}
+SW_FIXED = {"white": "#FFFFFF", "black": "#000000"}
+SW_STATE_CASES = {"loading", "loaded", "display", "error", "empty", "idle", "success", "failure", "failed", "hasnextpage", "none",
+                  "some", "fetching", "done", "content", "placeholder", "ready", "initial"}
+SW_TEXT_STYLES = ("largeTitle", "title", "title2", "title3", "headline", "subheadline", "body", "callout", "footnote", "caption", "caption2")
+SW_BUILTINS = ("List", "Form", "Table", "LazyVGrid", "LazyHGrid", "Grid", "ScrollView", "NavigationStack", "NavigationSplitView", "TabView",
+               "Button", "NavigationLink", "Toggle", "Picker", "DatePicker", "Stepper", "Slider", "TextField", "SecureField", "TextEditor",
+               "Menu", "Label", "Link", "ShareLink", "ProgressView", "Gauge", "Chart", "Map", "AsyncImage", "ContentUnavailableView",
+               "DisclosureGroup", "GroupBox", "Section", "LabeledContent", "PhotosPicker")
+SW_LIBS = {"Kingfisher": "Kingfisher", "Nuke": "Nuke", "NukeUI": "Nuke", "SDWebImageSwiftUI": "SDWebImage", "Lottie": "Lottie",
+           "ComposableArchitecture": "TCA", "SwiftUIIntrospect": "SwiftUI-Introspect", "Pow": "Pow", "RevenueCat": "RevenueCat",
+           "Charts": "Swift Charts", "MapKit": "MapKit", "WidgetKit": "WidgetKit", "SwiftData": "SwiftData", "CoreData": "Core Data",
+           "Firebase": "Firebase", "FirebaseCore": "Firebase", "Alamofire": "Alamofire", "SnapshotTesting": "swift-snapshot-testing"}
+
+
+def _sw_no_comments(t: str) -> str:
+    return _SWIFT_STR_OR_COMMENT.sub(lambda m: m.group(1) or "", t)
+
+
+def _swift_files(root: Path) -> list[Path]:
+    out = []
+    for p in sorted(root.rglob("*.swift")):
+        parts = p.relative_to(root).parts
+        if set(parts) & (SKIP_DIRS | SW_SKIP) or any(x.endswith(("Tests", "Tests.swift")) and x != p.name for x in parts[:-1]):
+            continue
+        if p.name == "Package.swift":
+            continue
+        out.append(p)
+    return out[:3000]
+
+
+def swiftui_project(root: Path) -> dict | None:
+    """An Xcode project or Swift package with SwiftUI views (and no package.json or pubspec beside it)."""
+    if (root / "package.json").is_file() or (root / "pubspec.yaml").is_file():
+        return None
+    projs = sorted(p for p in list(root.glob("*.xcodeproj")) + list(root.glob("*/*.xcodeproj")) if not set(p.relative_to(root).parts) & SKIP_DIRS)
+    pkg = root / "Package.swift"
+    if not projs and not pkg.is_file():
+        return None
+    files = _swift_files(root)
+    if not files:
+        return None
+    swiftui = [p for p in files if re.search(r"^\s*import\s+SwiftUI\b", read(p, 20_000), re.M)]
+    return {"projects": projs, "package": pkg if pkg.is_file() else None, "files": files, "swiftui": swiftui}
+
+
+def _sw_pbx(projs: list[Path]) -> dict:
+    """Deployment targets, the Swift version, the targets and the remote packages from project.pbxproj."""
+    dep: dict[str, list[str]] = {}
+    swift, targets, packages = collections.Counter(), [], []
+    for pr in projs[:3]:
+        t = read(pr / "project.pbxproj", 3_000_000)
+        for key, plat in (("IPHONEOS_DEPLOYMENT_TARGET", "iOS"), ("MACOSX_DEPLOYMENT_TARGET", "macOS"), ("XROS_DEPLOYMENT_TARGET", "visionOS"),
+                          ("WATCHOS_DEPLOYMENT_TARGET", "watchOS"), ("TVOS_DEPLOYMENT_TARGET", "tvOS")):
+            dep.setdefault(plat, []).extend(re.findall(key + r"\s*=\s*\"?([\d.]+)", t))
+        swift.update(re.findall(r"SWIFT_VERSION\s*=\s*\"?([\d.]+)", t))
+        for m in re.finditer(r"isa = PBXNativeTarget;(.*?)\};", t, re.S):
+            body = m.group(1)
+            name = re.search(r"\bname = \"?([^\";]+)\"?;", body)
+            kind = re.search(r'productType = "com\.apple\.product-type\.([\w.-]+)"', body)
+            if name and kind:
+                targets.append((name.group(1), kind.group(1)))
+        packages += re.findall(r'XCRemoteSwiftPackageReference "([^"]+)"', t)
+    vers = lambda v: tuple(int(x) for x in v.split(".") if x.isdigit())
+    platforms = {k: min(v, key=vers) for k, v in dep.items() if v}
+    return {"platforms": platforms, "swift": swift.most_common(1)[0][0] if swift else None, "targets": targets,
+            "packages": sorted(set(packages))}
+
+
+def _sw_package(pkg: Path) -> dict:
+    t = read(pkg, 200_000)
+    tools = re.search(r"swift-tools-version:\s*([\d.]+)", t)
+    plats = {m.group(1): (m.group(2) or m.group(3)).replace("_", ".")
+             for m in re.finditer(r"\.(iOS|macOS|visionOS|watchOS|tvOS)\(\s*(?:\.v([\d_]+)|\"([\d.]+)\")", t)}
+    name = re.search(r'Package\s*\(\s*name:\s*"([^"]+)"', t)
+    deps = [u.rstrip("/").split("/")[-1].removesuffix(".git") for u in re.findall(r'\.package\(\s*(?:name:\s*"[^"]*",\s*)?url:\s*"([^"]+)"', t)]
+    return {"tools": tools.group(1) if tools else None, "platforms": plats, "name": name.group(1) if name else None, "deps": deps}
+
+
+def _sw_comp(v) -> float:
+    s = str(v).strip()
+    if s.lower().startswith("0x"):
+        return int(s, 16) / 255
+    return float(s) if "." in s else float(s) / 255
+
+
+def _sw_css(c: dict) -> str | None:
+    """A colorset's colour (components or a system reference) as CSS, or a (light, dark) pair for a system colour."""
+    ref = c.get("reference")
+    if ref:
+        return ref
+    comp = c.get("components") or {}
+    try:
+        r, g, b = (round(_sw_comp(comp[k]) * 255) for k in ("red", "green", "blue"))
+        a = _sw_comp(comp.get("alpha", "1.000"))
+    except (KeyError, ValueError):
+        return None
+    return f"#{r:02X}{g:02X}{b:02X}" if a >= 0.999 else f"rgba({r}, {g}, {b}, {round(a, 3)})"
+
+
+def _sw_resolve(v: str | None, dark: bool) -> str | None:
+    """A system reference (systemIndigoColor, labelColor) to its value in one appearance."""
+    if not v or v.startswith(("#", "rgba")):
+        return v
+    name = re.sub(r"Color$", "", v)
+    pair = SW_SYSTEM.get(name)
+    return pair[1 if dark else 0] if pair else None
+
+
+def _sw_symbol(name: str) -> str:
+    """The Swift symbol Xcode generates for an asset colour: "Delivery Status BG 1" → deliveryStatusBG1, "BarBottomColor" → barBottom."""
+    words = [w for w in re.split(r"[^A-Za-z0-9]+", name) if w]
+    if not words:
+        return name
+    s = words[0][0].lower() + words[0][1:] + "".join(w[0].upper() + w[1:] for w in words[1:])
+    return re.sub(r"(?<=.)Colou?r$", "", s)
+
+
+def swiftui_assets(root: Path) -> list[dict]:
+    """Every colour set in the app's asset catalogs (preview assets left out), with its light, dark and high-contrast values."""
+    out = []
+    for cs in sorted(root.rglob("*.colorset")):
+        parts = cs.relative_to(root).parts
+        if set(parts) & (SKIP_DIRS | SW_SKIP) or any("Preview" in x for x in parts):
+            continue
+        try:
+            data = json.loads(read(cs / "Contents.json", 100_000))
+        except (json.JSONDecodeError, ValueError):
+            continue
+        vals = {}
+        for c in data.get("colors") or []:
+            if c.get("idiom") not in (None, "universal", "iphone", "ipad", "mac"):
+                continue
+            app = {a.get("appearance"): a.get("value") for a in c.get("appearances") or []}
+            key = ("dark" if app.get("luminosity") == "dark" else "light") + ("-high" if app.get("contrast") == "high" else "")
+            v = _sw_css(c.get("color") or {})
+            if v and key not in vals:
+                vals[key] = v
+        if not vals:
+            continue
+        catalog = next((x for x in parts if x.endswith(".xcassets")), "")
+        out.append({"name": cs.stem, "catalog": str(Path(*parts[:parts.index(catalog) + 1])) if catalog else rel(root, cs.parent),
+                    "light": vals.get("light"), "dark": vals.get("dark"), "high": bool(vals.get("light-high") or vals.get("dark-high")),
+                    "symbol": _sw_symbol(cs.stem)})
+    return out[:120]
+
+
+def _sw_num(e: str) -> float | None:
+    """187 / 255, 0.4, 0x1F → a number (0–1 for a component)."""
+    e = e.strip()
+    m = re.fullmatch(r"([\d.]+)\s*/\s*([\d.]+)", e)
+    try:
+        if m:
+            return float(m.group(1)) / float(m.group(2))
+        return float(e)
+    except ValueError:
+        return None
+
+
+def _sw_color(expr: str, assets: dict[str, dict]) -> str | tuple | None:
+    """A SwiftUI colour expression → CSS, a (light, dark) pair (a system or asset colour), or None."""
+    e = re.sub(r"\s+", " ", expr.strip().rstrip(",")).strip()
+    e = re.sub(r"^(?:Color|SwiftUI\.Color)\.", ".", e)
+    m = re.match(r"^(?:Color|\.init)\s*\((?:\s*\.sRGB\s*,)?\s*red:\s*([^,]+),\s*green:\s*([^,]+),\s*blue:\s*([^,)]+)(?:,\s*opacity:\s*([^)]+))?\)", e)
+    if m:
+        nums = [_sw_num(x) for x in m.groups()[:3]]
+        if None in nums:
+            return None
+        r, g, b = (round(max(0, min(1, n)) * 255) for n in nums)
+        a = _sw_num(m.group(4)) if m.group(4) else 1
+        return f"#{r:02X}{g:02X}{b:02X}" if a is None or a >= 0.999 else f"rgba({r}, {g}, {b}, {round(a, 3)})"
+    m = re.match(r"^(?:Color|\.init)\s*\(\s*hex:\s*(?:0x|\"#?)([0-9A-Fa-f]{6})", e)
+    if m:
+        return "#" + m.group(1).upper()
+    m = re.match(r"^(?:Color|\.init)\s*\(\s*white:\s*([\d.]+)", e)
+    if m:
+        v = round(float(m.group(1)) * 255)
+        return f"#{v:02X}{v:02X}{v:02X}"
+    m = re.match(r"^(?:Color|\.init)\s*\(\s*\"([^\"]+)\"", e)
+    if m and m.group(1) in assets:
+        a = assets[m.group(1)]
+        return (a["light"], a["dark"] or a["light"])
+    m = re.match(r"^(?:Color\s*\(\s*(?:uiColor:\s*)?(?:UIColor)?|\.init\s*\(\s*(?:uiColor:\s*)?)\.(\w+)\s*\)", e) or re.match(r"^\.(\w+)$", e)
+    if m:
+        n = m.group(1)
+        if n in SW_FIXED:
+            return SW_FIXED[n]
+        sysname = SW_NAMED.get(n) or (n if n in SW_SYSTEM else None)
+        if sysname:
+            return SW_SYSTEM[sysname]
+        hit = next((a for a in assets.values() if a["symbol"] == n), None)
+        if hit:
+            return (hit["light"], hit["dark"] or hit["light"])
+    return None
+
+
+def _sw_pair(v) -> tuple:
+    """Any colour value as (light, dark) CSS, system references resolved."""
+    if isinstance(v, tuple):
+        return (_sw_resolve(v[0], False), _sw_resolve(v[1] or v[0], True))
+    return (_sw_resolve(v, False), _sw_resolve(v, True))
+
+
+def swiftui_palettes(files: list[Path], assets: dict[str, dict]) -> list[dict]:
+    """Colours the code defines: `extension Color { static let brand = … }`, and types whose properties are colours
+    (a theme struct per scheme: IceCubeLight / IceCubeDark). Light and dark types with one prefix are paired."""
+    found = []
+    for p in files:
+        t = _sw_no_comments(read(p, 300_000))
+        if "Color" not in t:
+            continue
+        for m in re.finditer(r"\b(extension|struct|enum|class|final class)\s+(\w+)[^{\n]*\{", t):
+            body = block_after(t, m.start())
+            cols = []
+            for pm in re.finditer(r"(?:static\s+)?(?:let|var)\s+(\w+)\s*(?::\s*(?:SwiftUI\.)?Color\s*)?=\s*([^\n]+)", body):
+                v = _sw_color(pm.group(2), assets)
+                if v:
+                    cols.append((pm.group(1), v))
+            for pm in re.finditer(r"(?:static\s+)?var\s+(\w+)\s*:\s*(?:SwiftUI\.)?Color\s*\{\s*(?:return\s+)?([^\n}]+)\}", body):
+                v = _sw_color(pm.group(2), assets)
+                if v and pm.group(1) not in dict(cols):
+                    cols.append((pm.group(1), v))
+            if len(cols) >= 2 or (m.group(2) == "Color" and cols):
+                found.append({"type": m.group(2), "kind": m.group(1), "file": p, "colors": cols[:16]})
+    # light / dark twins: IceCubeLight + IceCubeDark → one palette with both columns
+    by = {f["type"]: f for f in found}
+    out, used = [], set()
+    for f in found:
+        if f["type"] in used:
+            continue
+        stem = re.sub(r"(Light|Dark)$", "", f["type"])
+        if stem != f["type"] and f"{stem}Light" in by and f"{stem}Dark" in by:
+            lt, dk = by[f"{stem}Light"], by[f"{stem}Dark"]
+            used |= {lt["type"], dk["type"]}
+            dmap = dict(dk["colors"])
+            out.append({"name": f"{stem}Light / {stem}Dark", "file": lt["file"],
+                        "colors": [(k, (_sw_pair(v)[0], _sw_pair(dmap.get(k, v))[1])) for k, v in lt["colors"]]})
+        elif f["type"] not in used:
+            used.add(f["type"])
+            out.append({"name": ("extension " if f["kind"] == "extension" else "") + f["type"], "file": f["file"],
+                        "colors": [(k, _sw_pair(v)) for k, v in f["colors"]]})
+    return out[:8]
+
+
+def _sw_views(files: list[Path]) -> dict[str, dict]:
+    """Every `struct X: View` with its file, its body text and its stored properties (the inputs)."""
+    idx: dict[str, dict] = {}
+    for p in files:
+        t = _sw_no_comments(read(p, 300_000))
+        for m in re.finditer(r"\bstruct\s+(\w+)\s*(?:<[^{>]*>)?\s*:\s*([^{]*)\{", t):
+            if not re.search(r"\bView\b", m.group(2)) or m.group(1) in idx:
+                continue
+            body = block_after(t, m.start())
+            props = [n for n in re.findall(r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:public\s+|private\(set\)\s+)?(?:let|var)\s+(\w+)\s*:\s*[^={\n]+$", body, re.M)
+                     if not n.startswith("_")]
+            idx[m.group(1)] = {"file": p, "text": t, "body": body, "props": props[:6]}
+    return idx
+
+
+def _sw_first_view(block: str, views: dict) -> str | None:
+    m = next((m for m in re.finditer(r"\b([A-Z]\w*)\s*[({]", block) if m.group(1) in views), None)
+    return m.group(1) if m else None
+
+
+def _sw_cases(body: str, views: dict) -> list[tuple[str, str]]:
+    """The body of one `switch`: `case .a(let id): A(id)` → [(a, A)], each case's first view."""
+    out = []
+    cases = list(re.finditer(r"\bcase\s+(?:let\s+|var\s+)?\.?(\w+)[^:\n]*:|\bdefault\s*:", body))
+    for i, cm in enumerate(cases):
+        chunk = body[cm.end(): cases[i + 1].start() if i + 1 < len(cases) else len(body)]
+        v = _sw_first_view(chunk, views)
+        if v and cm.group(1):
+            out.append((cm.group(1), v))
+    return out
+
+
+def _sw_switch_cases(block: str, views: dict) -> list[tuple[str, str]]:
+    out = []
+    for sm in re.finditer(r"\bswitch\s+[^{]+\{", block):
+        out += _sw_cases(block_after(block, sm.start()), views)
+    return out
+
+
+def swiftui_navigation(files: list[Path], views: dict) -> dict:
+    """How screens are reached: the app's root, tabs, pushes (navigationDestination, NavigationLink), sheets, and
+    the switches that pick a screen from an enum (a router, a sidebar's selection)."""
+    reach: dict[str, list[str]] = collections.defaultdict(list)
+    titles: dict[str, str] = {}
+    app, roots, tabs, enums = None, [], [], []
+    app_text = ""
+    for p in files:
+        t = _sw_no_comments(read(p, 300_000))
+        m = re.search(r"@main\s+(?:public\s+)?struct\s+(\w+)\s*:\s*(?:SwiftUI\.)?App\b", t)
+        if m:
+            app = {"name": m.group(1), "file": p}
+    if app:
+        for p in files:
+            t = _sw_no_comments(read(p, 300_000))
+            for m in re.finditer(r"\b(?:struct|extension)\s+" + re.escape(app["name"]) + r"\b[^{]*\{", t):
+                app_text += block_after(t, m.start()) + "\n"
+        for m in re.finditer(r"\b(WindowGroup|DocumentGroup|Window|Settings|MenuBarExtra|ImmersiveSpace)\b([^{\n]*)\{", app_text):
+            v = _sw_first_view(block_after(app_text, m.start()), views)
+            wf = re.search(r"for:\s*([\w.]+)\.self", m.group(2))
+            if v and wf:                                  # WindowGroup(for: T.self): a window the app opens with a value
+                reach[v].append(f"a window of its own (`WindowGroup(for: {wf.group(1)})`)")
+                continue
+            if v and v not in roots:
+                roots.append(v)
+                reach[v].append("the app's root" if m.group(1) in ("WindowGroup", "DocumentGroup")
+                                else {"MenuBarExtra": "the macOS menu bar (MenuBarExtra)", "Settings": "the macOS Settings window"}.get(m.group(1), f"the {m.group(1)} scene"))
+    for name, info in views.items():
+        b = info["body"]
+        tm = re.search(r"\.navigationTitle\(\s*(?:Text\(\s*)?\"([^\"]+)\"", b)
+        if tm:
+            titles[name] = tm.group(1)
+        if "TabView" in b:
+            tv = block_after(b, b.find("TabView"))
+            for m in re.finditer(r"\bTab\s*\(\s*\"([^\"]+)\"[^{]*\{", tv):           # iOS 18: Tab("Home", systemImage:) { … }
+                v = _sw_first_view(block_after(tv, m.start()), views)
+                if v:
+                    tabs.append((m.group(1), v))
+                    reach[v].append(f"tab “{m.group(1)}”")
+            prev = 0
+            for m in re.finditer(r"\.tabItem\s*\{", tv):                              # X().tabItem { Label("Home", …) }
+                v = next((x for x in reversed(re.findall(r"\b([A-Z]\w*)\s*[({]", tv[prev:m.start()])) if x in views), None)
+                lab = re.search(r"\"([^\"]+)\"", block_after(tv, m.start()))
+                prev = m.end()
+                if v:
+                    tabs.append((lab.group(1) if lab else v, v))
+                    reach[v].append(f"tab “{lab.group(1)}”" if lab else "a tab")
+        for m in re.finditer(r"\.navigationDestination\s*\(\s*(for:\s*([\w.]+)\.self|isPresented:|item:)[^{]*\{", b):
+            blk = block_after(b, m.start())
+            if not re.search(r"\bswitch\b", blk):
+                v = _sw_first_view(blk, views)
+                if v:
+                    reach[v].append(f"pushed from {name}" + (f" for `{m.group(2)}`" if m.group(2) else ""))
+        for m in re.finditer(r"NavigationLink\s*\(\s*(?:\"[^\"]*\"\s*,\s*)?destination:\s*([A-Z]\w*)", b):
+            if m.group(1) in views:
+                reach[m.group(1)].append(f"a link in {name}")
+        for m in re.finditer(r"NavigationLink\s*\{", b):
+            v = _sw_first_view(block_after(b, m.start()), views)
+            if v:
+                reach[v].append(f"a link in {name}")
+        for m in re.finditer(r"\.(sheet|fullScreenCover|popover|inspector)\s*\([^{]*\{", b):
+            blk = block_after(b, m.start())
+            if not re.search(r"\bswitch\b", blk):
+                v = _sw_first_view(blk, views)
+                if v:
+                    reach[v].append(f"a {m.group(1)} in {name}")
+    # A switch that returns a screen per case, wherever it is: a router enum's `navigationDestination(for:)`
+    # (often in a View extension), a sheet enum's `.sheet(item:)`, a split view's detail column switching on
+    # the sidebar's selection, a tab enum's `makeContentView()`.
+    for p in files:
+        t = _sw_no_comments(read(p, 300_000))
+        if "switch" not in t:
+            continue
+        for sm in re.finditer(r"\bswitch\s+([^{\n]+)\{", t):
+            cases = _sw_cases(block_after(t, sm.start()), views)
+            if len(cases) < 3 or len({v for _, v in cases}) < 2 or any(e["cases"] == cases for e in enums):
+                continue
+            # a loading state picking a row or a placeholder is not a screen picker
+            if sum(c.lower() in SW_STATE_CASES for c, _ in cases) * 2 >= len(cases):
+                continue
+            back = t[max(0, sm.start() - 400): sm.start()]
+            dest = re.search(r"navigationDestination\s*\(\s*(?:for:\s*([\w.]+)\.self|item:\s*\$?([\w.]+))[^{]*\{[^}]*$", back)
+            sheet = re.search(r"(?:\.|\b)(sheet|fullScreenCover|popover)\s*\(\s*item:\s*\$?([\w.]+)[^{]*\{[^}]*$", back)
+            window = re.search(r"WindowGroup\s*\(\s*for:\s*([\w.]+)\.self[^{]*\{[^}]*$", back)
+            subject = sm.group(1).strip()
+
+            def bound(name: str) -> str:              # a binding's or a property's type: sheetDestinations: Binding<SheetDestination?>
+                name = name.split(".")[-1]
+                bm = re.search(r"\b" + re.escape(name) + r"\s*:\s*(?:Binding<)?([\w.]+)", t[max(0, sm.start() - 3000): sm.start()]) \
+                    or re.search(r"\b(?:var|let)\s+" + re.escape(name) + r"\s*:\s*([\w.]+)", t)
+                return bm.group(1) if bm else name
+            if window:
+                kind, label = "window", window.group(1)
+            elif dest:
+                kind, label = "push", dest.group(1) or bound(dest.group(2))
+            elif sheet:
+                kind, label = "sheet", bound(sheet.group(2))
+            else:
+                kind = "switch"
+                var = re.match(r"^(\w+)", subject)
+                typ = re.search(r"\b(?:var|let)\s+" + re.escape(var.group(1)) + r"\s*:\s*([\w.]+)", t) if var and var.group(1) != "self" else None
+                owner = re.findall(r"\b(?:enum|struct|extension|class)\s+(\w+)", t[: sm.start()])
+                label = typ.group(1) if typ else (owner[-1] if owner and (not var or var.group(1) == "self") else subject)
+            enums.append({"type": label, "cases": cases, "kind": kind, "subject": subject})
+            for c, v in cases:
+                text = {"push": f"`{label}.{c}` (pushed)", "sheet": f"`{label}.{c}` ({sheet.group(1) if sheet else 'sheet'})",
+                        "window": f"`{label}.{c}` (a window of its own)", "switch": f"`{label}.{c}`"}[kind]
+                if text not in reach[v]:
+                    reach[v].append(text)
+    return {"app": app, "roots": roots, "tabs": tabs, "enums": enums, "reach": dict(reach), "titles": titles}
+
+
+def _sw_signals(body: str) -> list[str]:
+    s = []
+    for pat, label in ((r"\bList\s*[({]", "list"), (r"\bForm\s*\{", "form"), (r"\bTable\s*[({]", "table"), (r"\bLazy[VH]Grid\b|\bGrid\s*[({]", "grid"),
+                       (r"\bChart\s*[({]", "chart"), (r"\bMap\s*[({]", "map"), (r"\.searchable\(", "search"), (r"\.refreshable\b", "pull to refresh"),
+                       (r"\.swipeActions\b", "swipe actions"), (r"\.toolbar\b", "toolbar")):
+        if re.search(pat, body):
+            s.append(label)
+    fields = len(re.findall(r"\b(?:TextField|SecureField|TextEditor)\s*\(", body))
+    if fields:
+        s.append(f"{fields} field{'s' if fields > 1 else ''}")
+    return s
+
+
+def swiftui_usage(root: Path, files: list[Path], views: dict, assets: dict[str, dict], palette_files: set) -> dict:
+    """What the views use: SwiftUI's controls, colours (asset, system, literal), text styles against fixed sizes,
+    spacing and radius numbers, and the accessibility modifiers."""
+    builtins, colors, styles, sizes, customs = (collections.Counter() for _ in range(5))
+    spacing, radius = collections.Counter(), collections.Counter()
+    a11y = collections.Counter()
+    fg_assets: dict[str, int] = collections.Counter()
+    icon_only: list[str] = []
+    literal = 0
+    for p in files:
+        t = _sw_no_comments(read(p, 300_000))
+        raw = read(p, 300_000)
+        if "import SwiftUI" not in raw and "View" not in t:
+            continue
+        builtins.update(m for m in re.findall(r"(?<![\w.])(" + "|".join(SW_BUILTINS) + r")\s*[({]", t))
+        for m in re.finditer(r"\.(foregroundStyle|foregroundColor|tint|background|fill|stroke|border|accentColor)\s*\(\s*([^()\n]*(?:\([^()\n]*\))?[^()\n]*)\)", t):
+            arg = m.group(2).strip()
+            first = re.split(r"\s*,\s*(?![^(]*\))", arg)[0]
+            v = _sw_color(first, assets)
+            key = None
+            nm = re.match(r"^(?:Color\.|\.)(\w+)$", first) or re.match(r"^Color\(\s*\"([^\"]+)\"", first) or re.match(r"^Color\(\s*\.(\w+)\s*\)$", first)
+            if nm:
+                n = nm.group(1)
+                asset = assets.get(n) or next((a for a in assets.values() if a["symbol"] == n), None)
+                key = f"asset {asset['name']}" if asset else (f".{n}" if n in SW_NAMED or n in SW_FIXED or n in SW_SYSTEM else None)
+                if asset and m.group(1) in ("foregroundStyle", "foregroundColor", "tint"):
+                    fg_assets[asset["name"]] += 1
+            elif v and not isinstance(v, tuple) and str(p) not in palette_files:
+                key = "literal"
+                literal += 1
+            if key:
+                colors[key] += 1
+        styles.update(re.findall(r"\.font\(\s*\.(" + "|".join(SW_TEXT_STYLES) + r")\b", t))
+        sizes.update(re.findall(r"\.font\(\s*(?:\.system|Font\.system)\(\s*size:\s*([\d.]+)", t))
+        for m in re.finditer(r"\.custom\(\s*\"([^\"]+)\"\s*,\s*(?:fixedSize:|size:)\s*([\d.]+)([^)]*)\)", t):
+            customs[(m.group(1), "scales" if "relativeTo" in m.group(3) else "fixed")] += 1
+        spacing.update(re.findall(r"\.padding\(\s*(?:\.\w+\s*,\s*)?(\d+(?:\.\d+)?)\s*\)", t) + re.findall(r"\bspacing:\s*(\d+(?:\.\d+)?)", t))
+        radius.update(re.findall(r"cornerRadius:?\s*\(?\s*(\d+(?:\.\d+)?)", t))
+        a11y["labels"] += len(re.findall(r"\.accessibilityLabel\(", t))
+        a11y["hints"] += len(re.findall(r"\.accessibilityHint\(", t))
+        a11y["hidden"] += len(re.findall(r"\.accessibilityHidden\(\s*true", t))
+        a11y["traits"] += len(re.findall(r"\.accessibilityAddTraits\(", t))
+        a11y["taps"] += len(re.findall(r"\.onTapGesture\b", t))
+        a11y["scaled"] += len(re.findall(r"@ScaledMetric\b", t))
+        a11y["clamp"] += len(re.findall(r"\.dynamicTypeSize\(", t))
+        a11y["shrink"] += len(re.findall(r"\.minimumScaleFactor\(", t))
+        a11y["oneLine"] += len(re.findall(r"\.lineLimit\(\s*1\s*\)", t))
+        a11y["colorScheme"] += len(re.findall(r"\\\.colorScheme\b", t))
+        a11y["reduceMotion"] += len(re.findall(r"accessibilityReduceMotion\b", t))
+        # a button whose label is only an image, with no accessibilityLabel on it: VoiceOver reads the symbol's name
+        for m in re.finditer(r"\bButton\s*(?:\([^)]*\)\s*)?\{", t):
+            head = t[m.start(): m.end()]
+            if "action:" not in head and not re.search(r"\}\s*label:\s*\{", t[m.end(): m.end() + 2000]) and "(" not in head:
+                continue
+            lm = re.search(r"\}\s*label:\s*\{", t[m.end(): m.end() + 2000])
+            label = block_after(t, m.end() + lm.start() + 1) if lm else block_after(t, m.start())
+            after = t[m.end() + (lm.end() if lm else 0) + len(label): m.end() + (lm.end() if lm else 0) + len(label) + 240]
+            if re.search(r"\bImage\s*\(", label) and not re.search(r"\b(?:Text|Label)\s*\(|accessibilityLabel", label) \
+                    and not re.match(r"[\s\S]{0,4}\}[\s\S]*?\.accessibilityLabel\(", after[:200]) and "accessibilityLabel" not in after[:160]:
+                icon_only.append(f"{rel(root, p)}:{t[: m.start()].count(chr(10)) + 1}")
+    return {"builtins": builtins.most_common(12), "colors": colors.most_common(8), "literal": literal,
+            "semantic": sum(n for k, n in colors.items() if k.startswith(".")), "assetUses": sum(n for k, n in colors.items() if k.startswith("asset ")),
+            "fgAssets": dict(fg_assets), "styles": styles.most_common(8), "styleTotal": sum(styles.values()),
+            "sizes": sizes.most_common(6), "sizeTotal": sum(sizes.values()), "customs": [(f, k, n) for (f, k), n in customs.most_common(6)],
+            "spacing": spacing.most_common(8), "radius": radius.most_common(5), "a11y": dict(a11y), "iconOnly": icon_only}
+
+
+def swiftui_plist(root: Path) -> dict:
+    fonts, style = [], None
+    for pl in sorted(root.rglob("Info.plist")):
+        parts = pl.relative_to(root).parts
+        if set(parts) & (SKIP_DIRS | SW_SKIP) or any(x.endswith("Tests") for x in parts):
+            continue
+        t = read(pl, 200_000)
+        fm = re.search(r"<key>UIAppFonts</key>\s*<array>(.*?)</array>", t, re.S)
+        if fm:
+            fonts += re.findall(r"<string>([^<]+)</string>", fm.group(1))
+        sm = re.search(r"<key>UIUserInterfaceStyle</key>\s*<string>([^<]+)</string>", t)
+        if sm:
+            style = sm.group(1)
+    return {"fonts": list(dict.fromkeys(fonts))[:12], "style": style}
+
+
+def swiftui_strings(root: Path) -> dict:
+    langs, keys, files, text = set(), 0, [], {}
+    for f in sorted(root.rglob("*.xcstrings")):
+        if set(f.relative_to(root).parts) & (SKIP_DIRS | SW_SKIP):
+            continue
+        try:
+            data = json.loads(read(f, 5_000_000))
+        except (json.JSONDecodeError, ValueError):
+            continue
+        files.append(rel(root, f))
+        strings = data.get("strings") or {}
+        keys += len(strings)
+        src = data.get("sourceLanguage") or "en"
+        langs.add(src)
+        for k, v in strings.items():
+            unit = ((v.get("localizations") or {}).get(src) or {}).get("stringUnit") or {}
+            if unit.get("value") and k not in text:
+                text[k] = unit["value"]
+        for v in list(strings.values())[:400]:
+            langs.update((v.get("localizations") or {}).keys())
+    for d in root.rglob("*.lproj"):
+        if not set(d.relative_to(root).parts) & (SKIP_DIRS | SW_SKIP) and d.stem != "Base":
+            langs.add(d.stem)
+    return {"files": files[:4], "keys": keys, "languages": sorted(langs), "text": text}
+
+
+def swiftui_stack(root: Path, sp: dict) -> dict:
+    pbx = _sw_pbx(sp["projects"])
+    pkg = _sw_package(sp["package"]) if sp["package"] else {"tools": None, "platforms": {}, "name": None, "deps": []}
+    plats = {**pkg["platforms"], **pbx["platforms"]}
+    imports = collections.Counter()
+    for p in sp["files"][:1500]:
+        imports.update(set(re.findall(r"^\s*import\s+(\w+)", read(p, 20_000), re.M)))
+    libs = sorted({label for mod, label in SW_LIBS.items() if imports.get(mod)} | {SW_LIBS[d] for d in pbx["packages"] + pkg["deps"] if d in SW_LIBS})
+    state = []
+    blob = "\n".join(read(p, 100_000) for p in sp["files"][:800])
+    if "@Observable" in blob:
+        state.append("Observation (@Observable)")
+    if "ObservableObject" in blob:
+        state.append("ObservableObject")
+    if imports.get("ComposableArchitecture"):
+        state.append("TCA")
+    if "@Model" in blob and imports.get("SwiftData"):
+        state.append("SwiftData")
+    name = sp["projects"][0].stem if sp["projects"] else pkg["name"] or root.name
+    playground = bool(sp["package"]) and ".iOSApplication(" in read(sp["package"], 200_000)
+    apps = [n for n, k in pbx["targets"] if k in ("application", "application.watchapp2")]
+    exts = [n for n, k in pbx["targets"] if k.startswith("app-extension") or "extension" in k]
+    local_pkgs = sorted({rel(root, p.parent) for p in root.rglob("Package.swift") if not set(p.relative_to(root).parts) & (SKIP_DIRS | SW_SKIP)} - {"."})
+    return {
+        "name": name, "depsSource": "Xcode project" if sp["projects"] else "Package.swift", "framework": "SwiftUI" if sp["swiftui"] else "UIKit",
+        "router": None, "react": None, "reactNative": None, "rnWeb": None, "vue": None, "svelte": None,
+        "frameworkVersion": None, "platforms": plats, "swift": pbx["swift"] or pkg["tools"],
+        "xcode": {"projects": [rel(root, p) for p in sp["projects"]], "playground": playground, "apps": apps, "extensions": exts, "localPackages": local_pkgs[:12],
+                  "swiftuiFiles": len(sp["swiftui"]), "swiftFiles": len(sp["files"])},
+        "workspaceApps": [], "integrations": [], "tailwind": None, "tailwindMajor": None, "tailwindConfigFiles": [],
+        "ui": libs, "icons": ["SF Symbols"] if "systemName:" in blob else [], "motion": sorted({x for x in libs if x in ("Lottie", "Pow")}),
+        "state": state, "shadcn": None, "typescript": False, "deps": {},
+    }
+
+
+def swiftui_start_here(root: Path, stack: dict) -> dict:
+    sp = swiftui_project(root) or {"files": [], "swiftui": [], "projects": [], "package": None}
+    files = sp["files"]
+    assets_list = swiftui_assets(root)
+    assets = {a["name"]: a for a in assets_list}
+    views = _sw_views(files)
+    nav = swiftui_navigation(files, views)
+    palettes = swiftui_palettes(files, assets)
+    usage = swiftui_usage(root, files, views, assets, {str(pl["file"]) for pl in palettes})
+    plist = swiftui_plist(root)
+    strings = swiftui_strings(root)
+    previews = set()
+    for p in files:
+        t = _sw_no_comments(read(p, 300_000))
+        for m in re.finditer(r"#Preview\b[^{]*\{", t):
+            v = _sw_first_view(block_after(t, m.start()), views)
+            if v:
+                previews.add(v)
+        previews.update(m for m in re.findall(r"struct\s+(\w+?)_Previews\s*:\s*PreviewProvider", t))
+    # screens: what the app reaches (root, tabs, pushes, sheets, a routing switch) and what sets a navigation title
+    screens = list(dict.fromkeys([*nav["roots"], *[v for _, v in nav["tabs"]], *nav["reach"].keys(), *nav["titles"].keys()]))
+    screens = [s for s in screens if s in views]
+    tab_enums = {e["type"] for e in nav["enums"] if e["kind"] == "switch" and re.search(r"Tab|Panel|Section|Sidebar|Destination|Route|Screen|Page", e["type"])}
+
+    def rank(sc: str) -> int:
+        via = " ".join(nav["reach"].get(sc, []))
+        if sc in nav["roots"]:
+            return 0
+        if sc in {v for _, v in nav["tabs"]} or any(f"`{te}." in via for te in tab_enums):
+            return 1
+        if "(pushed)" in via or "pushed from" in via:
+            return 2
+        if "sheet" in via or "fullScreenCover" in via or "window" in via:
+            return 3
+        return 4
+    screens.sort(key=rank)
+    fanin = collections.Counter()
+    for name, info in views.items():
+        for other in set(re.findall(r"\b([A-Z]\w*)\s*[({]", info["body"])) & set(views) - {name}:
+            fanin[other] += 1
+    pages = []
+    for s in screens[:30]:
+        info = views[s]
+        t = read(info["file"], 300_000)
+        via = list(dict.fromkeys(nav["reach"].get(s, [])))
+        uses = [x for x in dict.fromkeys(re.findall(r"\b([A-Z]\w*)\s*[({]", info["body"])) if x in views and x != s][:5]
+        title = nav["titles"].get(s)
+        title = strings["text"].get(title, title) if title else None       # a key in the string catalog → its text
+        route = (f"“{title}” · " if title else "") + s
+        rec = {"file": rel(root, info["file"]), "lines": t.count("\n") + 1, "signals": _sw_signals(info["body"]), "classes": [],
+               "components": uses, "usesWord": "uses", "renders": None, "route": route, "routeGuards": [],
+               "when": ("reached as " + ", ".join(via[:3]) + (f" and {len(via) - 3} more" if len(via) > 3 else "")) if via else None}
+        if s in previews:
+            rec["signals"] = rec["signals"] + ["preview"]
+        pages.append(rec)
+    comps = sorted(n for n in views if n not in screens and (fanin[n] >= 2 or re.search(r"(?:^|/)(Components?|DesignSystem|UI|Common|Shared|Views?|Cells?|Rows?|Cards?)/",
+                                                                                        rel(root, views[n]["file"]))))
+    imported = [{"file": f"{rel(root, views[n]['file'])}` `{n}", "importers": c, "props": views[n]["props"]} for n, c in fanin.most_common(4) if c >= 2]
+    before, dark = [], None
+    dark_assets = sum(1 for a in assets_list if a["dark"])
+    forced = re.findall(r"\.preferredColorScheme\(\s*\.(dark|light)\s*\)", "\n".join(read(p, 200_000) for p in files))
+    if plist["style"]:
+        dark = f"`UIUserInterfaceStyle` is `{plist['style']}` in Info.plist: the app stays {plist['style'].lower()} whatever the device says"
+    elif forced:
+        dark = f"`.preferredColorScheme(.{forced[0]})` ×{len(forced)}: the views under it stay {forced[0]}"
+    elif dark_assets or usage["a11y"].get("colorScheme") or any(isinstance(v, tuple) for pl in palettes for _, v in pl["colors"]):
+        dark = (f"follows the device: {dark_assets} of {len(assets_list)} asset colours have a dark variant" if assets_list else "follows the device")
+        if usage["a11y"].get("colorScheme"):
+            dark += f"; `@Environment(\\.colorScheme)` read in {usage['a11y']['colorScheme']} place{'s' if usage['a11y']['colorScheme'] > 1 else ''}"
+    else:
+        dark = "no dark variants in the asset catalog and no scheme read in code: system colours adapt, literals do not"
+    if nav["enums"]:
+        for e in sorted(nav["enums"], key=lambda e: -len({v for _, v in e["cases"]}))[:4]:
+            how = {"push": "pushed by `navigationDestination`", "sheet": "presented as a sheet", "window": "opened in a window of its own"}.get(e["kind"], f"a switch on `{e.get('subject', '?')}`")
+            before.append(f"`{e['type']}` picks the screen ({how}): "
+                          + ", ".join(f"`.{c}` → {v}" for c, v in e["cases"][:6]) + (f" … {len(e['cases']) - 6} more" if len(e["cases"]) > 6 else ""))
+    if nav["tabs"]:
+        before.append("tabs: " + " · ".join(f"“{lab}” → {v}" for lab, v in nav["tabs"][:6]))
+    before.append("render: needs macOS with Xcode — the previews, or a snapshot test of a screen at iPhone and iPad sizes, light and dark, at an "
+                  "accessibility text size (`references/stacks/swiftui.md`); here nothing renders, so the numbers below are what the code declares")
+    layouts = []
+    if nav["app"]:
+        layouts.append({"file": rel(root, nav["app"]["file"]), "css": [], "fonts": [], "providers": [], "chrome": [], "scope": "",
+                        "scopeText": f"`@main` {nav['app']['name']}" + (f": its window shows {', '.join(nav['roots'][:3])}" if nav["roots"] else "")})
+    copy = {"dictionaries": [(f, strings["keys"]) for f in strings["files"][:1]], "typed": None, "libs": [], "hook": None}
+    return {
+        "vocabulary": [], "imported": imported, "pages": pages, "routes": [], "layouts": layouts, "stackBefore": before, "theme": dark,
+        "swiftui": {"assets": assets_list, "palettes": [{**pl, "file": rel(root, pl["file"])} for pl in palettes], "usage": usage, "plist": plist,
+                    "strings": {k: v for k, v in strings.items() if k != "text"}, "previews": len(previews), "views": len(views), "screens": len(screens), "components": comps[:40],
+                    "nav": {"roots": nav["roots"], "tabs": nav["tabs"], "enums": len(nav["enums"])}},
+        "copy": copy, "boot": {"files": [], "apiModule": None, "base": None}, "dev": {"proxies": [], "helpers": [], "scripts": {}},
+        "gates": [], "kits": {"kits": [], "styled": None, "modules": None}, "kitDark": dark_assets > 0, "kitLook": True,
+        "stackNotes": "references/stacks/swiftui.md", "kitNotes": None, "nuxtui": None, "locale": None,
+    }
+
+
+def md_swiftui_lines(sw: dict) -> list[str]:
+    out = []
+    u = sw["usage"]
+    out.append(f"- Screens: {sw['screens']} (of {sw['views']} views) — the root, the tabs, what is pushed and what is presented"
+               + (", the first 30 below" if sw["screens"] > 30 else ""))
+    if u["builtins"]:
+        out.append("- SwiftUI views by use: " + " · ".join(f"{n} ×{c}" for n, c in u["builtins"][:10])
+                   + ". A match task builds with these, the asset colours and text styles, not fixed sizes and literals.")
+    if u["colors"]:
+        out.append("- Colours in modifiers: " + " · ".join(f"`{k}` ×{n}" if not k.startswith("asset ") else f"{k} ×{n}" for k, n in u["colors"][:6])
+                   + (f" — `.secondary` is iOS's secondaryLabel: 3.5:1 on white, below 4.5:1 for body text (6.3:1 on black)" if any(k == ".secondary" for k, _ in u["colors"]) else ""))
+    fixed = u["sizeTotal"] + sum(n for _, k, n in u["customs"] if k == "fixed")
+    if u["styleTotal"] or fixed:
+        out.append(f"- Dynamic Type: text styles ×{u['styleTotal']}" + (f" ({', '.join(f'`.{k}` ×{n}' for k, n in u['styles'][:4])})" if u["styles"] else "")
+                   + (f" · fixed sizes ×{fixed} (`.system(size:)`" + (", `.custom(…, size:)` without `relativeTo:`" if any(k == 'fixed' for _, k, _ in u['customs']) else "")
+                      + "): that text stays one size when the user raises theirs" if fixed else "")
+                   + (f" · `@ScaledMetric` ×{u['a11y']['scaled']}" if u["a11y"].get("scaled") else "")
+                   + (f" · `.dynamicTypeSize(…)` limits ×{u['a11y']['clamp']}" if u["a11y"].get("clamp") else ""))
+    a = u["a11y"]
+    bits = [f"{a.get('labels', 0)} `.accessibilityLabel`", f"{a.get('hidden', 0)} hidden", f"{a.get('traits', 0)} added traits"]
+    if a.get("taps"):
+        bits.append(f"{a['taps']} `.onTapGesture` (VoiceOver does not call it a button unless `.accessibilityAddTraits(.isButton)`)")
+    if u["iconOnly"]:
+        bits.append(f"{len(u['iconOnly'])} button{'s' if len(u['iconOnly']) > 1 else ''} whose label is only an image and has no `.accessibilityLabel` "
+                    f"(VoiceOver reads the symbol's name): {', '.join(f'`{x}`' for x in u['iconOnly'][:4])}")
+    if a.get("shrink") or a.get("oneLine"):
+        bits.append(f"`.minimumScaleFactor` ×{a.get('shrink', 0)}, `.lineLimit(1)` ×{a.get('oneLine', 0)} (text that shrinks or cuts off at large sizes)")
+    out.append("- Accessibility in code: " + " · ".join(bits))
+    if sw["previews"]:
+        out.append(f"- Previews: {sw['previews']} views have one (`#Preview` or `PreviewProvider`) — on a Mac, Xcode renders them, and a snapshot test can start from the same code")
+    return out
+
+
+def md_swiftui_tokens(sw: dict) -> list[str]:
+    out = []
+    assets = sw["assets"]
+    fg = sw["usage"]["fgAssets"]
+    if assets:
+        cats = collections.OrderedDict()
+        for a in assets:
+            cats.setdefault(a["catalog"], []).append(a)
+        for cat, items in list(cats.items())[:4]:
+            out.append(f"### Asset colours in `{cat}` ({len(items)}; light / dark)")
+            shown = sorted(items, key=lambda a: (-fg.get(a["name"], 0), a["name"]))[:16]
+            out.append("- " + " · ".join(f"{a['name']} {_sw_short(a['light'])}" + (f" / {_sw_short(a['dark'])}" if a["dark"] and a["dark"] != a["light"]
+                                                                                  else "" if not str(a["light"]).startswith(("#", "rgba")) else " (no dark)")
+                                         for a in shown)
+                       + (f" · … {len(items) - 16} more" if len(items) > 16 else ""))
+            text = []
+            for a in shown:
+                if not fg.get(a["name"]):
+                    continue
+                lt, dk = _sw_resolve(a["light"], False), _sw_resolve(a["dark"] or a["light"], True)
+                x = _rn_contrast(lt, "#FFFFFF") if lt else None
+                y = _rn_contrast(dk, "#000000") if dk else None
+                if x is not None or y is not None:
+                    text.append(f"{a['name']} {x if x is not None else '—'} / {y if y is not None else '—'}" + (" ✗" if (x or 9) < 4.5 or (y or 9) < 4.5 else ""))
+            if text:
+                out.append("- used as text or tint (on the system background it would be, white / black, 4.5:1 for text): " + " · ".join(text[:8]))
+    for pl in sw["palettes"][:4]:
+        out.append(f"### `{pl['name']}` in `{pl['file']}` (light / dark)")
+        out.append("- " + " · ".join(f"{k} {_sw_short(v[0])}" + (f" / {_sw_short(v[1])}" if v[1] and v[1] != v[0] else "") for k, v in pl["colors"][:12]))
+        cols = dict(pl["colors"])
+        fgk = [k for k in cols if re.search(r"label|text|foreground|title|primary(?!Background)", k, re.I) and not re.search(r"background|bg", k, re.I)]
+        bgk = [k for k in cols if re.search(r"background|bg|surface", k, re.I)]
+        pairs = []
+        for f in fgk[:3]:
+            for b in bgk[:2]:
+                x = _rn_contrast(cols[f][0], cols[b][0]) if cols[f][0] and cols[b][0] else None
+                y = _rn_contrast(cols[f][1], cols[b][1]) if cols[f][1] and cols[b][1] else None
+                if x is not None or y is not None:
+                    pairs.append(f"{f} on {b} {x if x is not None else '—'} / {y if y is not None else '—'}" + (" ✗" if (x or 9) < 4.5 or (y or 9) < 4.5 else ""))
+        if pairs:
+            out.append("- text on background (light / dark, 4.5:1): " + " · ".join(pairs[:6]))
+    return out
+
+
+def _sw_short(v: str | None) -> str:
+    if not v:
+        return "—"
+    if v.startswith("#"):
+        return v
+    m = re.match(r"rgba\((\d+), (\d+), (\d+), ([\d.]+)\)", v)
+    if m:
+        return f"#{int(m.group(1)):02X}{int(m.group(2)):02X}{int(m.group(3)):02X} at {round(float(m.group(4)) * 100)}%"
+    return re.sub(r"Color$", "", v) + " (system)"
+
+
+def md_swiftui_usage(sw: dict) -> list[str]:
+    u = sw["usage"]
+    out = []
+    if u["spacing"]:
+        out.append("- spacing (`.padding`, stack `spacing:`): " + ", ".join(f"{k} ×{n}" for k, n in u["spacing"]))
+    if u["radius"]:
+        out.append("- corner radius: " + ", ".join(f"{k} ×{n}" for k, n in u["radius"]))
+    if u["sizes"]:
+        out.append("- fixed font sizes (`.system(size:)`): " + ", ".join(f"{k} ×{n}" for k, n in u["sizes"]))
+    for f, kind, n in u["customs"][:4]:
+        out.append(f"- custom font `{f}` ×{n} — " + ("scales with Dynamic Type (`relativeTo:`)" if kind == "scales" else "a fixed size: add `relativeTo: .body` so it scales"))
+    return out
+
+
 # ------------------------------------------------------------------ Flutter
 # A Flutter app is Dart under lib/: its pages are widgets that a router (go_router, auto_route, the
 # Navigator's named routes) or a page folder names; its look is ThemeData and a ColorScheme per
@@ -6147,6 +6947,8 @@ def gates(root: Path, src_files: list[Path], native: bool = False) -> list[str]:
 def start_here(root: Path, src_files: list[Path], css_files: list[Path], stack: dict, deps: dict) -> dict:
     if stack.get("framework") == "Flutter":
         return flutter_start_here(root, stack)
+    if stack.get("framework") in ("SwiftUI", "UIKit"):
+        return swiftui_start_here(root, stack)
     ui_files = [p for p in src_files if p.suffix in {".tsx", ".jsx", ".vue", ".svelte", ".astro", ".html", ".mdx"}]
     texts = [read(p, 200_000) for p in ui_files[:MAX_SRC_FILES]]
     ng = angular_start(root, src_files, css_files, deps) if stack.get("framework") == "Angular" else None
@@ -6296,6 +7098,8 @@ def md_start_here(sh: dict) -> list[str]:
         out += md_rn_lines(sh["rn"], {})
     if sh.get("flutter"):
         out += md_flutter_lines(sh["flutter"])
+    if sh.get("swiftui"):
+        out += md_swiftui_lines(sh["swiftui"])
     if sh.get("ngUsed"):
         out.append("- Used most (by selector, counted by the templates that use them): " + " · ".join(
             f"`{u['file']}` `<{u['selector']}>` ({u['templates']}" + (f"; inputs {', '.join(u['inputs'])}" if u["inputs"] else "")
@@ -6464,7 +7268,12 @@ def md(data: dict) -> str:
         bits.append(f"react-native-web {s['rnWeb']}" if s.get("rnWeb") else "no react-native-web (no web build)")
     if s.get("dartSdk"):
         bits.append(f"Dart {s['dartSdk']}")
+    if s["framework"] in ("SwiftUI", "UIKit"):
+        bits += [f"{k} {v}+" for k, v in (s.get("platforms") or {}).items()]
+        if s.get("swift"):
+            bits.append(f"Swift {s['swift']}")
     fls = (data.get("startHere") or {}).get("flutter")
+    sws = (data.get("startHere") or {}).get("swiftui")
     if fls:
         bits.append("Cupertino (`CupertinoApp`)" if (fls.get("appKind") or "").startswith("Cupertino")
                     else "Material 2 (`useMaterial3: false`)" if fls["theme"]["m3"] is False else "Material 3")
@@ -6491,9 +7300,19 @@ def md(data: dict) -> str:
     if s["motion"]:
         bits.append("Motion: " + ", ".join(s["motion"]))
     out += ["## Stack", "- " + (" · ".join(bits) if bits else "no package.json or no recognised UI stack")]
+    xc = s.get("xcode")
+    if xc:
+        out.append("- " + " · ".join(x for x in (
+            ("Xcode " + ", ".join(f"`{p}`" for p in xc["projects"])) if xc["projects"]
+            else "an app playground (`.iOSApplication` in `Package.swift`: open it in Xcode or Swift Playgrounds)" if xc.get("playground") else "Swift package",
+            ("apps: " + ", ".join(xc["apps"])) if xc["apps"] else "", ("extensions: " + ", ".join(xc["extensions"][:5])) if xc["extensions"] else "",
+            ("local packages: " + ", ".join(xc["localPackages"][:8])) if xc["localPackages"] else "",
+            f"{xc['swiftFiles']} Swift file{'s' if xc['swiftFiles'] != 1 else ''}, {xc['swiftuiFiles']} import SwiftUI") if x))
+        if s["framework"] == "UIKit":
+            out.append("- no file imports SwiftUI: a UIKit app. The inspector reads SwiftUI views; review UIKit by reading, and render on a Mac")
     if s.get("workspaceApps"):
         out.append("- not an app itself; the UI apps are: " + ", ".join(f"`{a}`" for a in s["workspaceApps"]) + " — run inspect.py (and the dev server) in the one you are changing")
-    if s.get("depsSource") and s["depsSource"] not in ("package.json", "pubspec.yaml"):
+    if s.get("depsSource") and s["depsSource"] not in ("package.json", "pubspec.yaml", "Xcode project", "Package.swift"):
         out.append(f"- dependencies read from `{s['depsSource']}` (workspace root)")
     out.append("")
     if data.get("startHere"):
@@ -6525,9 +7344,11 @@ def md(data: dict) -> str:
     rn = (data.get("startHere") or {}).get("rn")
     kit_md += md_rn_tokens(rn, Path(data["root"])) if rn else []
     kit_md += md_flutter_tokens(fls) if fls else []
+    kit_md += md_swiftui_tokens(sws) if sws else []
     out += kit_md
     if not (t["theme"] or t["root"] or t.get("sass") or t["configExtend"] or kit_md):
         out.append("- none declared (no ColorScheme, seed colour, TextTheme or ThemeExtension: Material's defaults)" if fls
+                   else "- none declared (no asset colours, no `Color` extension or theme type: the system colours only)" if sws
                    else "- none declared (no @theme, :root vars, Sass variables, or config extend)")
     out.append("")
 
@@ -6555,6 +7376,11 @@ def md(data: dict) -> str:
             out.append("- google_fonts: " + ", ".join(fls["googleFonts"]) + " — fetched at run time unless the files are bundled as assets (`GoogleFonts.config.allowRuntimeFetching = false`)")
         if fls["fontFamilies"]:
             out.append("- fontFamily set in code: " + ", ".join(fls["fontFamilies"][:6]))
+    if sws:
+        if sws["plist"]["fonts"]:
+            out.append("- bundled (Info.plist `UIAppFonts`): " + ", ".join(sws["plist"]["fonts"][:8]))
+        for f, kind, n in sws["usage"]["customs"][:4]:
+            out.append(f"- `.custom(\"{f}\")` ×{n}: " + ("scales with Dynamic Type (`relativeTo:`)" if kind == "scales" else "a fixed size — it does not follow the user's text size"))
     fontsource = sorted(k for k in (s.get("deps") or {}) if k.startswith("@fontsource"))
     if fontsource:
         out.append("- loaded from npm (no network needed): " + ", ".join(f"`{k}`" for k in fontsource))
@@ -6562,26 +7388,34 @@ def md(data: dict) -> str:
         out.append("- classes in use: " + ", ".join(f"font-{k} ×{n}" for k, n in u["fontClasses"]))
     if len(out) and out[-1] == "## Fonts":
         out.append("- nothing explicit: the platform's face (Roboto on Android and the web, San Francisco on iOS)" if fls
+                   else "- nothing explicit: San Francisco, the system font, sized by the text styles" if sws
                    else "- nothing explicit (system / Tailwind default stack)")
     out.append("")
 
     # Components
     if (data.get("startHere") or {}).get("flutter") is not None:
         c = {"primitives": [], "composed": data["startHere"].get("widgets") or []}
+    if sws is not None:
+        c = {"primitives": [], "composed": sws["components"]}
     out.append(f"## Components ({len(c['primitives']) + len(c['composed'])} found)")
     if c["primitives"]:
         out.append("- primitives (`ui/`): " + ", ".join(Path(p).stem for p in c["primitives"]))
     if c["composed"]:
         out.append("- composed: " + ", ".join(Path(p).stem for p in c["composed"][:40]) + (" …" if len(c["composed"]) > 40 else ""))
     if not (c["primitives"] or c["composed"]):
-        out.append("- no widget classes in widgets/ components/ common/ shared/ core/" if fls else "- none found in components/ ui/ primitives/ dirs")
+        out.append("- no widget classes in widgets/ components/ common/ shared/ core/" if fls
+                   else "- no shared views (in Components/, DesignSystem/, Views/ … or used by two others)" if sws else "- none found in components/ ui/ primitives/ dirs")
     out.append("")
 
     # Usage
-    out.append(f"## What the code actually uses ({(data.get('startHere') or {}).get('dartFiles') or u['scannedFiles']} source files)")
+    out.append(f"## What the code actually uses ({(data.get('startHere') or {}).get('dartFiles') or (s.get('xcode') or {}).get('swiftFiles') or u['scannedFiles']} source files)")
     total = u["rawTotal"] + u["semanticTotal"]
     if fls:                   # Flutter: the numbers in EdgeInsets, SizedBox and BorderRadius
         out += md_flutter_usage(fls)
+        u = {**u, "radius": [], "shadow": [], "textSize": [], "spacing": [], "arbitraryTotal": 0}
+        total = -1
+    elif sws:                 # SwiftUI: .padding, corner radii, fixed font sizes
+        out += md_swiftui_usage(sws)
         u = {**u, "radius": [], "shadow": [], "textSize": [], "spacing": [], "arbitraryTotal": 0}
         total = -1
     elif (data.get("startHere") or {}).get("kitLook") and (not s.get("tailwind") or total < 10):   # counts would match props (shadow="hover")

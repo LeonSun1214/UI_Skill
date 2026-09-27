@@ -1,14 +1,14 @@
 ---
 name: ui-craft
 metadata:
-  version: 0.18.0
+  version: 0.19.0
 description: >-
-  Build, change, and review UI in web projects (React, Vue, Svelte, Astro, Angular, Laravel Blade or plain HTML; Next.js, Nuxt, SvelteKit, Livewire, Eleventy, Jekyll; Tailwind, Bootstrap, MUI, Ant Design, Chakra, Element Plus, Vuetify, CSS-in-JS or plain CSS) and React Native / Expo or Flutter apps with a render → look → measure → fix loop, so what ships is checked against a real screenshot and measurements (contrast, tap targets, overflow, focus, hover, motion, dark mode), not guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even when they never say "design" or "UI". Also use it to inspect a project's design conventions before adding to it.
+  Build, change, and review UI in web projects (React, Vue, Svelte, Astro, Angular, Laravel Blade or plain HTML; Next.js, Nuxt, SvelteKit, Livewire, Eleventy, Jekyll; Tailwind, Bootstrap, MUI, Ant Design, Chakra, Element Plus, Vuetify, CSS-in-JS or plain CSS) and React Native / Expo or Flutter apps with a render → look → measure → fix loop, so what ships is checked against a screenshot and measurements (contrast, tap targets, overflow, focus, hover, motion, dark mode), not guessed from code. Use it whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even if they never say "design" or "UI". Also use it to inspect a project's design conventions (SwiftUI too) before adding to it.
 ---
 
 # ui-craft
 
-Version 0.18.0. (An older copy of this file means the installed skill is behind the
+Version 0.19.0. (An older copy of this file means the installed skill is behind the
 repository: re-run `install.sh`; `doctor.mjs` says when that is the case.)
 
 UI work has a gap that code review can't close: the first draft always has two or
@@ -99,7 +99,8 @@ manifest are a hand-written site. `@mui/material`, `antd`, `@chakra-ui/react`, `
 `react-native` is a React Native app: its pages are screens, its look a theme object and `StyleSheet`,
 and it renders in a browser only through react-native-web. A `pubspec.yaml` that depends on `flutter`
 is a Flutter app: its pages are widgets behind routes, its look a `ThemeData`, and it renders through
-`flutter_render.mjs` (a widget test), not a browser.
+`flutter_render.mjs` (a widget test), not a browser. An `.xcodeproj` or a `Package.swift` whose views import
+SwiftUI is a SwiftUI app: nothing renders it off a Mac, so the inspector's report is the review there.
 
 ### 1. Inspect the project before touching it (existing projects)
 
@@ -143,7 +144,10 @@ keeps on the device with their names in a browser. On Flutter it lists the scree
 auto_route or named routes, with the shell and the redirect in front of each), the `ColorScheme`
 per brightness with the contrast of its pairs, the `TextTheme`'s own colours, the palette and
 spacing classes, the shared_preferences keys, and what a widget test will lack (plugins, network,
-native code). Each stack has notes to read once (`references/stacks/<stack>.md`, named
+native code). On SwiftUI it lists the screens (tabs, pushes by value, sheets, and the enums that pick
+them, case by case), the asset catalog's colours in light and dark with the contrast of those used as
+text, text styles against fixed sizes, and the accessibility modifiers (image-only buttons without a
+label, taps without a button trait). Each stack has notes to read once (`references/stacks/<stack>.md`, named
 in the output). Read the one page whose
 signals match yours (or the file it renders) and the vocabulary lines; that is
 the whole of the reading for a match task. Below it the report has the tokens the project
@@ -376,6 +380,7 @@ read only the section you hit.
 | Next.js | render `http://localhost:PORT`, never `127.0.0.1`; `requests: none` means the data came with the HTML: start what `dev` starts instead of mocking |
 | Nuxt, Vue, SvelteKit, Astro, Angular, Laravel or a static site | the stack notes the inspector names; a kit's own defaults (Nuxt UI's faint rings, Material's faint focus tint, Starlight's theme) are inherited |
 | Flutter | `flutter_render.mjs`, not `render.mjs`; behind a sign-in: `--prefs KEY=…` with the key the inspector prints, or `--enter`/`--tap` through the form; a plugin, Firebase or native library that fails in a test: `--widget 'Screen(…)' --standalone`; `references/stacks/flutter.md` |
+| SwiftUI | nothing renders it off a Mac: review with the inspector's lines (contrast of the asset colours used as text, `.secondary` at 3.5:1, fixed sizes, image-only buttons) and say the screens were not rendered; on a Mac, the previews or a snapshot test at iPhone and iPad sizes, light and dark, at an accessibility text size — `references/stacks/swiftui.md` |
 | React Native or Expo | `npx expo start --web` serves it (react-native-web); a screen behind sign-in or onboarding: `--storage 'mmkv.default\KEY=…'` with the key the inspector prints; the dark pass tries a dark device on its own. No `react-native-web`: review by reading, `references/stacks/react-native.md` |
 | A component kit (MUI, Ant Design, Chakra, Element Plus, Vuetify, styled-components, CSS Modules) | `references/stacks/kits.md`, that kit's section: its faint defaults (MUI's focus ripple, Ant Design's `#91caff` ring, Element Plus's `#409eff`) are inherited, and the one-line fixes are there; dark mode through the app's own switch: `--dark-storage` with the key the inspector prints |
 
@@ -411,7 +416,7 @@ never a temp directory.
 |---|---|
 | Starting on any existing codebase | run `scripts/inspect.py` — nothing else for a match task |
 | The page won't just render (a login, a backend, a splash, a dialog, Next.js) | that section of `references/real-projects.md` |
-| A Nuxt, Vue, SvelteKit, Astro, Angular, Laravel, React Native, Flutter or static-site project | `references/stacks/<stack>.md`, once (the inspector names it) |
+| A Nuxt, Vue, SvelteKit, Astro, Angular, Laravel, React Native, Flutter, SwiftUI or static-site project | `references/stacks/<stack>.md`, once (the inspector names it) |
 | A component kit or CSS-in-JS (the inspector's `Kit notes:` line) | that section of `references/stacks/kits.md` |
 | Choosing a look, or the output feels generic | `references/anti-generic.md` |
 | Picking token values, light or dark | run `scripts/contrast.py` |

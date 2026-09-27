@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.19.0 — SwiftUI (read, not rendered)
+
+The last part of the second tier. SwiftUI draws only on Apple platforms, and this skill's renderers
+run in a browser or a Flutter test, so this version reads SwiftUI projects rather than rendering them.
+Before it, the inspector read an Xcode project as "no recognised UI stack", greenfield.
+
+It was checked on:
+- Apple's Food Truck sample: a split view, a `Panel` enum, 19 asset colours in three catalogs, and
+  48 previews;
+- IceCubes, a Mastodon client in 13 local packages: 183 views, four router enums, eight theme pairs
+  and a 735-key string catalog;
+- a fixture.
+
+Notes: `evals/notes/stacks-swiftui.md`.
+
+- `inspect.py`, detection: an `.xcodeproj` or a `Package.swift` with SwiftUI views and no
+  `package.json` or pubspec beside it. That covers an app playground (`.iOSApplication`), and a
+  project that imports no SwiftUI is named as UIKit. The stack line gives:
+  - deployment targets from `project.pbxproj` and `Package.swift`, and the Swift version;
+  - the app and extension targets and the local packages;
+  - the libraries it imports (Nuke, TCA, Swift Charts …), and its state (`@Observable`,
+    `ObservableObject`, SwiftData).
+- `inspect.py`, screens. Each screen gets its navigation title (keys resolved through
+  `Localizable.xcstrings`), its signals and its preview. It is also given how it is reached:
+  - the `@main` app's windows, including `WindowGroup(for:)` windows of their own and the macOS
+    menu bar;
+  - tabs (`Tab`, `.tabItem`, or a tab enum's switch);
+  - `navigationDestination(for:)` and `(item:)` routes, and `NavigationLink`s;
+  - sheets, full-screen covers and popovers;
+  - any switch that picks a screen per case, wherever it is. That includes a `View` extension
+    that holds the app's router, and a sheet enum bound through a parameter. The picker enums are
+    printed case by case, and loading-state switches are left out.
+- `inspect.py`, the look:
+  - every asset catalog colour in light and dark. System references use iOS's values, and colours
+    without a dark variant are marked. Colours used as text or tint get their contrast on the
+    system background;
+  - `Color` extensions and theme types, with light and dark twins (`IceCubeLight` /
+    `IceCubeDark`) paired and their text-on-background contrast measured;
+  - colours in modifiers by kind. `.secondary` is flagged as iOS's secondaryLabel, 3.5:1 on
+    white;
+  - Dynamic Type: text styles against fixed sizes, custom fonts without `relativeTo:`,
+    `@ScaledMetric`, and `.dynamicTypeSize` limits;
+  - fonts bundled through `UIAppFonts`, spacing and corner radii;
+  - the accessibility modifiers, plus buttons whose label is only an image (with file and line),
+    `.onTapGesture` without a button trait, and `.lineLimit(1)` and `.minimumScaleFactor`;
+  - dark mode: forced by `.preferredColorScheme` or Info.plist, or following the device.
+- The verdict reads the asset catalog, the text styles, spacing and radius.
+- Stack notes `references/stacks/swiftui.md`: where things are, and the Mac render loop (previews,
+  snapshot tests with swift-snapshot-testing, `performAccessibilityAudit()`, `simctl`). That loop is
+  written down but not run or checked here. The notes also give the findings in modifier terms.
+- Fixture `swiftui-app` (Harbor), with five planted issues; 20 CI assertions.
+
 ## 0.18.0 — Flutter
 
 The second part of the second tier: an app that paints its own pixels. On the web Flutter draws

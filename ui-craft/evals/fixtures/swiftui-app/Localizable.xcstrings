@@ -1,0 +1,10 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Berths" : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Liegeplätze" } } } },
+    "Bookings" : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Buchungen" } } } },
+    "Account" : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Konto" } } } },
+    "Book this berth" : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Diesen Platz buchen" } } } }
+  },
+  "version" : "1.0"
+}

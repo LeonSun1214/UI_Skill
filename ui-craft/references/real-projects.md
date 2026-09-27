@@ -71,3 +71,7 @@ Render it with `node <skill>/scripts/flutter_render.mjs <project>`, not `render.
 - **A plugin that throws `MissingPluginException`.** Answer its channel in a `--setup` file.
 
 `references/stacks/flutter.md` has the details.
+
+## SwiftUI
+
+Nothing renders SwiftUI off a Mac. Run `inspect.py` and review from its lines: the contrast of the asset colours used as text, `.secondary` for small text (3.5:1 on white), fixed font sizes, and buttons whose label is only an image. Say in the report that the screens were not rendered. On a Mac, render with the previews or a snapshot test (`references/stacks/swiftui.md`).
