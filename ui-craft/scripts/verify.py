@@ -315,6 +315,17 @@ def main() -> int:
     if not root.is_dir():
         print(f"not a directory: {root}")
         return 1
+    # A Dart or Swift app has no JavaScript imports, icon packages or web fonts to check: say which
+    # check does its job instead of printing a line of zeros.
+    if not (root / "package.json").exists():
+        if (root / "pubspec.yaml").exists():
+            print("Facts: a Dart project — verify.py reads JavaScript imports, icon packages and web fonts, none of which "
+                  "it has; `flutter analyze` (or `dart analyze`) checks its imports and names")
+            return 0
+        if (root / "Package.swift").exists() or any(p.suffix == ".xcodeproj" for p in root.iterdir()):
+            print("Facts: a Swift project — verify.py reads JavaScript imports, icon packages and web fonts, none of which "
+                  "it has; building it (`xcodebuild build`, on a Mac) checks its imports and names")
+            return 0
     files = list(walk(root))
     nm_dirs = node_modules_dirs(root)
     fails: list[str] = []

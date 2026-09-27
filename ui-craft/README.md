@@ -64,7 +64,11 @@ its first look against 35 and 29, and made 49 tool calls against 106 and 74. But
 it used about as many tokens as the unaided agent (204k against 201k;
 ui-ux-pro-max 287k): each of its turns carries more. One claim was checked: the
 unaided agent measured that the Blog list's dates are a day early in China, while
-ui-craft's agent asserted, without measuring, that they agree.
+ui-craft's agent asserted, without measuring, that they agree. On Flutter
+(`evals/notes/trial-flutter-9.md`, ui-craft only), an agent added a budget filter to
+compass_app's search screen in 45 tool calls and two renders. The change touched nothing outside
+its own row and added no finding. The agent also found two gaps in the renderer: price text it
+did not measure, and an overflow that only a smaller phone shows. The renderer now covers both.
 
 The misses of the other two are what a renderer catches and a database cannot, and
 they repeat run after run: body text at 3.7:1, 20 px nav links, focus rings at

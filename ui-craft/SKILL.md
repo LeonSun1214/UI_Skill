@@ -1,14 +1,14 @@
 ---
 name: ui-craft
 metadata:
-  version: 0.19.0
+  version: 0.19.1
 description: >-
   Build, change, and review UI in web projects (React, Vue, Svelte, Astro, Angular, Laravel Blade or plain HTML; Next.js, Nuxt, SvelteKit, Livewire, Eleventy, Jekyll; Tailwind, Bootstrap, MUI, Ant Design, Chakra, Element Plus, Vuetify, CSS-in-JS or plain CSS) and React Native / Expo or Flutter apps with a render → look → measure → fix loop, so what ships is checked against a screenshot and measurements (contrast, tap targets, overflow, focus, hover, motion, dark mode), not guessed from code. Use it whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even if they never say "design" or "UI". Also use it to inspect a project's design conventions (SwiftUI too) before adding to it.
 ---
 
 # ui-craft
 
-Version 0.19.0. (An older copy of this file means the installed skill is behind the
+Version 0.19.1. (An older copy of this file means the installed skill is behind the
 repository: re-run `install.sh`; `doctor.mjs` says when that is the case.)
 
 UI work has a gap that code review can't close: the first draft always has two or
@@ -282,7 +282,8 @@ server that cannot take three page loads at once).
 `node <skill-dir>/scripts/flutter_render.mjs <project> --out .ui-craft/trips-1` instead: a widget test
 that starts the app through its `main()`, then at 375 / 768 / 1440, in light and dark and at 200 % text,
 saves the screenshots and measures the contrast of every text and icon, tap targets (48dp, 44pt),
-labels and layout overflow, each finding with the widget's file and line. Reach the screen with
+labels and layout overflow (on a small phone too, 360 × 568), each finding with the widget's file and
+line. Reach the screen with
 `--route /path`, `--prefs KEY=VALUE` (the stored flag a redirect reads), `--enter FIELD=TEXT` and
 `--tap TEXT` (in order), or `--widget 'Screen(…)'` for one screen (`--standalone` when `main()` cannot
 start in a test). Its output ends with the same kind of `Verified` block, and `--compare` works the same.

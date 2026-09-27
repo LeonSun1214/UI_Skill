@@ -304,7 +304,8 @@ jobs:
           grep -q "references/stacks/laravel.md" /tmp/inspect-laravel.txt
   flutter:
     # flutter_render.mjs on the fixture with the current stable Flutter: every planted defect found, with its
-    # file and line, in the pass it belongs to; then signing in through the form and opening a route.
+    # file and line, in the pass it belongs to; then signing in through the form and opening a route, whose
+    # screen overflows only on the small phone and sets a price tier ("$$") in a grey below 4.5:1.
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -332,9 +333,14 @@ jobs:
           grep -q "target: 28×28 tappable (below 44pt and 48dp) — lib/widgets/trip_card.dart:49" /tmp/fr.txt
           grep -q "background #FFFFFF → #121212" /tmp/fr.txt
           grep -q "^- Errors: none during the render" /tmp/fr.txt
-          test -s /tmp/fr/contact.png && test -s /tmp/fr/contact-dark.png && test -s /tmp/fr/375-text200.png
+          grep -q "^- Small phone (360x568, overflow only): none beyond those above" /tmp/fr.txt
+          test -s /tmp/fr/contact.png && test -s /tmp/fr/contact-dark.png && test -s /tmp/fr/375-text200.png && test -s /tmp/fr/360x568.png
       - name: flutter_render.mjs signs in through the form and opens a route
         run: |
           node ui-craft/scripts/flutter_render.mjs /tmp/trailhead --enter Email=sam@example.com --enter Password=hunter2 --tap 'Sign in' --route /trips/rainier --no-dark --no-text-scale --out /tmp/fr2 | tee /tmp/fr2.txt
           grep -q "after: enter \"Email\" · enter \"Password\" · tap \"Sign in\" · route /trips/rainier" /tmp/fr2.txt
           grep -q "location /trips/rainier · headers \"Wonderland Trail\"" /tmp/fr2.txt
+          grep -q "overflow: by .* on the bottom — lib/screens/trip_detail_screen.dart:20 (Column) · at 360x568$" /tmp/fr2.txt
+          grep -q "^- Small phone (360x568, overflow only): 1 overflow that 375 does not have" /tmp/fr2.txt
+          grep -qF 'contrast: "$$" 2.67:1 (needs 4.5) #9E9E9E on #FFFFFF, 12px — lib/screens/trip_detail_screen.dart:34 (Text) · every pass' /tmp/fr2.txt
+          grep -q "^- Overflow: none at 375 / 768 / 1440" /tmp/fr2.txt

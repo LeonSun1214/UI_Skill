@@ -128,6 +128,8 @@ are read before a colour is typed and whether the render runs without help:
 - a match task on compass_app: a new search filter in `Dimens` steps and the theme's colours;
 - a fix task on the fixture.
 
+The first of them, the match task, is `trial-flutter-9.md` (0.19.1).
+
 Nothing here runs on a phone: safe areas, the platform's own text-size steps, the order a screen
 reader reads in, and frame times are not measured. San Francisco is not available to the test, so
 Cupertino text is drawn in Roboto.

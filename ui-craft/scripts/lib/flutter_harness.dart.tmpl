@@ -30,6 +30,10 @@ const String _root = /*{{ROOT}}*/;
 const String _package = /*{{PACKAGE}}*/;
 const String _materialFonts = /*{{MATERIAL_FONTS}}*/;
 const List<double> _widths = /*{{WIDTHS}}*/;
+// a height per width, 0 for the default (812 for a phone, 1024 for a tablet, 900 for a desktop)
+const List<double> _heights = /*{{HEIGHTS}}*/;
+// the small phone's width and height (overflow only), empty for none
+const List<double> _short = /*{{SHORT}}*/;
 const bool _dark = /*{{DARK}}*/;
 const bool _darkFirst = /*{{DARK_FIRST}}*/;
 const bool _textScale = /*{{TEXT_SCALE}}*/;
@@ -50,6 +54,9 @@ final Map<String, Object?> _report = <String, Object?>{
 String _phase = 'start';
 
 double _height(double w) => w < 600 ? 812 : (w < 1000 ? 1024 : 900);
+double _heightAt(int i) => _heights[i] > 0 ? _heights[i] : _height(_widths[i]);
+// '375' for a default height, '360x640' for one given
+String _viewport(int i) => _heights[i] > 0 ? '${_widths[i].toInt()}x${_heights[i].toInt()}' : '${_widths[i].toInt()}';
 
 void _write() {
   uicio.File('$_out/flutter-report.json')
@@ -297,9 +304,9 @@ Future<Map<String, Object?>> _shot(uict.WidgetTester tester, String name) async 
 }
 
 Future<Map<String, Object?>> _measure(
-    uict.WidgetTester tester, String key, double w, bool dark, double scale) async {
+    uict.WidgetTester tester, String key, double w, double h, bool dark, double scale) async {
   await _images(tester);
-  final e = <String, Object?>{'key': key, 'width': w, 'height': _height(w), 'dark': dark, 'textScale': scale};
+  final e = <String, Object?>{'key': key, 'width': w, 'height': h, 'dark': dark, 'textScale': scale};
   final shot = await _shot(tester, '$key.png');
   e['shot'] = shot['file'];
   e['pixels'] = shot['pixels'];
@@ -547,7 +554,8 @@ void _text(uict.WidgetTester tester, uicr.RenderBox ro, uicw.InlineSpan span, St
     Map<String, Object?> c) {
   if (_hidden(ro)) return;
   final isIcon = _isIcon(span);
-  if (!isIcon && !RegExp(r'[\p{L}\p{N}]', unicode: true).hasMatch(text)) return; // emoji, punctuation
+  // Emoji and punctuation alone are skipped; a price ($$), a sign (+, −, ×) or a currency is text.
+  if (!isIcon && !RegExp(r'[\p{L}\p{N}\p{Sc}\p{Sm}]', unicode: true).hasMatch(text)) return;
   final full = ro.localToGlobal(uicui.Offset.zero) & ro.size;
   final screen = uicui.Offset.zero & uicui.Size(px.width / dpr, px.height / dpr);
   final rect = full.intersect(screen);
@@ -734,11 +742,11 @@ Map<String, Object?> _error(uicf.FlutterErrorDetails d) {
 }
 
 // ---------------------------------------------------------------- the run
-Future<void> _pass(uict.WidgetTester tester, String key, double w, bool dark, double scale) async {
+Future<void> _layout(uict.WidgetTester tester, String key, double w, double h, bool dark, double scale) async {
   // Errors while the app animates to the new size or brightness are tagged ':settle': an overflow
   // in a layout transition is not one in the layout it lands in.
   _phase = '$key:settle';
-  tester.view.physicalSize = uicui.Size(w * 2, _height(w) * 2);
+  tester.view.physicalSize = uicui.Size(w * 2, h * 2);
   tester.platformDispatcher.platformBrightnessTestValue = dark ? uicui.Brightness.dark : uicui.Brightness.light;
   tester.platformDispatcher.textScaleFactorTestValue = scale;
   await _settle(tester, key);
@@ -747,7 +755,23 @@ Future<void> _pass(uict.WidgetTester tester, String key, double w, bool dark, do
   _phase = key;
   tester.binding.renderViews.first.reassemble();
   await tester.pump();
-  (_report['passes'] as List<Object?>).add(await _measure(tester, key, w, dark, scale));
+}
+
+Future<void> _pass(uict.WidgetTester tester, String key, double w, double h, bool dark, double scale) async {
+  await _layout(tester, key, w, h, dark, scale);
+  (_report['passes'] as List<Object?>).add(await _measure(tester, key, w, h, dark, scale));
+  _write();
+}
+
+// A small phone below its system bars: a screen that is a Column with no scroll view runs out of
+// room here first. Only its overflows count (the other measurements are the full-size passes'), and
+// a screenshot shows them.
+Future<void> _shortPass(uict.WidgetTester tester) async {
+  final w = _short[0], h = _short[1];
+  final key = '${w.toInt()}x${h.toInt()}';
+  await _layout(tester, key, w, h, _darkFirst, 1.0);
+  final shot = await _shot(tester, '$key.png');
+  _report['short'] = <String, Object?>{'key': key, 'width': w, 'height': h, 'shot': shot['file']};
   _write();
 }
 
@@ -763,7 +787,7 @@ void main() {
     uic.debugDisableShadows = false;
     final semantics = tester.ensureSemantics();
     tester.view.devicePixelRatio = 2;
-    tester.view.physicalSize = uicui.Size(_widths.first * 2, _height(_widths.first) * 2);
+    tester.view.physicalSize = uicui.Size(_widths.first * 2, _heightAt(0) * 2);
     tester.platformDispatcher.platformBrightnessTestValue =
         _darkFirst ? uicui.Brightness.dark : uicui.Brightness.light;
     // A widget test answers every HTTP request with 400; --network lets images and APIs load.
@@ -777,11 +801,12 @@ void main() {
       final order = _darkFirst ? <bool>[true, false] : <bool>[false, true];
       for (final dark in order) {
         if (dark && !_dark) continue;
-        for (final w in _widths) {
-          await _pass(tester, dark ? '${w.toInt()}-dark' : '${w.toInt()}', w, dark, 1.0);
+        for (var i = 0; i < _widths.length; i++) {
+          await _pass(tester, dark ? '${_viewport(i)}-dark' : _viewport(i), _widths[i], _heightAt(i), dark, 1.0);
         }
       }
-      if (_textScale) await _pass(tester, '${_widths.first.toInt()}-text200', _widths.first, _darkFirst, 2.0);
+      if (_textScale) await _pass(tester, '${_viewport(0)}-text200', _widths.first, _heightAt(0), _darkFirst, 2.0);
+      if (_short.length == 2) await _shortPass(tester);
     } catch (e, st) {
       final f = RegExp('package:' + RegExp.escape(_package) + r'/([^\s:)]+):(\d+)').firstMatch('$st');
       _report['crash'] = <String, Object?>{

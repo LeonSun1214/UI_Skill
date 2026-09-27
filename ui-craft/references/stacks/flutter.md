@@ -19,6 +19,7 @@ Read when `inspect.py` says the stack is Flutter. What differs from a web projec
 
 - A widget test, run with `flutter test`: it needs the Flutter SDK (on `PATH`, `FLUTTER_ROOT`, or the project's `.fvm/flutter_sdk`) and the packages (`flutter pub get`, run for you the first time). The test is written to `<project>/.ui-craft/render_test.dart` (with a `.gitignore`); a run takes 15–60 seconds.
 - It starts the app through its own `main()`. At 375 / 768 / 1440, in light and dark, and at 375 with text at 200 %, it saves a screenshot (2×) and measures: the contrast of every visible run of text and every icon (the colour it is set in over the colour its box shows), tap targets against 48dp (Android) and 44pt (iOS), a label on every tappable node, and each layout overflow of the settled layout. Every finding names the widget in the app's code, with its file and line.
+- It also lays the screen out at 360 × 568, a 360 × 640 Android phone below its status and navigation bars, for overflows only (`360x568.png`): a screen that does not scroll runs out of room there first, and 812 hides it. `--viewports 360x640,768,1440` gives a width a height of your own.
 - **What a widget test does not have:**
   - *Network*: every request gets HTTP 400, so images from the web show their placeholder or error widget, and data from an API never arrives (a spinner that never settles, an empty list). `--network` lets requests through where the machine can reach the host.
   - *Plugins*: shared_preferences and path_provider are mocked. Any other plugin throws `MissingPluginException`: answer its channel in a `--setup` file (`TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(const MethodChannel('<channel>'), (call) async => null)`), or pump a screen that does not call it.
@@ -53,6 +54,7 @@ Read when `inspect.py` says the stack is Flutter. What differs from a web projec
   - Wrap the text in `Expanded` or `Flexible` (with `overflow: TextOverflow.ellipsis` if one line must stay one line).
   - Use `Wrap` for chips, or switch the layout at a width.
   - At 200 % text, a fixed `height` around text is the usual cause: let the box size to its content, or use `ConstrainedBox(constraints: BoxConstraints(minHeight: …))`.
+  - On the small phone, on the bottom: a screen that is a `Column` with no scroll view, and a row added to it. Put the part that grows in `Expanded(child: SingleChildScrollView(child: Column(…)))` and keep the bottom button outside it, or make the screen a `ListView`.
   - Clamping the text scale (`TextScaler.noScaling`, `withClampedTextScaling`) hides the overflow and fails WCAG 1.4.4. The inspector counts those.
 - **never settled**: an animation that runs forever. It is usually a progress indicator waiting for data the test does not get.
 - **errors**:
@@ -70,3 +72,4 @@ Read when `inspect.py` says the stack is Flutter. What differs from a web projec
 
 - `flutter analyze` and `dart format --output=none --set-exit-if-changed .`.
 - The project's tests: `flutter test`. A project with golden tests updates them with `--update-goldens`, and only on purpose.
+- A widget test of your own draws text in Flutter's test font, each glyph a square as wide as the font size. Text there is wider than in Roboto, so a row wraps or overflows sooner, and sizes measured there are not the app's. Measure layout with the renderer, which loads the real fonts; keep your test to behaviour.

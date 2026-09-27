@@ -14,14 +14,16 @@
  *   - at 375 / 768 / 1440, in light and under a dark platform brightness, and at 375 with text at
  *     200 %, saves a screenshot and runs Flutter's own accessibility guidelines (text contrast on the
  *     rendered pixels, tap targets of 48dp and 44pt, a label on every tappable node), and records
- *     each layout overflow ("A RenderFlex overflowed by …") with the widget in the app's code.
+ *     each layout overflow ("A RenderFlex overflowed by …") with the widget in the app's code;
+ *   - lays the screen out once more at 360 × 568, a small Android phone below its status and
+ *     navigation bars, for overflows only: a screen that does not scroll runs out of room there first.
  *
  * Usage:
  *   node flutter_render.mjs <project> [--out DIR] [--route /path] [--tap TEXT]... [--widget EXPR]
  *
  * Writes  DIR/contact.png          light, all widths and the 200 % text pass, one image (look first)
  *         DIR/contact-dark.png     dark, when the app has a dark theme
- *         DIR/<width>.png  DIR/<width>-dark.png  DIR/<width>-text200.png
+ *         DIR/<width>.png  DIR/<width>-dark.png  DIR/<width>-text200.png  DIR/360x568.png
  *         DIR/report.json          every measurement, per pass
  * Needs   the Flutter SDK (flutter on PATH, FLUTTER_ROOT, or .fvm/flutter_sdk), and playwright in this
  *         folder for the contact sheets (the screenshots are written without it).
@@ -33,6 +35,10 @@ import { delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:pa
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+// A small phone below its system bars (a 360 × 640 Android phone less its 24dp status bar and 48dp
+// navigation bar): the screen is laid out at this size too, for overflows only.
+const SHORT = { w: 360, h: 568 };
+const defaultHeight = (w) => (w < 600 ? 812 : w < 1000 ? 1024 : 900);
 
 const USAGE = `usage: node flutter_render.mjs <project> [options]
   --out DIR            output folder (default .ui-craft/latest)
@@ -50,7 +56,9 @@ const USAGE = `usage: node flutter_render.mjs <project> [options]
   --theme EXPR / --dark-theme EXPR   the ThemeData for --standalone (default: the app's MaterialApp theme, when static)
   --prefs KEY=VALUE    a shared_preferences value before start: a session token, an onboarding flag (repeatable)
   --setup FILE.dart    a file with \`Future<void> setUpApp() async {…}\`, run before main(): mock another plugin's channel
-  --viewports A,B,C    widths in logical pixels (default 375,768,1440)
+  --viewports A,B,C    widths in logical pixels (default 375,768,1440); WxH sets the height too (360x640).
+                       When the first is a phone, the screen is also laid out at 360x568 (a small Android phone
+                       below its bars) for overflows only, unless a viewport is already that small
   --no-dark            skip the dark pass  ·  --dark-first  start under a dark platform brightness (an app that reads it once)
   --no-text-scale      skip the 200 % text pass
   --network            let the app reach the network (a widget test answers every request with HTTP 400): images from
@@ -67,7 +75,7 @@ if (!argv.length || argv.includes('--help') || argv.includes('-h')) {
 }
 const opt = {
   out: '.ui-craft/latest', target: null, steps: [], widget: null, imports: [], standalone: false,
-  theme: null, darkTheme: null, prefs: [], setup: null, viewports: [375, 768, 1440], dark: true, darkFirst: false,
+  theme: null, darkTheme: null, prefs: [], setup: null, viewports: [{ w: 375, h: 0 }, { w: 768, h: 0 }, { w: 1440, h: 0 }], dark: true, darkFirst: false,
   textScale: true, compare: null, timeout: 600, network: false,
 };
 let projectArg = null;
@@ -85,7 +93,10 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--dark-theme') opt.darkTheme = argv[++i];
   else if (a === '--prefs') { const v = argv[++i] || ''; const k = v.indexOf('='); if (k > 0) opt.prefs.push([v.slice(0, k), v.slice(k + 1)]); }
   else if (a === '--setup') opt.setup = argv[++i];
-  else if (a === '--viewports') opt.viewports = argv[++i].split(',').map(Number).filter((n) => n > 0);
+  else if (a === '--viewports') {
+    opt.viewports = String(argv[++i] || '').split(',').map((v) => /^\s*(\d+(?:\.\d+)?)\s*(?:[x×]\s*(\d+(?:\.\d+)?))?\s*$/i.exec(v))
+      .filter((m) => m && Number(m[1]) > 0).map((m) => ({ w: Number(m[1]), h: m[2] ? Number(m[2]) : 0 }));
+  }
   else if (a === '--no-dark') opt.dark = false;
   else if (a === '--dark-first') opt.darkFirst = true;
   else if (a === '--no-text-scale') opt.textScale = false;
@@ -471,7 +482,10 @@ const fill = {
   ROOT: dartStr(project),
   PACKAGE: dartStr(pkgName),
   MATERIAL_FONTS: dartStr(materialFonts),
-  WIDTHS: `<double>[${opt.viewports.map((w) => w.toFixed(1)).join(', ')}]`,
+  WIDTHS: `<double>[${opt.viewports.map((v) => v.w.toFixed(1)).join(', ')}]`,
+  HEIGHTS: `<double>[${opt.viewports.map((v) => v.h.toFixed(1)).join(', ')}]`,
+  SHORT: opt.viewports[0].w < 600 && !opt.viewports.some((v) => v.w <= SHORT.w && (v.h || defaultHeight(v.w)) <= SHORT.h)
+    ? `<double>[${SHORT.w.toFixed(1)}, ${SHORT.h.toFixed(1)}]` : '<double>[]',
   DARK: String(opt.dark),
   DARK_FIRST: String(opt.darkFirst),
   TEXT_SCALE: String(opt.textScale),
@@ -555,6 +569,8 @@ const hex = (s) => {
   return null;
 };
 const whereStr = (w) => (w ? `${w.file}:${w.line}${w.widget ? ` (${w.widget})` : ''}` : null);
+// a pass's viewport: '375' at its default height, '360x640' at one given
+const vp = (p) => String(p.key).replace(/-(dark|text\d+)$/, '');
 const passes = rep.passes;
 const light = passes.filter((p) => !p.dark && p.textScale === 1);
 const darkPasses = passes.filter((p) => p.dark && p.textScale === 1);
@@ -568,7 +584,7 @@ const overflowOf = (key) => errorsOf(key).filter((e) => /overflowed by/.test(e.s
 // The dark pass moved nothing: no dark theme (or one chosen in the app's own settings).
 const sameShot = (a, b) => { try { return readFileSync(join(out, a.shot)).equals(readFileSync(join(out, b.shot))); } catch { return false; } };
 const darkUnchanged = darkPasses.length > 0 && darkPasses.every((d) => {
-  const l = light.find((p) => p.width === d.width);
+  const l = light.find((p) => vp(p) === vp(d));
   return l && (sameShot(l, d) || (l.brightness === d.brightness && l.background === d.background));
 });
 const counted = darkUnchanged ? [...light, ...scaled] : passes;
@@ -614,6 +630,13 @@ for (const p of passes) {
   p.errorScreen = p.errorWidget ? 'error widget' : (p.labels || []).slice(0, 4).find((t) => /(^|\s)(Error|Exception|Failed to)\b|Exception:/.test(t) && !/statusCode|HttpException|SocketException|ClientException|NetworkImageLoadException|Failed host lookup/.test(t)) || null;
   if (p.errorScreen) p.warns.unshift(p.errorWidget ? 'a build failed (error widget on screen)' : 'an error message on screen');
   p.status = p.fails.length ? 'FAIL' : 'PASS';
+}
+// The small phone (overflow only): the overflows that the first viewport's pass does not have.
+const short = rep.short || null;
+if (short) {
+  const known = new Set(((light[0] || passes[0]).findings.overflow).map((o) => whereStr(o.where) || o.summary));
+  short.overflow = overflowOf(short.key);
+  short.fresh = short.overflow.filter((o) => !known.has(whereStr(o.where) || o.summary));
 }
 
 // ---------------------------------------------------------------- contact sheets and compare
@@ -681,13 +704,13 @@ const report = {
   tool: 'flutter_render.mjs', project, package: pkgName, entry: opt.standalone ? null : relative(project, entryAbs), flutter: sdkVersion,
   options: { steps: opt.steps.map((x) => (x.startsWith('enter:') ? x.replace(/=.*/, '=…') : x)), widget: opt.widget, standalone: opt.standalone, theme: themes.theme, darkTheme: themes.darkTheme, prefs: opt.prefs.map(([k]) => k), setup: opt.setup },
   mocked, googleFonts: gf.families.map((f) => f.family), googleFontsFailed: gf.failed, fonts: rep.fonts, notes: rep.notes, steps: rep.steps,
-  crash: rep.crash || null, unsettled: rep.unsettled, errors: rep.errors, darkUnchanged, passes, contact, contactDark, compare,
+  crash: rep.crash || null, unsettled: rep.unsettled, errors: rep.errors, darkUnchanged, passes, short, contact, contactDark, compare,
   timings: { test: tTest - tStart, total: Date.now() - tStart }, exitCode: status,
 };
 writeFileSync(join(out, 'report.json'), JSON.stringify(report, null, 2));
 
 // ---------------------------------------------------------------- output
-const label = (p) => (p.textScale !== 1 ? `${p.width} text ${Math.round(p.textScale * 100)}%` : `${p.width}${p.dark ? ' dark' : ''}`);
+const label = (p) => (p.textScale !== 1 ? `${vp(p)} text ${Math.round(p.textScale * 100)}%` : `${vp(p)}${p.dark ? ' dark' : ''}`);
 console.log(`ui-craft flutter render → ${rel(out)}`);
 console.log(`  app: ${pkgName} · ${opt.standalone ? `${opt.widget} in a MaterialApp (theme ${themes.theme || 'the default'}${themes.darkTheme ? `, dark ${themes.darkTheme}` : ''}${themes.localizationsDelegates ? ', the app\'s localizations' : ''})` : `${relative(project, entryAbs)} main()`} · Flutter ${sdkVersion || '?'}${mocked.length ? ` · mocked: ${mocked.join(', ')}` : ''}`);
 const steps = (rep.steps || []).map((s) => (s.route ? `route ${s.route}${s.handled ? '' : ' (nothing answered it: no router, or the path is unknown)'}` : s.enter != null ? `enter ${JSON.stringify(s.enter)}${s.found ? '' : ' (no such field)'}` : `tap ${JSON.stringify(s.tap)}${s.found ? '' : ' (not found)'}`));
@@ -699,6 +722,7 @@ for (const p of counted) {
   const detail = [...p.fails, ...p.warns.map((w) => `warn:${w}`)].join(' · ') || 'clean';
   console.log(`  ${label(p).padEnd(14)} ${p.status}  ${detail}`);
 }
+if (short) console.log(`  ${short.key.padEnd(14)} ${short.fresh.length ? 'FAIL' : 'PASS'}  ${short.fresh.length ? `overflow ${short.fresh.length}` : short.overflow.length ? 'no new overflow' : 'clean'} (a small phone below its bars: overflow only)`);
 if (darkUnchanged) console.log(`  dark: tried under a dark platform brightness — the screen did not change (background ${light[0]?.background}): the app has no dark theme, or picks it in its own settings (--prefs with its key), or reads the brightness only at start (--dark-first)`);
 if (rep.crash) printCrash(rep.crash);
 {
@@ -773,6 +797,10 @@ if (fontFetchErrors) console.log(`  google_fonts tried the network ${fontFetchEr
       add('overflow', o.where ? whereStr(o.where) : o.summary, m ? `on the ${m[2]}${o.where ? ` — ${whereStr(o.where)}` : ''}` : `${o.summary}${o.where ? ` — ${whereStr(o.where)}` : ''}`, p, m ? `${Math.round(Number(m[1]) * 10) / 10} px` : null);
     }
   }
+  for (const o of short ? short.fresh : []) {
+    const m = /overflowed by ([\d.]+) pixels on the (\w+)/.exec(o.summary);
+    add('overflow', o.where ? whereStr(o.where) : o.summary, m ? `on the ${m[2]}${o.where ? ` — ${whereStr(o.where)}` : ''}` : `${o.summary}${o.where ? ` — ${whereStr(o.where)}` : ''}`, { key: short.key, dark: false, textScale: 1 }, m ? `${Math.round(Number(m[1]) * 10) / 10} px` : null);
+  }
   const all = [...groups.values()];
   if (all.length) {
     const order = ['overflow', 'contrast', 'icon', 'unlabeled', 'target'];
@@ -784,7 +812,10 @@ if (fontFetchErrors) console.log(`  google_fonts tried the network ${fontFetchEr
       const what = g.kind === 'overflow'
         ? (sm.length ? `by ${sm.map((x) => parseFloat(x)).sort((a, b) => a - b).filter((v, i, a) => i === 0 || i === a.length - 1).join('–')} px ` : '')
         : sm.length ? `${sm.slice(0, 3).join(', ')}${sm.length > 3 ? ` +${sm.length - 3}` : ''} ` : '';
-      console.log(`    ${g.kind}: ${what}${g.text} · ${g.at.size === everywhere.length ? 'every pass' : `at ${[...g.at].join(', ')}`}`);
+      // the small phone is not one of the passes: "every pass" means every measured one
+      const all = everywhere.every((l) => g.at.has(l));
+      const extra = [...g.at].filter((l) => !everywhere.includes(l));
+      console.log(`    ${g.kind}: ${what}${g.text} · ${all ? `every pass${extra.length ? ` and ${extra.join(', ')}` : ''}` : `at ${[...g.at].join(', ')}`}`);
     }
     if (all.length > 16) console.log(`    … ${all.length - 16} more in report.json`);
   }
@@ -808,7 +839,7 @@ if (compare) {
   L.push(`- Contrast: ${wt.checked ?? '?'} runs of text (every visible Text and field, in a merged label or not), ${cw.n} below threshold${at(cw, light)}${wt.disabled ? ` · ${wt.disabled} in disabled controls, exempt` : ''}${wt.unverifiable ? ` · ${wt.unverifiable} on an image or gradient, unverifiable` : ''} · ${wt.icons ?? 0} icons, ${iw.n} below 3:1${at(iw, light)} · Flutter's textContrastGuideline: ${gw.n}${gw.n > cw.n ? ' (it reads anti-aliased edges and dividers as the text colour; the per-text numbers are the ones to use)' : ''}`);
   if (darkPasses.length && !darkUnchanged) {
     const dw = worst(darkPasses, (p) => p.findings.contrast.length), diw = worst(darkPasses, (p) => p.findings.iconContrast.length);
-    const dwid = darkPasses.find((p) => p.width === widest.width) || darkPasses[0];
+    const dwid = darkPasses.find((p) => vp(p) === vp(widest)) || darkPasses[0];
     L.push(`- Dark mode: rendered (dark platform brightness${opt.darkFirst ? ', from start' : ''}) · ${dw.n} runs of text below threshold${at(dw, darkPasses)} · ${diw.n} icons below 3:1 · background ${widest.background} → ${dwid.background}`);
   } else if (darkPasses.length) {
     L.push(`- Dark mode: tried under a dark platform brightness: the screen did not change — no dark theme${opt.darkFirst ? '' : ' (or one read only at start: --dark-first)'}`);
@@ -817,11 +848,12 @@ if (compare) {
   L.push(`- Targets: ${widest.tappable} tappable · ${t24.n} below 24${at(t24, counted)} · ${t44.n} below 44pt (iOS) · ${t24.n + t48.n} below 48dp (Android)${at(t48, counted)}`);
   const ul = worst(counted, (p) => p.findings.unlabeled.length);
   L.push(`- Names: ${ul.n} tappable without a label${at(ul, counted)} · ${(widest.headers || []).length} headers${(widest.headers || []).length ? ` (${widest.headers.slice(0, 3).map((h) => JSON.stringify(h)).join(', ')})` : ''}`);
-  const ov = light.filter((p) => p.findings.overflow.length).map((p) => `${p.width} (${p.findings.overflow.length})`);
-  L.push(`- Overflow: ${ov.length ? `at ${ov.join(', ')}` : `none at ${light.map((p) => p.width).join(' / ')}`}`);
+  const ov = light.filter((p) => p.findings.overflow.length).map((p) => `${vp(p)} (${p.findings.overflow.length})`);
+  L.push(`- Overflow: ${ov.length ? `at ${ov.join(', ')}` : `none at ${light.map(vp).join(' / ')}`}`);
+  if (short) L.push(`- Small phone (${short.key}, overflow only): ${short.fresh.length ? `${short.fresh.length} overflow${short.fresh.length > 1 ? 's' : ''} that ${label(light[0] || passes[0])} does not have (${[...new Set(short.fresh.map((o) => whereStr(o.where) || o.summary))].slice(0, 3).join(', ')}) — ${short.shot}` : short.overflow.length ? 'none beyond those above' : 'no overflow'}`);
   if (scaled.length) {
     const s = scaled[0];
-    L.push(`- Text at ${Math.round(s.textScale * 100)} % (${s.width}): ${s.findings.overflow.length ? `${s.findings.overflow.length} overflow${s.findings.overflow.length > 1 ? 's' : ''} (${[...new Set(s.findings.overflow.map((o) => whereStr(o.where) || o.summary))].slice(0, 3).join(', ')})` : 'no overflow'}`);
+    L.push(`- Text at ${Math.round(s.textScale * 100)} % (${vp(s)}): ${s.findings.overflow.length ? `${s.findings.overflow.length} overflow${s.findings.overflow.length > 1 ? 's' : ''} (${[...new Set(s.findings.overflow.map((o) => whereStr(o.where) || o.summary))].slice(0, 3).join(', ')})` : 'no overflow'}`);
   }
   const fonts = (rep.fonts || []).filter((f) => !/^(Roboto)$/.test(f));
   L.push(`- Fonts: Roboto and Material Icons from the SDK${fonts.length ? ` · declared: ${fonts.map((f) => f.replace(/^packages\/[^/]+\//, '')).join(', ')}` : ''}${gf.families.length ? ` · google_fonts: ${gf.families.map((f) => f.family).join(', ')} (fetched)` : ''} · Cupertino text is drawn in Roboto (San Francisco exists only on Apple platforms)`);

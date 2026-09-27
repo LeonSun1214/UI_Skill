@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.19.1 — the ninth trial: a Flutter task
+
+The first agent task on Flutter. A fresh agent with 0.19.0 added a budget filter ($ / $$ / $$$) to
+compass_app's search screen. It matched the When and Who rows in light, dark, at three widths and at
+200 % text, and `flutter analyze` and all 70 tests pass. It rendered twice: once before the edit, and
+once after with `--compare`. Two things it had to work out alone are fixed here. Notes:
+`evals/notes/trial-flutter-9.md`.
+
+- `flutter_render.mjs`, text contrast. A run of text with no letter or digit was skipped as emoji or
+  punctuation, so "$", "$$" and "$$$" were never measured; the agent found them missing from
+  `report.json` and measured them with `contrast.py`. A currency or maths sign now counts as text.
+  Emoji and punctuation alone are still skipped.
+- `flutter_render.mjs`, a small phone. Phones were rendered at 375 × 812 only, where a fourth row
+  fits. The screen is now also laid out at 360 × 568 (a 360 × 640 Android phone below its status and
+  navigation bars), for overflows only, with a screenshot (`360x568.png`). A screen that is a
+  `Column` with no scroll view runs out of room there first: without the agent's scroll view the new
+  row overflows it by 48 px. The agent had found this by writing a widget test, which put it at
+  83 px, because a widget test draws text in the test font.
+- `flutter_render.mjs`, `--viewports` takes `WxH` (`360x640,768,1440`).
+- `verify.py` on a Dart or Swift project now says it has nothing to check and names the check that
+  does (`flutter analyze`, `xcodebuild build`). It used to print a line of zeros, which the agent
+  pasted into its report.
+- `references/stacks/flutter.md`: the small phone, the fix for a bottom overflow there, and why a
+  project's own widget test is no place to measure layout.
+- The `flutter-app` fixture's trip page gets two planted defects: a column that overflows only on
+  the small phone, and a `$$` in a grey at 2.7:1. The CI `flutter` job goes from 13 checks to 18.
+
+Checked for regressions: the ten renders behind 0.18.0's notes (seven projects, compass_app twice, the
+fixture twice) and the trial's page, before and after. The only change in the ten is the new
+small-phone line, and none of them overflows there beyond what it already did at 375. On the trial's
+page the options are now measured: 13 runs of text become 16, and none of the new ones fails.
+
 ## 0.19.0 — SwiftUI (read, not rendered)
 
 The last part of the second tier. SwiftUI draws only on Apple platforms, and this skill's renderers
