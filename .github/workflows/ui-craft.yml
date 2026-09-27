@@ -245,6 +245,26 @@ jobs:
           grep -q "no .react-native-web. in the dependencies: the app does not run in a browser" /tmp/inspect-rnnav.txt
           grep -q "react-native-maps. (maps) has no web version" /tmp/inspect-rnnav.txt
           if grep -q "The renderer tries a dark device" /tmp/inspect-rnnav.txt; then echo "a dark pass promised without a web build"; exit 1; fi
+          # Flutter: go_router routes with a shell and a redirect, a ColorScheme pair and its contrast, the TextTheme's
+          # own colour, palette and spacing classes, the stored flag a redirect reads, the render line
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/flutter-app | tee /tmp/inspect-flutter.txt | head -5
+          grep -q "Flutter (go_router) · Dart ^3.7.0 · Material 3" /tmp/inspect-flutter.txt
+          grep -q "trips_screen.dart. · ./trips. · TripsScreen · 35 lines · list · uses TripCard · inside AppShell" /tmp/inspect-flutter.txt
+          grep -q "trip_detail_screen.dart. · ./trips/:id. · TripDetailScreen" /tmp/inspect-flutter.txt
+          grep -q "sign_in_screen.dart. · ./sign-in. · SignInScreen · 36 lines · 2 fields" /tmp/inspect-flutter.txt
+          grep -q "behind the router's redirect (to ./sign-in." /tmp/inspect-flutter.txt
+          grep -q "(AppShell) is the shell around the routes under it" /tmp/inspect-flutter.txt
+          grep -q "primary #1F5C45 / #8DB596" /tmp/inspect-flutter.txt
+          grep -q "onPrimary on primary 7.9 / 7.0" /tmp/inspect-flutter.txt
+          grep -q "bodySmall #9E9E9E on surface 2.7 / 7.0 ✗" /tmp/inspect-flutter.txt
+          grep -q "outline on surface 5.3 / 2.1 (3:1) ✗" /tmp/inspect-flutter.txt
+          grep -q "Insets. in .lib/app/theme.dart" /tmp/inspect-flutter.txt
+          grep -q "spacing from a scale: .Insets.md. ×6" /tmp/inspect-flutter.txt
+          grep -q "0 tooltips (for 1 .IconButton.)" /tmp/inspect-flutter.txt
+          grep -q "prefs signed_in=" /tmp/inspect-flutter.txt
+          grep -q "a widget test starts the app through its .main(). (.const TrailheadApp().)" /tmp/inspect-flutter.txt
+          grep -q "references/stacks/flutter.md" /tmp/inspect-flutter.txt
+          grep -q "Established conventions detected" /tmp/inspect-flutter.txt
           # Laravel: routes to views (Route::view, controllers, a Livewire page, Fortify), middleware from groups and
           # controllers (except, only), @extends and component layouts, Blade components, Flux, Inertia, @vite
           python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/laravel-app | tee /tmp/inspect-laravel.txt | head -5
@@ -261,3 +281,39 @@ jobs:
           grep -q "render dark through it: .--dark-storage flux.appearance=dark." /tmp/inspect-laravel.txt
           grep -q "Vite manifest not found" /tmp/inspect-laravel.txt
           grep -q "references/stacks/laravel.md" /tmp/inspect-laravel.txt
+  flutter:
+    # flutter_render.mjs on the fixture with the current stable Flutter: every planted defect found, with its
+    # file and line, in the pass it belongs to; then signing in through the form and opening a route.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: npm, cache-dependency-path: ui-craft/scripts/package-lock.json }
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable, cache: true }
+      - name: Install runtime
+        working-directory: ui-craft/scripts
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: flutter_render.mjs finds the planted defects
+        run: |
+          cp -r ui-craft/evals/fixtures/flutter-app /tmp/trailhead
+          node ui-craft/scripts/flutter_render.mjs /tmp/trailhead --prefs signed_in=true --out /tmp/fr | tee /tmp/fr.txt
+          grep -q "location /trips" /tmp/fr.txt
+          grep -q "overflow: by .* on the right — lib/screens/trips_screen.dart:17 (Row) · at 375, 375 dark, 375 text 200%" /tmp/fr.txt
+          grep -q "on the bottom — lib/widgets/trip_card.dart:37 (Column) · at 375 text 200%" /tmp/fr.txt
+          grep -q "#9E9E9E on #FFFFFF, 12px — lib/widgets/trip_card.dart:41 (Text)" /tmp/fr.txt
+          grep -q "#4A4A4A on #121212, 14px — lib/widgets/trip_card.dart:42 (Text) · at 375 dark, 768 dark, 1440 dark" /tmp/fr.txt
+          grep -q "unlabeled: 28×28 tappable with no label — lib/widgets/trip_card.dart:49 (GestureDetector)" /tmp/fr.txt
+          grep -q "unlabeled: 48×48 button with no label — lib/screens/trips_screen.dart:25 (IconButton)" /tmp/fr.txt
+          grep -q "target: 28×28 tappable (below 44pt and 48dp) — lib/widgets/trip_card.dart:49" /tmp/fr.txt
+          grep -q "background #FFFFFF → #121212" /tmp/fr.txt
+          grep -q "^- Errors: none during the render" /tmp/fr.txt
+          test -s /tmp/fr/contact.png && test -s /tmp/fr/contact-dark.png && test -s /tmp/fr/375-text200.png
+      - name: flutter_render.mjs signs in through the form and opens a route
+        run: |
+          node ui-craft/scripts/flutter_render.mjs /tmp/trailhead --enter Email=sam@example.com --enter Password=hunter2 --tap 'Sign in' --route /trips/rainier --no-dark --no-text-scale --out /tmp/fr2 | tee /tmp/fr2.txt
+          grep -q "after: enter \"Email\" · enter \"Password\" · tap \"Sign in\" · route /trips/rainier" /tmp/fr2.txt
+          grep -q "location /trips/rainier · headers \"Wonderland Trail\"" /tmp/fr2.txt

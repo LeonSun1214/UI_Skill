@@ -1,5 +1,86 @@
 # Changelog
 
+## 0.18.0 — Flutter
+
+The second part of the second tier: an app that paints its own pixels. On the web Flutter draws
+one canvas, so a browser audit finds no text, no controls and no DOM: `render.mjs` had nothing to
+measure. The inspector read a Flutter project as "static HTML", greenfield. This version renders
+Flutter through Flutter itself: a widget test that starts the app, walks to the screen, and
+measures the pixels and the semantics tree. It was checked on eight projects:
+- five of flutter/samples: compass_app, navigation_and_routing, material_3_demo, cupertino_gallery
+  and form_app;
+- the `flutter create` counter;
+- LocalSend;
+- a fixture with six planted defects, all of them found, each with its file and line.
+
+Notes: `evals/notes/stacks-flutter.md`.
+
+- `flutter_render.mjs` (new): writes a widget test into the project's `.ui-craft/` and runs it with
+  `flutter test`.
+  - **Starting the app.** It starts the app through its own `main()`, with shared_preferences
+    (both APIs) and path_provider mocked. It loads the fonts a test lacks:
+    - Roboto and Material Icons from the SDK;
+    - the app's and its packages' fonts from `FontManifest.json`;
+    - google_fonts' faces, fetched once by hash and cached, and put where google_fonts looks, so it
+      loads them itself instead of failing on the test's network.
+
+    Without them every glyph is a box.
+  - **Reaching a screen.** `--route` arrives like a deep link, so the router answers and its
+    redirect runs. `--prefs KEY=VALUE`, `--enter FIELD=TEXT` and `--tap TEXT` run in the order
+    given. `--widget EXPR` pushes one screen over the running app, with `context` in scope and the
+    files that declare its names imported. `--standalone` pumps it in a `MaterialApp` with the
+    app's theme and localizations. Also `--setup FILE.dart`, `--network`, `--dark-first` and
+    `--compare`.
+  - **Measuring.** At 375 / 768 / 1440, in light and under a dark platform brightness, and at
+    375 with text at 200 %, it saves screenshots and contact sheets. It measures:
+    - the contrast of every visible run of text and every icon: the colour it is set in, over
+      the colour its box shows, checked against the pixels. Text inside disabled controls is
+      exempt;
+    - Flutter's own guidelines: tap targets of 48dp and 44pt, and labels on tappable nodes.
+      Its `textContrastGuideline` is reported as a count only: it read anti-aliased edges as
+      the text colour on cupertino_gallery's list;
+    - the layout overflows of the settled layout. The render tree is reassembled after each
+      resize, so an overflow during a layout transition is not counted.
+  - **Pointing at the code.** Each finding names the widget in the app's code, with its file and
+    line. It is found through the render object that owns the semantics node, so a finding lands
+    on the button (`logout_button.dart:51 (InkResponse)`), not on the scroll view around it.
+  - **Explaining failures.** Failed requests are grouped by host, and plugins without a platform
+    are named by channel. An error screen and Flutter's error box are flagged, and so is a native
+    library a test cannot load. A test that does not compile gets its errors listed, with the
+    build_runner hint when generated files are missing.
+- `inspect.py`, Flutter:
+  - **Detection.** The pubspec, the Dart SDK, Material 3 or 2, Cupertino, the state and router
+    packages, and pub workspaces with their apps.
+  - **Screens.**
+    - go_router: paths joined through nested routes, `ShellRoute` and `StatefulShellRoute` shells,
+      and redirects resolved through a function reference to where they send;
+    - auto_route and named routes;
+    - page files otherwise.
+  - **The theme.**
+    - `ColorScheme` per brightness (literal, `.fromSeed`, the dot shorthand) with the contrast of
+      each `onX` on `X`, and of `onSurfaceVariant` and `outline` on the surface;
+    - the `TextTheme`'s own colours on both surfaces;
+    - `ThemeExtension`s, `CupertinoThemeData`, and palette and spacing classes, with how often
+      widgets use the steps (`Insets.md` ×6).
+  - **What the code does.** Widgets by use, colours read from the theme against literals, fonts
+    (pubspec, google_fonts, `fontFamily`), and accessibility in code: `Semantics`, tooltips per
+    `IconButton`, `GestureDetector` and `InkWell`, clamped text scale.
+  - **Before a screen renders.**
+    - the dark theme and `themeMode`;
+    - the shell;
+    - the redirect, with how to get past it;
+    - the shared_preferences keys, with the `--prefs` flag;
+    - the plugins a widget test has no platform for;
+    - the render line.
+  - **Templates.** `flutter create`'s counter reads as a template, not as a choice.
+- `doctor.mjs` shows the Flutter SDK when there is one.
+- Stack notes: `references/stacks/flutter.md`. SKILL.md: a Flutter app renders through
+  `flutter_render.mjs`.
+- Fixture `flutter-app` (Trailhead). CI:
+  - 17 `inspect.py` assertions;
+  - a new `flutter` job that installs stable Flutter and asserts 13 render results on the fixture
+    (each planted defect with its file, line and passes; signing in through the form; a route).
+
 ## 0.17.0 — React Native and Expo
 
 The first part of the second tier: apps whose pages are screens and whose look is a theme

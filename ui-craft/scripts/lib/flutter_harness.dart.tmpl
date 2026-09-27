@@ -1,0 +1,808 @@
+// Written by ui-craft's flutter_render.mjs on every run; .ui-craft/ is ignored by git.
+// A widget test that starts the app, opens the screen asked for, and at each width saves a
+// screenshot and runs Flutter's accessibility guidelines. Everything it finds goes to
+// flutter-report.json in the output folder; flutter_render.mjs reads it and prints the summary.
+// ignore_for_file: type=lint, deprecated_member_use, unused_import, unused_element, unnecessary_import, depend_on_referenced_packages, implementation_imports, invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
+
+import 'dart:async' as uica;
+import 'dart:convert' as uicc;
+import 'dart:io' as uicio;
+import 'dart:math' as uicm;
+import 'dart:typed_data' as uictd;
+import 'dart:ui' as uicui;
+
+import 'package:flutter/cupertino.dart' as uicup;
+import 'package:flutter/foundation.dart' as uicf;
+import 'package:flutter/material.dart' as uic;
+import 'package:flutter/rendering.dart' as uicr;
+import 'package:flutter/services.dart' as uicsv;
+import 'package:flutter/widgets.dart' as uicw;
+import 'package:flutter_test/flutter_test.dart' as uict;
+
+// Unprefixed, for the --widget and --theme expressions.
+import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
+
+/*{{IMPORTS}}*/
+
+const String _out = /*{{OUT}}*/;
+const String _root = /*{{ROOT}}*/;
+const String _package = /*{{PACKAGE}}*/;
+const String _materialFonts = /*{{MATERIAL_FONTS}}*/;
+const List<double> _widths = /*{{WIDTHS}}*/;
+const bool _dark = /*{{DARK}}*/;
+const bool _darkFirst = /*{{DARK_FIRST}}*/;
+const bool _textScale = /*{{TEXT_SCALE}}*/;
+const bool _network = /*{{NETWORK}}*/;
+// what a person does after start, in order: 'route:/path', 'tap:TEXT', 'enter:FIELD=TEXT'
+const List<String> _steps = /*{{STEPS}}*/;
+// family -> font files fetched by flutter_render.mjs (google_fonts downloads them at run time; a test has no network)
+const Map<String, List<String>> _extraFonts = /*{{EXTRA_FONTS}}*/;
+
+final Map<String, Object?> _report = <String, Object?>{
+  'passes': <Object?>[],
+  'fonts': <Object?>[],
+  'notes': <Object?>[],
+  'unsettled': <Object?>[],
+  'steps': <Object?>[],
+  'errors': <Object?>[],
+};
+String _phase = 'start';
+
+double _height(double w) => w < 600 ? 812 : (w < 1000 ? 1024 : 900);
+
+void _write() {
+  uicio.File('$_out/flutter-report.json')
+      .writeAsStringSync(const uicc.JsonEncoder.withIndent(' ').convert(_report));
+}
+
+void _note(String s) => (_report['notes'] as List<Object?>).add(s);
+
+// ---------------------------------------------------------------- fonts
+Future<void> _loadFonts() async {
+  final fonts = _report['fonts'] as List<Object?>;
+  Future<void> load(String family, List<uictd.Uint8List> files) async {
+    if (files.isEmpty) return;
+    final loader = uicsv.FontLoader(family);
+    for (final bytes in files) {
+      loader.addFont(uica.Future<uictd.ByteData>.value(
+          uictd.ByteData.view(bytes.buffer, bytes.offsetInBytes, bytes.lengthInBytes)));
+    }
+    await loader.load();
+  }
+
+  // Roboto: Material's text face on Android and the web. Apps do not bundle it, so a test has
+  // none, and draws text it cannot find as solid boxes.
+  final dir = uicio.Directory(_materialFonts);
+  if (dir.existsSync()) {
+    final roboto = dir
+        .listSync()
+        .whereType<uicio.File>()
+        .where((f) {
+          final n = f.uri.pathSegments.last;
+          return n.startsWith('Roboto') && n.endsWith('.ttf');
+        })
+        .map((f) => f.readAsBytesSync())
+        .toList();
+    await load('Roboto', roboto);
+    // San Francisco exists only on Apple platforms: Cupertino text is drawn in Roboto.
+    for (final f in const <String>['CupertinoSystemText', 'CupertinoSystemDisplay', '.SF Pro Text',
+        '.SF Pro Display', '.SF UI Text', '.SF UI Display']) {
+      await load(f, roboto);
+    }
+    if (roboto.isNotEmpty) fonts.add('Roboto');
+    final icons = uicio.File('$_materialFonts/MaterialIcons-Regular.otf');
+    if (icons.existsSync()) await load('MaterialIcons', <uictd.Uint8List>[icons.readAsBytesSync()]);
+  } else {
+    _note('no Roboto: $_materialFonts is missing, so Material text is drawn as boxes');
+  }
+  // Every font the app and its packages declare, bundled by `flutter test` as the app bundles them.
+  try {
+    final manifest =
+        uicc.json.decode(await uicsv.rootBundle.loadString('FontManifest.json')) as List<dynamic>;
+    for (final dynamic entry in manifest) {
+      final family = entry['family'] as String;
+      final files = <uictd.Uint8List>[];
+      for (final dynamic f in entry['fonts'] as List<dynamic>) {
+        final data = await uicsv.rootBundle.load(f['asset'] as String);
+        files.add(data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes));
+      }
+      await load(family, files);
+      fonts.add(family);
+    }
+  } catch (e) {
+    _note('FontManifest.json could not be read: ${'$e'.split('\n').first}');
+  }
+  for (final e in _extraFonts.entries) {
+    await load(e.key, e.value.map((p) => uicio.File(p).readAsBytesSync()).toList());
+  }
+}
+
+// ---------------------------------------------------------------- plugins a test has no platform for
+Future<void> _mocks() async {
+/*{{MOCKS}}*/
+}
+
+/*{{CLASSES}}*/
+
+// ---------------------------------------------------------------- starting and moving around
+Future<void> _start(uict.WidgetTester tester) async {
+/*{{START}}*/
+}
+
+Future<void> _open(uict.WidgetTester tester) async {
+  for (final s in _steps) {
+    final i = s.indexOf(':');
+    final kind = s.substring(0, i), arg = s.substring(i + 1);
+    _phase = kind;
+    if (kind == 'route') {
+      // The way a deep link arrives: the platform pushes the route, the app's router answers
+      // (go_router, auto_route, a Router of its own, or MaterialApp's named routes).
+      final handled = await tester.binding.handlePushRoute(arg);
+      (_report['steps'] as List<Object?>).add(<String, Object?>{'route': arg, 'handled': handled});
+    } else if (kind == 'tap') {
+      await _tap(tester, arg);
+    } else if (kind == 'enter') {
+      await _enter(tester, arg.substring(0, arg.indexOf('=')), arg.substring(arg.indexOf('=') + 1));
+    }
+    await _settle(tester, kind);
+  }
+/*{{WIDGET_PUSH}}*/
+}
+
+final uict.Finder _tappable = uict.find.byWidgetPredicate((w) =>
+    w is uic.ButtonStyleButton ||
+    w is uic.InkWell ||
+    w is uic.InkResponse ||
+    w is uic.GestureDetector ||
+    w is uic.IconButton ||
+    w is uic.ListTile ||
+    w is uic.FloatingActionButton ||
+    w is uicup.CupertinoButton);
+
+// The first match a person could tap: one inside a button, a list tile or a gesture detector
+// before a heading with the same words.
+uict.Finder? _pick(List<uict.Finder> candidates) {
+  for (final c in candidates) {
+    final h = c.hitTestable();
+    final n = h.evaluate().length;
+    if (n == 0) continue;
+    for (var i = 0; i < n; i++) {
+      if (uict.find.ancestor(of: h.at(i), matching: _tappable).evaluate().isNotEmpty) return h.at(i);
+    }
+    return h.first;
+  }
+  return null;
+}
+
+Future<void> _tap(uict.WidgetTester tester, String what) async {
+  final step = <String, Object?>{'tap': what};
+  (_report['steps'] as List<Object?>).add(step);
+  final f = _pick(<uict.Finder>[
+    if (what.startsWith('key:')) uict.find.byKey(uic.ValueKey<String>(what.substring(4))),
+    uict.find.text(what),
+    uict.find.bySemanticsLabel(what),
+    uict.find.byTooltip(what),
+    uict.find.textContaining(what),
+  ]);
+  step['found'] = f != null;
+  if (f != null) await tester.tap(f, warnIfMissed: false);
+}
+
+Future<void> _enter(uict.WidgetTester tester, String field, String text) async {
+  final step = <String, Object?>{'enter': field};
+  (_report['steps'] as List<Object?>).add(step);
+  final fields = uict.find.byWidgetPredicate((w) => w is uic.EditableText);
+  uict.Finder? f;
+  for (final c in <uict.Finder>[
+    if (field.startsWith('key:')) uict.find.byKey(uic.ValueKey<String>(field.substring(4))),
+    uict.find.ancestor(of: uict.find.text(field), matching: uict.find.byType(uic.TextField)),
+    uict.find.ancestor(of: uict.find.text(field), matching: uict.find.byType(uic.TextFormField)),
+    uict.find.ancestor(of: uict.find.text(field), matching: uict.find.byType(uicup.CupertinoTextField)),
+    uict.find.bySemanticsLabel(field),
+  ]) {
+    if (c.evaluate().isEmpty) continue;
+    final inner = uict.find.descendant(of: c.first, matching: fields);
+    f = inner.evaluate().isNotEmpty ? inner.first : c.first;
+    break;
+  }
+  if (f == null && RegExp(r'^\d+$').hasMatch(field) && fields.evaluate().length > int.parse(field)) {
+    f = fields.at(int.parse(field)); // the n-th field on the screen, from 0
+  }
+  step['found'] = f != null;
+  if (f != null) await tester.enterText(f, text);
+}
+
+// Real I/O (asset loads, files, image decoding) finishes only outside the test's fake clock:
+// let it run between frames, then wait for animations to end.
+Future<void> _settle(uict.WidgetTester tester, String key) async {
+  for (var i = 0; i < 3; i++) {
+    await tester.runAsync(() => uica.Future<void>.delayed(const Duration(milliseconds: 120)));
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+  try {
+    await tester.pumpAndSettle(const Duration(milliseconds: 100), uict.EnginePhase.sendSemanticsUpdate,
+        const Duration(seconds: 6));
+  } catch (_) {
+    // An animation that never ends: a progress indicator, a repeating animation.
+    (_report['unsettled'] as List<Object?>).add(key);
+  }
+}
+
+Future<void> _images(uict.WidgetTester tester) async {
+  final pending = <uica.Future<void> Function()>[];
+  for (final e in uict.find.byType(uic.Image).evaluate()) {
+    final w = e.widget as uic.Image;
+    pending.add(() => uic.precacheImage(w.image, e));
+  }
+  for (final e in uict.find.byType(uic.DecoratedBox).evaluate()) {
+    final d = (e.widget as uic.DecoratedBox).decoration;
+    if (d is uic.BoxDecoration && d.image != null) pending.add(() => uic.precacheImage(d.image!.image, e));
+  }
+  if (pending.isEmpty) return;
+  // All at once, with one time limit: an image that cannot load (no network) must not hold up the rest.
+  await tester.runAsync(() async {
+    try {
+      await uica.Future.wait(pending.map((p) => p().catchError((Object _) {}))).timeout(const Duration(seconds: 2));
+    } catch (_) {}
+  });
+  await tester.pump();
+}
+
+// ---------------------------------------------------------------- measuring
+class _Pixels {
+  _Pixels(this.data, this.width, this.height);
+  final uictd.ByteData data;
+  final int width, height;
+  int at(int x, int y) {
+    final i = (y * width + x) * 4;
+    return (data.getUint8(i) << 16) | (data.getUint8(i + 1) << 8) | data.getUint8(i + 2);
+  }
+}
+
+_Pixels? _lastPixels;
+
+Future<Map<String, Object?>> _shot(uict.WidgetTester tester, String name) async {
+  final view = tester.binding.renderViews.first;
+  final layer = view.debugLayer! as uicr.OffsetLayer;
+  final r = <String, Object?>{'file': name};
+  await tester.runAsync(() async {
+    final image = await layer.toImage(view.paintBounds);
+    final png = await image.toByteData(format: uicui.ImageByteFormat.png);
+    final raw = await image.toByteData(format: uicui.ImageByteFormat.rawRgba);
+    _lastPixels = _Pixels(raw!, image.width, image.height);
+    r['pixels'] = <int>[image.width, image.height];
+    uicio.File('$_out/$name').writeAsBytesSync(png!.buffer.asUint8List());
+    // The page's colour: the most common one on a coarse grid.
+    final counts = <int, int>{};
+    final w = image.width, h = image.height;
+    for (var y = 8; y < h; y += 16) {
+      for (var x = 8; x < w; x += 16) {
+        final i = (y * w + x) * 4;
+        final c = (raw!.getUint8(i) << 16) | (raw.getUint8(i + 1) << 8) | raw.getUint8(i + 2);
+        counts[c] = (counts[c] ?? 0) + 1;
+      }
+    }
+    var best = 0, n = -1;
+    counts.forEach((c, k) {
+      if (k > n) {
+        best = c;
+        n = k;
+      }
+    });
+    r['background'] = '#${best.toRadixString(16).padLeft(6, '0').toUpperCase()}';
+    image.dispose();
+  });
+  return r;
+}
+
+Future<Map<String, Object?>> _measure(
+    uict.WidgetTester tester, String key, double w, bool dark, double scale) async {
+  await _images(tester);
+  final e = <String, Object?>{'key': key, 'width': w, 'height': _height(w), 'dark': dark, 'textScale': scale};
+  final shot = await _shot(tester, '$key.png');
+  e['shot'] = shot['file'];
+  e['pixels'] = shot['pixels'];
+  e['background'] = shot['background'];
+  final view = tester.binding.renderViews.first;
+  final dpr = tester.view.devicePixelRatio;
+  final root = view.owner!.semanticsOwner!.rootSemanticsNode!;
+  final nodes = <uicr.SemanticsNode>[];
+  void walk(uicr.SemanticsNode n) {
+    nodes.add(n);
+    n.visitChildren((c) {
+      walk(c);
+      return true;
+    });
+  }
+
+  walk(root);
+  final byId = <int, uicr.SemanticsNode>{for (final n in nodes) n.id: n};
+  // The render object that made each semantics node: its creator is the widget to name.
+  final owners = <int, uicr.RenderObject>{};
+  void own(uicr.RenderObject ro) {
+    final s = ro.debugSemantics;
+    if (s != null) owners.putIfAbsent(s.id, () => ro);
+    ro.visitChildren(own);
+  }
+
+  view.visitChildren(own);
+  var tappable = 0, texts = 0;
+  final headers = <String>[];
+  final labels = <String>[];
+  for (final n in nodes) {
+    if (n.isMergedIntoParent || n.isInvisible) continue;
+    final d = n.getSemanticsData();
+    if (d.hasFlag(uicui.SemanticsFlag.isHidden)) continue;
+    if (d.hasAction(uicui.SemanticsAction.tap) || d.hasAction(uicui.SemanticsAction.longPress)) tappable++;
+    final text = d.label.trim().isNotEmpty ? d.label.trim() : d.value.trim();
+    if (text.isNotEmpty) {
+      texts++;
+      if (labels.length < 12) labels.add(text.length > 60 ? '${text.substring(0, 60)}…' : text);
+    }
+    if (d.hasFlag(uicui.SemanticsFlag.isHeader) && d.label.trim().isNotEmpty) headers.add(d.label.trim());
+    if (d.hasFlag(uicui.SemanticsFlag.isObscured)) e['password'] = true;
+  }
+  e['tappable'] = tappable;
+  e['texts'] = texts;
+  e['headers'] = headers;
+  e['labels'] = labels;
+  e['text'] = _texts(tester, view, dpr);
+  e['contrast'] = await _guideline(tester, uict.textContrastGuideline, byId, owners, dpr, false);
+  e['android'] = await _guideline(tester, uict.androidTapTargetGuideline, byId, owners, dpr, true);
+  e['ios'] = await _guideline(tester, uict.iOSTapTargetGuideline, byId, owners, dpr, true);
+  e['unlabeled'] = await _guideline(tester, uict.labeledTapTargetGuideline, byId, owners, dpr, true);
+  e.addAll(_place(tester));
+  return e;
+}
+
+Future<Map<String, Object?>> _guideline(uict.WidgetTester tester, uict.AccessibilityGuideline g,
+    Map<int, uicr.SemanticsNode> byId, Map<int, uicr.RenderObject> owners, double dpr, bool control) async {
+  final r = <String, Object?>{};
+  try {
+    final ev = await g.evaluate(tester);
+    r['passed'] = ev.passed;
+    final failures = <Object?>[];
+    final reason = ev.reason;
+    if (!ev.passed && reason != null) {
+      for (final part in reason.split(RegExp(r'(?=SemanticsNode#\d+)'))) {
+        final m = RegExp(r'^SemanticsNode#(\d+)').firstMatch(part);
+        if (m == null) continue;
+        final f = <String, Object?>{'reason': part.split('See also').first.trim()};
+        final id = int.parse(m.group(1)!);
+        final node = byId[id];
+        if (node != null) f.addAll(_node(tester, node, owners[id], dpr, control));
+        failures.add(f);
+      }
+    }
+    r['failures'] = failures;
+  } catch (e) {
+    r['error'] = '$e'.split('\n').first;
+  }
+  return r;
+}
+
+double _r(double v) => (v * 10).roundToDouble() / 10;
+
+Map<String, Object?> _node(
+    uict.WidgetTester tester, uicr.SemanticsNode node, uicr.RenderObject? owner, double dpr, bool control) {
+  var rect = node.rect;
+  uicr.SemanticsNode? cur = node;
+  while (cur != null) {
+    final t = cur.transform;
+    if (t != null) rect = uicr.MatrixUtils.transformRect(t, rect);
+    cur = cur.parent;
+  }
+  rect = uicui.Rect.fromLTRB(rect.left / dpr, rect.top / dpr, rect.right / dpr, rect.bottom / dpr);
+  final d = node.getSemanticsData();
+  var role = '';
+  if (d.hasFlag(uicui.SemanticsFlag.isButton)) {
+    role = 'button';
+  } else if (d.hasFlag(uicui.SemanticsFlag.isTextField)) {
+    role = 'text field';
+  } else if (d.hasFlag(uicui.SemanticsFlag.isLink)) {
+    role = 'link';
+  } else if (d.hasFlag(uicui.SemanticsFlag.hasToggledState)) {
+    role = 'switch';
+  } else if (d.hasFlag(uicui.SemanticsFlag.hasCheckedState)) {
+    role = 'checkbox';
+  } else if (d.hasFlag(uicui.SemanticsFlag.isSlider)) {
+    role = 'slider';
+  } else if (d.hasFlag(uicui.SemanticsFlag.isImage)) {
+    role = 'image';
+  } else if (d.hasFlag(uicui.SemanticsFlag.isHeader)) {
+    role = 'header';
+  }
+  return <String, Object?>{
+    'rect': <double>[_r(rect.left), _r(rect.top), _r(rect.width), _r(rect.height)],
+    'label': d.label,
+    'value': d.value,
+    'tooltip': d.tooltip,
+    'role': role,
+    'where': _from(owner) ?? _whereAt(tester, rect.center, control),
+  };
+}
+
+Map<String, Object?>? _from(uicr.RenderObject? ro) {
+  final creator = ro?.debugCreator;
+  return creator is uicw.DebugCreator ? _user(creator.element) : null;
+}
+
+// ---------------------------------------------------------------- text contrast, every run of text
+// Flutter's textContrastGuideline checks a semantics node only when its label is one Text; text
+// merged into a parent's label (a ListTile, a card, a button) is never checked. This checks every
+// visible RenderParagraph: the colour it is set in, composited over the colour most of its box
+// shows in the screenshot, and the darkest (or lightest) colour its pixels reach, whichever is
+// lower (a fade or an Opacity lowers what the declared colour says). Icons (a glyph from an icon
+// font) are held to 3:1, text to 4.5:1, or 3:1 from 18 px, or 14 px bold (Flutter's thresholds).
+double _lum(int c) {
+  double ch(int v) {
+    final x = v / 255.0;
+    return x <= 0.03928 ? x / 12.92 : _pow((x + 0.055) / 1.055, 2.4);
+  }
+
+  return 0.2126 * ch((c >> 16) & 255) + 0.7152 * ch((c >> 8) & 255) + 0.0722 * ch(c & 255);
+}
+
+double _pow(double x, double y) => uicm.pow(x, y).toDouble();
+
+double _ratio(int a, int b) {
+  final la = _lum(a), lb = _lum(b);
+  return la > lb ? (la + 0.05) / (lb + 0.05) : (lb + 0.05) / (la + 0.05);
+}
+
+int _over(uicui.Color c, int bg) {
+  final s = '$c';
+  int a, r, g, b;
+  final hexM = RegExp(r'0x([0-9a-fA-F]{8})').firstMatch(s);
+  final newM = RegExp(r'alpha: ([\d.]+), red: ([\d.]+), green: ([\d.]+), blue: ([\d.]+)').firstMatch(s);
+  if (hexM != null) {
+    final v = int.parse(hexM.group(1)!, radix: 16);
+    a = (v >> 24) & 255;
+    r = (v >> 16) & 255;
+    g = (v >> 8) & 255;
+    b = v & 255;
+  } else if (newM != null) {
+    a = (double.parse(newM.group(1)!) * 255).round();
+    r = (double.parse(newM.group(2)!) * 255).round();
+    g = (double.parse(newM.group(3)!) * 255).round();
+    b = (double.parse(newM.group(4)!) * 255).round();
+  } else {
+    return -1;
+  }
+  int mix(int f, int k) => ((f * a + k * (255 - a)) / 255).round();
+  return (mix(r, (bg >> 16) & 255) << 16) | (mix(g, (bg >> 8) & 255) << 8) | mix(b, bg & 255);
+}
+
+String _hex(int c) => '#${c.toRadixString(16).padLeft(6, '0').toUpperCase()}';
+
+bool _isIcon(uicw.InlineSpan span) {
+  final t = span.toPlainText();
+  final family = span.style?.fontFamily ?? '';
+  if (RegExp(r'icon|symbols|awesome', caseSensitive: false).hasMatch(family)) return true;
+  final runes = t.runes.toList();
+  return runes.length == 1 && ((runes.first >= 0xE000 && runes.first <= 0xF8FF) || runes.first >= 0xF0000);
+}
+
+Map<String, Object?> _texts(uict.WidgetTester tester, uicr.RenderView view, double dpr) {
+  final px = _lastPixels;
+  if (px == null) return <String, Object?>{'checked': 0};
+  final c = <String, Object?>{'checked': 0, 'icons': 0, 'unverifiable': 0, 'disabled': 0, 'failures': <Object?>[], 'measured': <Object?>[]};
+  // Walked the way semantics walks it: only what is onstage (not a route under an opaque one, not
+  // an Offstage, an IndexedStack's hidden children or an Opacity of 0).
+  void visit(uicr.RenderObject ro) {
+    // Text, and what is typed into a field (a RenderEditable).
+    final uicw.InlineSpan? span = ro is uicr.RenderParagraph ? ro.text : (ro is uicr.RenderEditable ? ro.text : null);
+    if (span != null && ro is uicr.RenderBox && ro.attached && ro.hasSize && ro.size.width > 1 && ro.size.height > 1) {
+      final text = span.toPlainText().trim();
+      if (text.isNotEmpty) _text(tester, ro, span, text, px, dpr, c);
+    }
+    ro.visitChildrenForSemantics(visit);
+  }
+
+  view.visitChildrenForSemantics(visit);
+  return c;
+}
+
+void _count(Map<String, Object?> c, String k) => c[k] = (c[k] as int) + 1;
+
+bool _hidden(uicr.RenderObject ro) {
+  for (uicr.RenderObject? a = ro; a != null; a = a.parent) {
+    if (a is uicr.RenderOffstage && a.offstage) return true;
+    if (a is uicr.RenderOpacity && a.opacity == 0) return true;
+    if (a is uicr.RenderAnimatedOpacity && a.opacity.value == 0) return true;
+  }
+  return false;
+}
+
+// A control that says it is disabled: WCAG exempts its text from the contrast minimum.
+bool _disabled(uicr.RenderObject ro) {
+  for (uicr.RenderObject? a = ro; a != null; a = a.parent) {
+    final node = a.debugSemantics;
+    if (node == null) continue;
+    final d = node.getSemanticsData();
+    return d.hasFlag(uicui.SemanticsFlag.hasEnabledState) && !d.hasFlag(uicui.SemanticsFlag.isEnabled);
+  }
+  return false;
+}
+
+bool _onTop(uict.WidgetTester tester, uicr.RenderObject ro, uicui.Offset at) {
+  final hit = uicr.HitTestResult();
+  tester.binding.hitTestInView(hit, at, tester.view.viewId);
+  final path = hit.path.map((e) => e.target).whereType<uicr.RenderObject>().toList();
+  if (path.isEmpty) return false;
+  if (path.contains(ro)) return true;
+  for (uicr.RenderObject? a = ro.parent; a != null; a = a.parent) {
+    if (identical(a, path.first)) return true;
+  }
+  return false;
+}
+
+int _dist(int a, int b) =>
+    (((a >> 16) & 255) - ((b >> 16) & 255)).abs() +
+    (((a >> 8) & 255) - ((b >> 8) & 255)).abs() +
+    ((a & 255) - (b & 255)).abs();
+
+void _text(uict.WidgetTester tester, uicr.RenderBox ro, uicw.InlineSpan span, String text, _Pixels px, double dpr,
+    Map<String, Object?> c) {
+  if (_hidden(ro)) return;
+  final isIcon = _isIcon(span);
+  if (!isIcon && !RegExp(r'[\p{L}\p{N}]', unicode: true).hasMatch(text)) return; // emoji, punctuation
+  final full = ro.localToGlobal(uicui.Offset.zero) & ro.size;
+  final screen = uicui.Offset.zero & uicui.Size(px.width / dpr, px.height / dpr);
+  final rect = full.intersect(screen);
+  // Mostly off screen (scrolled away, sliding out): not what a person reads there.
+  if (rect.width <= 0 || rect.height <= 0 || rect.width * rect.height < 0.6 * full.width * full.height) return;
+  final x0 = (rect.left * dpr).floor().clamp(0, px.width - 1), x1 = (rect.right * dpr).ceil().clamp(1, px.width);
+  final y0 = (rect.top * dpr).floor().clamp(0, px.height - 1), y1 = (rect.bottom * dpr).ceil().clamp(1, px.height);
+  if (x1 - x0 < 2 || y1 - y0 < 2) return;
+  final counts = <int, int>{};
+  var total = 0;
+  for (var y = y0; y < y1; y++) {
+    for (var x = x0; x < x1; x++) {
+      final k = px.at(x, y);
+      counts[k] = (counts[k] ?? 0) + 1;
+      total++;
+    }
+  }
+  var bg = 0, bgN = -1;
+  counts.forEach((k, n) {
+    if (n > bgN) {
+      bg = k;
+      bgN = n;
+    }
+  });
+  // the colour furthest from the background that at least a few pixels reach
+  var fgPix = bg;
+  var pixRatio = 1.0;
+  counts.forEach((k, n) {
+    if (n < 3 || k == bg) return;
+    final r = _ratio(k, bg);
+    if (r > pixRatio) {
+      pixRatio = r;
+      fgPix = k;
+    }
+  });
+  final style = span.style;
+  final declared = style?.color == null ? -1 : _over(style!.color!, bg);
+  int fg;
+  double ratio;
+  var seen = 0;
+  if (declared >= 0) {
+    counts.forEach((k, n) {
+      if (_dist(k, declared) <= 24) seen += n;
+    });
+  }
+  if (seen >= 3) {
+    fg = declared;
+    ratio = _ratio(declared, bg);
+  } else {
+    // The colour it is set in is not where it sits (or it has none: a gradient, a foreground
+    // paint): under a route or a sheet, clipped, or faded. Measure what shows, if it is on top.
+    if (!_onTop(tester, ro, rect.center) || fgPix == bg) return;
+    fg = fgPix;
+    ratio = pixRatio;
+  }
+  if (bgN < total * 0.3) {
+    // no colour covers the box: text on an image or a gradient
+    _count(c, isIcon ? 'icons' : 'unverifiable');
+    return;
+  }
+  if (_disabled(ro)) {
+    _count(c, 'disabled');
+    return;
+  }
+  _count(c, isIcon ? 'icons' : 'checked');
+  if (!isIcon) (c['measured'] as List<Object?>).add(text.length > 60 ? text.substring(0, 60) : text);
+  double size = style?.fontSize ?? 14;
+  try {
+    size = (ro as dynamic).textScaler.scale(size) as double;
+  } catch (_) {}
+  final bold = (style?.fontWeight?.index ?? 3) >= uicui.FontWeight.w700.index;
+  final need = isIcon ? 3.0 : ((size >= 18 || (bold && size >= 14)) ? 3.0 : 4.5);
+  if (ratio >= need - 0.01) return;
+  (c['failures'] as List<Object?>).add(<String, Object?>{
+    'text': isIcon ? 'icon' : (text.length > 60 ? '${text.substring(0, 60)}…' : text),
+    'icon': isIcon,
+    'ratio': (ratio * 100).floorToDouble() / 100,
+    'need': need,
+    'fg': _hex(fg),
+    'bg': _hex(bg),
+    'size': _r(size),
+    'bold': bold,
+    'rect': <double>[_r(full.left), _r(full.top), _r(full.width), _r(full.height)],
+    'where': _from(ro),
+  });
+}
+
+// The widget in the app's own code nearest to a point: for a control, the one that made it
+// tappable (a GestureDetector, an InkWell, a button); for text, the Text itself.
+Map<String, Object?>? _whereAt(uict.WidgetTester tester, uicui.Offset p, bool control) {
+  try {
+    final result = uicr.HitTestResult();
+    tester.binding.hitTestInView(result, p, tester.view.viewId);
+    final targets = result.path.map((e) => e.target).whereType<uicr.RenderObject>().toList();
+    if (control) {
+      final gesture = targets.whereType<uicr.RenderSemanticsGestureHandler>().toList();
+      if (gesture.isNotEmpty) targets.insert(0, gesture.first);
+    }
+    for (final t in targets) {
+      final creator = t.debugCreator;
+      if (creator is! uicw.DebugCreator) continue;
+      final w = _user(creator.element);
+      if (w != null) return w;
+    }
+  } catch (_) {}
+  return null;
+}
+
+Map<String, Object?>? _user(uicw.Element element) {
+  final text = uicw
+      .debugTransformDebugCreator(<uicf.DiagnosticsNode>[uicr.DiagnosticsDebugCreator(uicw.DebugCreator(element))])
+      .map((n) => n.toStringDeep())
+      .join('\n');
+  return _location(text);
+}
+
+Map<String, Object?>? _location(String text) {
+  final m = RegExp(r'(\w+)[^\n]*?file://' + RegExp.escape(_root) + r'/(?!\.ui-craft/)([^\s:]+):(\d+):(\d+)').firstMatch(text);
+  if (m == null) return null;
+  return <String, Object?>{'widget': m.group(1), 'file': m.group(2), 'line': int.parse(m.group(3)!)};
+}
+
+Map<String, Object?> _place(uict.WidgetTester tester) {
+  final m = <String, Object?>{};
+  try {
+    final navs = uict.find.byType(uic.Navigator).evaluate().toList();
+    if (navs.isNotEmpty) {
+      final ctx = navs.last;
+      if (uict.find.byType(uicup.CupertinoApp).evaluate().isNotEmpty) {
+        m['app'] = 'CupertinoApp';
+        m['brightness'] = uicup.CupertinoTheme.brightnessOf(ctx) == uicui.Brightness.dark ? 'dark' : 'light';
+      } else {
+        final theme = uic.Theme.of(ctx);
+        m['app'] = uict.find.byType(uic.MaterialApp).evaluate().isNotEmpty ? 'MaterialApp' : 'WidgetsApp';
+        m['brightness'] = theme.brightness == uicui.Brightness.dark ? 'dark' : 'light';
+        m['material3'] = theme.useMaterial3;
+      }
+      try {
+        final dynamic info = uic.Router.maybeOf(ctx)?.routeInformationProvider?.value;
+        if (info != null) {
+          try {
+            m['location'] = '${info.uri}';
+          } catch (_) {
+            m['location'] = '${info.location}';
+          }
+        }
+      } catch (_) {}
+    }
+    // Flutter's red (debug) error box: a build threw.
+    if (uict.find.byType(uic.ErrorWidget).evaluate().isNotEmpty) m['errorWidget'] = true;
+    final scaffolds = uict.find.byType(uic.Scaffold).hitTestable().evaluate().toList();
+    if (scaffolds.isNotEmpty) {
+      final name = uic.ModalRoute.of(scaffolds.last)?.settings.name;
+      if (name != null) m['routeName'] = name;
+    }
+  } catch (e) {
+    m['placeError'] = '$e'.split('\n').first;
+  }
+  return m;
+}
+
+Map<String, Object?> _error(uicf.FlutterErrorDetails d) {
+  var full = '';
+  try {
+    full = d.toString();
+  } catch (_) {
+    full = d.exceptionAsString();
+  }
+  final lines =
+      d.exceptionAsString().split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
+  final r = <String, Object?>{
+    'phase': _phase,
+    'summary': lines.isEmpty ? '' : lines.first,
+    'library': d.library,
+  };
+  final loc = _location(full);
+  if (loc != null) {
+    r['where'] = loc;
+  } else if (d.stack != null) {
+    final f = RegExp('package:' + RegExp.escape(_package) + r'/([^\s:)]+):(\d+)').firstMatch('${d.stack}');
+    if (f != null) r['where'] = <String, Object?>{'file': 'lib/${f.group(1)}', 'line': int.parse(f.group(2)!)};
+  }
+  return r;
+}
+
+// ---------------------------------------------------------------- the run
+Future<void> _pass(uict.WidgetTester tester, String key, double w, bool dark, double scale) async {
+  // Errors while the app animates to the new size or brightness are tagged ':settle': an overflow
+  // in a layout transition is not one in the layout it lands in.
+  _phase = '$key:settle';
+  tester.view.physicalSize = uicui.Size(w * 2, _height(w) * 2);
+  tester.platformDispatcher.platformBrightnessTestValue = dark ? uicui.Brightness.dark : uicui.Brightness.light;
+  tester.platformDispatcher.textScaleFactorTestValue = scale;
+  await _settle(tester, key);
+  // A RenderFlex reports its overflow once in its life; reassembling the render tree re-arms that,
+  // so the frame below reports every overflow of the settled layout, and only those.
+  _phase = key;
+  tester.binding.renderViews.first.reassemble();
+  await tester.pump();
+  (_report['passes'] as List<Object?>).add(await _measure(tester, key, w, dark, scale));
+  _write();
+}
+
+void main() {
+  uict.setUpAll(() async {
+    await _loadFonts();
+  });
+  uict.testWidgets('ui-craft render', (uict.WidgetTester tester) async {
+    final errors = _report['errors'] as List<Object?>;
+    final previous = uicf.FlutterError.onError;
+    uicf.FlutterError.onError = (uicf.FlutterErrorDetails d) => errors.add(_error(d));
+    uic.WidgetsApp.debugAllowBannerOverride = false;
+    uic.debugDisableShadows = false;
+    final semantics = tester.ensureSemantics();
+    tester.view.devicePixelRatio = 2;
+    tester.view.physicalSize = uicui.Size(_widths.first * 2, _height(_widths.first) * 2);
+    tester.platformDispatcher.platformBrightnessTestValue =
+        _darkFirst ? uicui.Brightness.dark : uicui.Brightness.light;
+    // A widget test answers every HTTP request with 400; --network lets images and APIs load.
+    if (_network) uicio.HttpOverrides.global = null;
+    try {
+      _phase = 'start';
+      await _mocks();
+      await _start(tester);
+      await _settle(tester, 'start');
+      await _open(tester);
+      final order = _darkFirst ? <bool>[true, false] : <bool>[false, true];
+      for (final dark in order) {
+        if (dark && !_dark) continue;
+        for (final w in _widths) {
+          await _pass(tester, dark ? '${w.toInt()}-dark' : '${w.toInt()}', w, dark, 1.0);
+        }
+      }
+      if (_textScale) await _pass(tester, '${_widths.first.toInt()}-text200', _widths.first, _darkFirst, 2.0);
+    } catch (e, st) {
+      final f = RegExp('package:' + RegExp.escape(_package) + r'/([^\s:)]+):(\d+)').firstMatch('$st');
+      _report['crash'] = <String, Object?>{
+        'phase': _phase,
+        'error': '$e'.split('\n').where((l) => l.trim().isNotEmpty).take(2).join(' '),
+        if (f != null) 'where': <String, Object?>{'file': 'lib/${f.group(1)}', 'line': int.parse(f.group(2)!)},
+      };
+    } finally {
+      semantics.dispose();
+      uic.debugDisableShadows = true;
+      uic.WidgetsApp.debugAllowBannerOverride = true;
+      uicf.FlutterError.onError = previous;
+      _report['done'] = true;
+      _write();
+    }
+    // Unmount the app so its timers and streams stop before the test ends.
+    try {
+      await tester.pumpWidget(const uic.SizedBox());
+      await tester.pump(const Duration(seconds: 1));
+    } catch (_) {}
+    tester.view.reset();
+    tester.platformDispatcher.clearAllTestValues();
+  }, timeout: const uict.Timeout(Duration(minutes: 8)));
+}

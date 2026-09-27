@@ -139,6 +139,9 @@ def rel(root: Path, p: Path) -> str:
 
 # --------------------------------------------------------------------- stack
 def detect_stack(root: Path) -> dict:
+    fps = flutter_pubspec(root)
+    if fps is not None:                              # Dart and Flutter: pubspec.yaml, not package.json
+        return flutter_stack(root, fps)
     pkg_path = root / "package.json"
     deps: dict[str, str] = {}
     name = None
@@ -534,6 +537,7 @@ def verdict(stack: dict, tokens: dict, fonts: dict, comps: dict, usage: dict, do
     tokens_declared = bool(tokens["theme"] or tokens["root"] or tokens.get("sass") or tokens["configExtend"])
     sh = sh or {}
     ng, mt, site, lv, rn = sh.get("ng"), sh.get("material"), sh.get("site"), sh.get("laravel"), sh.get("rn")
+    fl = sh.get("flutter")
     pages = len(sh.get("pages") or [])
     kk = sh.get("kits") or {}
     kit_list = kk.get("kits") or []
@@ -551,6 +555,8 @@ def verdict(stack: dict, tokens: dict, fonts: dict, comps: dict, usage: dict, do
         or any(k.get("uses") and sum(c for _, c in k["uses"]) >= 6 for k in kit_list)
         or bool((kk.get("styled") or {}).get("files", 0) >= 5) or bool((kk.get("modules") or {}).get("importers", 0) >= 3)
         or bool(rn and (rn["theme"]["maps"] or any(sum(c for _, c in uses) >= 6 for _, uses in rn["kits"]) or rn["usage"]["themeColors"] >= 10))
+        or bool(fl and (fl["theme"]["schemes"] or (fl["theme"]["seeds"] and not fl.get("template")) or fl["theme"]["textStyles"]
+                        or len(sh.get("widgets") or []) >= 4 or fl["usage"]["themeColorTotal"] >= 10))
     )
     lines = []
     if mt and (mt["file"] or mt["prebuilt"]):
@@ -569,6 +575,28 @@ def verdict(stack: dict, tokens: dict, fonts: dict, comps: dict, usage: dict, do
         lines.append(f"Styling: **{kk['styled']['kit']}** with a theme object — new components are styled components reading the theme")
     if kk.get("modules"):
         lines.append("Styling: **CSS Modules**, one per component — a new component gets its own module")
+    if fl:
+        th, fu = fl["theme"], fl["usage"]
+        if th["schemes"]:
+            lines.append(f"Theme: **ColorScheme `{th['schemes'][0]['name'] or '(unnamed)'}`** in `{th['schemes'][0]['file']}`"
+                         + (" (light and dark)" if th["schemes"][0]["light"] and th["schemes"][0]["dark"] else "")
+                         + " — widgets read `Theme.of(context).colorScheme`, not `Color(0x…)`")
+        elif th["seeds"] and fl.get("template"):
+            lines.append("Theme: the `flutter create` counter's seed (`Colors.deepPurple`), not a choice yet — pick the app's own direction")
+        elif th["seeds"]:
+            seed = next((x["seed"] for x in th["seeds"] if re.match(r"^#[0-9A-F]{6}", x["seed"])), "chosen at run time")
+            lines.append(f"Theme: **a seed colour ({seed})** — Material 3 generates the scheme; widgets read `colorScheme`, not literals")
+        if th["m3"] is False:
+            lines.append("Material **2** (`useMaterial3: false`): new widgets keep to it")
+        if fu["radius"]:
+            lines.append(f"Radius: **{fu['radius'][0][0]}** dominant (`BorderRadius.circular`)")
+        if fu.get("steps") and fu["stepTotal"] >= fu.get("spacingTotal", 0):
+            lines.append(f"Spacing: **`{fu['steps'][0][0].split('.')[0]}`** steps (`{fu['steps'][0][0]}` ×{fu['steps'][0][1]} most used)"
+                         f" against {fu.get('spacingTotal', 0)} bare numbers — new widgets use the steps")
+        elif fu["spacing"]:
+            lines.append(f"Spacing: **{fu['spacing'][0][0]}** most used (EdgeInsets, SizedBox)")
+        if fu["literal"] >= 10 and fu["literal"] > fu["themeColorTotal"]:
+            lines.append(f"Colour drift: {fu['literal']} literal colours in widgets against {fu['themeColorTotal']} read from the theme")
     if rn:
         for label, uses in rn["kits"]:
             lines.append(f"UI kit: **{label}** — build with its components and its theme, not hand-rolled views")
@@ -4062,6 +4090,808 @@ def md_kit_tokens(k: dict) -> list[str]:
     return out
 
 
+# ------------------------------------------------------------------ Flutter
+# A Flutter app is Dart under lib/: its pages are widgets that a router (go_router, auto_route, the
+# Navigator's named routes) or a page folder names; its look is ThemeData and a ColorScheme per
+# brightness, a TextTheme, and the numbers in EdgeInsets, SizedBox and BorderRadius. There is no DOM:
+# the renderer for it is a widget test (flutter_render.mjs) that pumps the app at each size, in light
+# and dark, saves the frames and runs Flutter's own contrast and tap-target guidelines.
+FL_WIDGET_BASE = re.compile(r"class\s+(\w+)\s+extends\s+(Stateless|Stateful|Consumer|ConsumerStateful|Hook|HookConsumer|StatelessHook)?Widget\b")
+FL_WRAPPERS = {"Builder", "FadeTransitionPage", "MaterialPage", "CupertinoPage", "CustomTransitionPage", "NoTransitionPage", "Scaffold",
+               "SafeArea", "Padding", "Center", "Container", "SizedBox", "Material", "Consumer", "BlocProvider", "ChangeNotifierProvider",
+               "Provider", "MultiProvider", "ProviderScope", "BlocBuilder", "Directionality", "Theme", "DefaultTabController", "PopScope",
+               "WillPopScope", "MaterialPageRoute", "CupertinoPageRoute", "PageRouteBuilder", "Hero", "AnimatedBuilder", "ValueListenableBuilder",
+               "ListenableBuilder", "StreamBuilder", "FutureBuilder", "LayoutBuilder", "Semantics", "Text", "Icon", "Column", "Row", "Stack"}
+FL_COLORS = {     # the Material swatches' primary (500) values, and the black / white opacities
+    "red": "#F44336", "pink": "#E91E63", "purple": "#9C27B0", "deepPurple": "#673AB7", "indigo": "#3F51B5", "blue": "#2196F3",
+    "lightBlue": "#03A9F4", "cyan": "#00BCD4", "teal": "#009688", "green": "#4CAF50", "lightGreen": "#8BC34A", "lime": "#CDDC39",
+    "yellow": "#FFEB3B", "amber": "#FFC107", "orange": "#FF9800", "deepOrange": "#FF5722", "brown": "#795548", "grey": "#9E9E9E",
+    "blueGrey": "#607D8B", "white": "#FFFFFF", "black": "#000000", "transparent": "#00000000",
+    "black87": "#000000DD", "black54": "#0000008A", "black45": "#00000073", "black38": "#00000061", "black26": "#00000042", "black12": "#0000001F",
+    "white70": "#FFFFFFB3", "white60": "#FFFFFF99", "white54": "#FFFFFF8A", "white38": "#FFFFFF62", "white30": "#FFFFFF4D", "white24": "#FFFFFF3D",
+    "white12": "#FFFFFF1F", "white10": "#FFFFFF1A",
+}
+FL_STATE = {"provider": "provider", "flutter_riverpod": "Riverpod", "hooks_riverpod": "Riverpod", "riverpod": "Riverpod", "flutter_bloc": "bloc",
+            "get": "GetX", "mobx": "MobX", "flutter_mobx": "MobX", "refena_flutter": "Refena", "signals": "signals", "redux": "Redux",
+            "flutter_redux": "Redux", "stacked": "Stacked"}
+FL_ROUTERS = {"go_router": "go_router", "auto_route": "auto_route", "beamer": "Beamer", "routemaster": "Routemaster", "get": "GetX routes",
+              "routerino": "Routerino"}
+FL_KITS = {"cupertino_icons": None, "flex_color_scheme": "FlexColorScheme", "shadcn_ui": "shadcn_ui", "forui": "Forui", "fluent_ui": "Fluent UI",
+           "macos_ui": "macos_ui", "yaru": "Yaru", "getwidget": "GetWidget", "flutter_neumorphic": "Neumorphic", "moon_design": "Moon Design"}
+
+
+def _yaml(text: str) -> dict:
+    """A pubspec's YAML: maps, lists of scalars and of maps, quoted scalars; folded blocks are skipped."""
+    lines = []
+    for raw in text.splitlines():
+        s = re.sub(r"\s+#.*$", "", raw) if "#" in raw and not re.search(r"['\"][^'\"]*#", raw) else raw
+        if s.strip() and not s.strip().startswith("#"):
+            lines.append((len(s) - len(s.lstrip(" ")), s.strip()))
+
+    def scalar(v: str):
+        v = v.strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
+            return v[1:-1]
+        return v
+
+    def block(i: int, indent: int):
+        if i < len(lines) and lines[i][1].startswith("- "):
+            out = []
+            while i < len(lines) and lines[i][0] == indent and lines[i][1].startswith("- "):
+                item = lines[i][1][2:]
+                m = re.match(r"^([\w.-]+)\s*:\s*(.*)$", item)
+                if m:                                  # - family: X, followed by the map's other keys
+                    sub, i = block_map(i + 1, lines[i + 1][0] if i + 1 < len(lines) and lines[i + 1][0] > indent else indent + 2,
+                                       {m.group(1): scalar(m.group(2)) if m.group(2) else None}, first_empty=m.group(1) if not m.group(2) else None)
+                    out.append(sub)
+                else:
+                    out.append(scalar(item))
+                    i += 1
+            return out, i
+        return block_map(i, indent, {})
+
+    def block_map(i: int, indent: int, out: dict, first_empty: str | None = None):
+        if first_empty and i < len(lines) and lines[i][0] > indent - 2:
+            val, i = block(i, lines[i][0])
+            out[first_empty] = val
+        while i < len(lines) and lines[i][0] == indent and not lines[i][1].startswith("- "):
+            m = re.match(r"^([\w.-]+)\s*:\s*(.*)$", lines[i][1])
+            if not m:
+                i += 1
+                continue
+            key, val = m.group(1), m.group(2)
+            if val in (">", ">-", "|", "|-", ">+", "|+"):
+                i += 1
+                while i < len(lines) and lines[i][0] > indent:
+                    i += 1
+                out[key] = ""
+            elif val:
+                out[key] = scalar(val)
+                i += 1
+            elif i + 1 < len(lines) and lines[i + 1][0] > indent:
+                out[key], i = block(i + 1, lines[i + 1][0])
+            elif i + 1 < len(lines) and lines[i + 1][0] == indent and lines[i + 1][1].startswith("- "):
+                out[key], i = block(i + 1, indent)
+            else:
+                out[key] = None
+                i += 1
+        return out, i
+
+    try:
+        return block_map(0, lines[0][0] if lines else 0, {})[0]
+    except (IndexError, RecursionError):
+        return {}
+
+
+def flutter_pubspec(root: Path) -> dict | None:
+    """The app's pubspec when it is a Flutter app (`flutter: sdk: flutter` among the dependencies)."""
+    ps = root / "pubspec.yaml"
+    if not ps.is_file():
+        return None
+    y = _yaml(read(ps))
+    deps = y.get("dependencies") if isinstance(y.get("dependencies"), dict) else {}
+    if "flutter" not in deps and not isinstance(y.get("workspace"), list):
+        return None
+    return y
+
+
+def flutter_workspace_apps(root: Path) -> list[str]:
+    """A pub workspace, or a repository whose Flutter app is a folder or two down."""
+    y = _yaml(read(root / "pubspec.yaml")) if (root / "pubspec.yaml").is_file() else {}
+    cands = [root / w for w in y.get("workspace") or [] if isinstance(w, str)]
+    if not cands:
+        for d in sorted(root.iterdir()) if root.is_dir() else []:
+            if d.is_dir() and not d.name.startswith(".") and d.name not in SKIP_DIRS:
+                cands += [d] + [e for e in sorted(d.iterdir()) if e.is_dir() and not e.name.startswith(".") and e.name not in SKIP_DIRS]
+    out = []
+    for d in cands:
+        ps = d / "pubspec.yaml"
+        if ps.is_file() and (d / "lib").is_dir():
+            deps = _yaml(read(ps)).get("dependencies") or {}
+            if isinstance(deps, dict) and "flutter" in deps and ((d / "lib" / "main.dart").is_file() or any((d / "lib").glob("main*.dart"))):
+                out.append(os.path.relpath(d, root))
+    return out
+
+
+def _dart_files(root: Path) -> list[Path]:
+    lib = root / "lib"
+    return sorted(p for p in lib.rglob("*.dart") if not set(p.relative_to(root).parts) & SKIP_DIRS
+                  and not re.search(r"\.(g|freezed|gr|config|mocks|gen)\.dart$", p.name)) if lib.is_dir() else []
+
+
+def _fl_color(expr: str, consts: dict[str, str], depth: int = 0) -> str | None:
+    """A Dart colour expression as a hex: Color(0xFF101010), Color.fromARGB/RGBO, Colors.blue, a const that holds one."""
+    e = expr.strip().rstrip(",").strip()
+    e = re.sub(r"^const\s+", "", e)
+    m = re.match(r"^Color\(\s*0x([0-9a-fA-F]{8})\s*\)$", e)
+    if m:
+        h = m.group(1).upper()
+        return f"#{h[2:]}" + ("" if h[:2] == "FF" else h[:2])
+    m = re.match(r"^Color\.fromARGB\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$", e)
+    if m:
+        a, r, g, b = (int(x) for x in m.groups())
+        return f"#{r:02X}{g:02X}{b:02X}" + ("" if a == 255 else f"{a:02X}")
+    m = re.match(r"^Color\.fromRGBO\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)$", e)
+    if m:
+        r, g, b = (int(x) for x in m.groups()[:3])
+        a = round(float(m.group(4)) * 255)
+        return f"#{r:02X}{g:02X}{b:02X}" + ("" if a == 255 else f"{a:02X}")
+    m = re.match(r"^(?:Colors|CupertinoColors)\.(\w+)$", e)
+    if m:
+        return FL_COLORS.get(m.group(1))
+    if depth < 4 and e in consts:
+        return _fl_color(consts[e], consts, depth + 1)
+    m = re.match(r"^(\w+)\.(\w+)$", e)
+    if m and depth < 4 and m.group(2) in consts and m.group(1)[:1].isupper():
+        return _fl_color(consts[m.group(2)], consts, depth + 1)
+    return None
+
+
+def _fl_hex_css(h: str) -> str:
+    """#RRGGBBAA (Dart's alpha last here) as a CSS colour the contrast helper reads."""
+    if len(h) == 9:
+        return f"rgba({int(h[1:3], 16)}, {int(h[3:5], 16)}, {int(h[5:7], 16)}, {round(int(h[7:9], 16) / 255, 3)})"
+    return h
+
+
+def _fl_consts(files: list[Path]) -> dict[str, str]:
+    """Every `static const name = …` and top-level `const name = …` in lib/, by name (the last one wins)."""
+    out: dict[str, str] = {}
+    for p in files:
+        t = _no_comments(read(p, 300_000))
+        for m in re.finditer(r"(?:static\s+)?(?:const|final)\s+(?:Color\s+|double\s+|int\s+)?(\w+)\s*=\s*", t):
+            j = m.end()
+            depth, k = 0, j
+            while k < len(t):
+                ch = t[k]
+                if ch in "([{":
+                    depth += 1
+                elif ch in ")]}":
+                    if depth == 0:
+                        break
+                    depth -= 1
+                elif ch == ";" and depth == 0:
+                    break
+                k += 1
+            out[m.group(1)] = t[j:k].strip()
+    return out
+
+
+def flutter_theme(root: Path, files: list[Path], consts: dict[str, str]) -> dict:
+    """ThemeData and ColorScheme: literal schemes per brightness, seeds, the TextTheme's coloured styles, extensions."""
+    schemes, seeds, text_styles, extensions, cupertino = [], [], [], [], []
+    palettes, scales = [], []
+    m3 = None
+    for p in files:
+        t = _no_comments(read(p, 300_000))
+        # A class of constants: colours (AppColors) or sizes (Dimens, Spacing, AppRadius)
+        for cm in re.finditer(r"(?:abstract\s+)?(?:final\s+)?class\s+(\w+)[^{]*\{", t):
+            body = _balanced(t, cm.end() - 1)
+            vals = re.findall(r"static\s+const\s+(?:\w+\s+)?(\w+)\s*=\s*([^;]+);", body)
+            cols = [(k, _fl_color(v, consts)) for k, v in vals]
+            cols = [(k, c) for k, c in cols if c]
+            nums = [(k, v.strip()) for k, v in vals if re.match(r"^[\d.]+$", v.strip())]
+            if len(cols) >= 3:
+                palettes.append({"file": rel(root, p), "name": cm.group(1), "colors": cols[:16]})
+            if len(nums) >= 2 and re.search(r"Dimen|Spac|Size|Inset|Gap|Radi|Padding|Margin|Layout|Breakpoint", cm.group(1)):
+                scales.append({"file": rel(root, p), "name": cm.group(1),
+                               "values": [(k, v.rstrip("0").rstrip(".") if "." in v else v) for k, v in nums[:12]]})
+        if "ColorScheme" not in t and "ThemeData" not in t and "TextTheme" not in t and "ThemeExtension" not in t:
+            continue
+        for m in re.finditer(r"(?:\bColorScheme|\bcolorScheme\s*:\s*(?:const\s+)?(?=\.))(\.(?:light|dark|highContrastLight|highContrastDark))?\s*\(", t):
+            body = _balanced(t, m.end() - 1)
+            fl = _fields(body)
+            colors = [(k, _fl_color(v, consts)) for k, v in fl.items() if k not in ("brightness",)]
+            colors = [(k, v) for k, v in colors if v]
+            bright = "dark" if (m.group(1) or "").lower().endswith("dark") or re.search(r"(?:Brightness)?\.dark\b", fl.get("brightness") or "") else "light"
+            before = t[max(0, m.start() - 120):m.start()]
+            name = (re.findall(r"(\w+)\s*=\s*(?:const\s+)?$", before) or re.findall(r"(\w+)\s*:\s*(?:const\s+)?$", before) or [""])[-1]
+            if len(colors) >= 2:
+                schemes.append({"file": rel(root, p), "name": name, "brightness": bright, "colors": colors})
+        for m in re.finditer(r"(?:\bColorScheme|\bcolorScheme\s*:\s*(?:const\s+)?)\.fromSeed\s*\(", t):   # `.fromSeed(` is Dart's dot shorthand
+            fl = _fields(_balanced(t, m.end() - 1))
+            seed = _fl_color(fl.get("seedColor", ""), consts)
+            seeds.append({"file": rel(root, p), "seed": seed or (fl.get("seedColor") or "?")[:40],
+                          "brightness": "dark" if re.search(r"(?:Brightness)?\.dark\b", fl.get("brightness") or "") else "light"})
+        for m in re.finditer(r"\bcolorSchemeSeed\s*:\s*([^,)\n]+)", t):
+            seeds.append({"file": rel(root, p), "seed": _fl_color(m.group(1), consts) or m.group(1).strip()[:40], "brightness": "?"})
+        for m in re.finditer(r"\bprimarySwatch\s*:\s*([^,)\n]+)", t):
+            seeds.append({"file": rel(root, p), "seed": (_fl_color(m.group(1), consts) or m.group(1).strip()) + " (a Material 2 swatch)", "brightness": "?"})
+        um = re.search(r"useMaterial3\s*:\s*(true|false)", t)
+        if um:
+            m3 = um.group(1) == "true"
+        for m in re.finditer(r"\bTextTheme\s*\(", t):
+            for style, v in _fields(_balanced(t, m.end() - 1)).items():
+                sm = re.match(r"^(?:const\s+)?TextStyle\s*\(", v)
+                if not sm:
+                    continue
+                sf = _fields(_balanced(v, sm.end() - 1))
+                text_styles.append({"style": style, "size": sf.get("fontSize"), "weight": (sf.get("fontWeight") or "").replace("FontWeight.", ""),
+                                    "color": _fl_color(sf.get("color", ""), consts), "file": rel(root, p)})
+        extensions += re.findall(r"class\s+(\w+)\s+extends\s+ThemeExtension<", t)
+        for m in re.finditer(r"\bCupertinoThemeData\s*\(", t):
+            fl = _fields(_balanced(t, m.end() - 1))
+            c = _fl_color(fl.get("primaryColor", ""), consts)
+            cupertino.append({"file": rel(root, p), "primary": c or (fl.get("primaryColor") or "")[:30]})
+    # A light and a dark literal scheme side by side: by their names (lightColorScheme / darkColorScheme) or their brightness.
+    pairs, used = [], set()
+    for i, a in enumerate(schemes):
+        if i in used or a["brightness"] != "light":
+            continue
+        base = re.sub(r"(?i)light", "", a["name"])
+        j = next((j for j, b in enumerate(schemes) if j not in used and j != i and b["brightness"] == "dark"
+                  and (re.sub(r"(?i)dark", "", b["name"]) == base or b["file"] == a["file"])), None)
+        used.add(i)
+        if j is not None:
+            used.add(j)
+        pairs.append({"file": a["file"], "name": a["name"] + (f" / {schemes[j]['name']}" if j is not None else ""),
+                      "light": a["colors"], "dark": schemes[j]["colors"] if j is not None else []})
+    pairs += [{"file": b["file"], "name": b["name"], "light": [], "dark": b["colors"]} for k, b in enumerate(schemes) if k not in used]
+    return {"schemes": pairs[:3], "seeds": list({(s["seed"], s["brightness"]): s for s in seeds}.values())[:4], "textStyles": text_styles[:14],
+            "extensions": list(dict.fromkeys(extensions))[:6], "m3": m3, "cupertino": cupertino[:2], "palettes": palettes[:3], "scales": scales[:4]}
+
+
+def flutter_scheme_contrast(pair: dict, text_styles: list[dict]) -> list[str]:
+    """onX on X for each literal scheme, and each TextTheme style that sets its own colour, against the surface."""
+    out = []
+    light, dark = dict(pair["light"]), dict(pair["dark"])
+    on = []
+    for k in [k for k in dict.fromkeys(list(light) + list(dark)) if re.match(r"^on[A-Z]", k)]:
+        base = k[2].lower() + k[3:]
+        a = _rn_contrast(_fl_hex_css(light[k]), _fl_hex_css(light[base])) if k in light and base in light else None
+        b = _rn_contrast(_fl_hex_css(dark[k]), _fl_hex_css(dark[base])) if k in dark and base in dark else None
+        if a is None and b is None:
+            continue
+        on.append(f"{k} on {base} {a if a is not None else '—'} / {b if b is not None else '—'}"
+                  + (" ✗" if (a is not None and a < 4.5) or (b is not None and b < 4.5) else ""))
+    if on:
+        out.append("content on its colour (light / dark, 4.5:1 for text): " + " · ".join(on[:6]))
+    # the secondary roles on the surface: onSurfaceVariant is text (4.5:1), outline a border (3:1)
+    side = []
+    for k, need in (("onSurfaceVariant", 4.5), ("outline", 3.0)):
+        a = _rn_contrast(_fl_hex_css(light[k]), _fl_hex_css(light["surface"])) if k in light and "surface" in light else None
+        b = _rn_contrast(_fl_hex_css(dark[k]), _fl_hex_css(dark["surface"])) if k in dark and "surface" in dark else None
+        if a is not None or b is not None:
+            side.append(f"{k} on surface {a if a is not None else '—'} / {b if b is not None else '—'} ({need:g}:1)"
+                        + (" ✗" if (a is not None and a < need) or (b is not None and b < need) else ""))
+    if side:
+        out.append("secondary roles on the surface (light / dark): " + " · ".join(side))
+    styled = []
+    for s in text_styles:
+        if not s["color"]:
+            continue
+        a = _rn_contrast(_fl_hex_css(s["color"]), _fl_hex_css(light["surface"])) if "surface" in light else None
+        b = _rn_contrast(_fl_hex_css(s["color"]), _fl_hex_css(dark["surface"])) if "surface" in dark else None
+        if a is None and b is None:
+            continue
+        need = 3 if s["size"] and re.match(r"^[\d.]+$", s["size"]) and float(s["size"]) >= 24 else 4.5
+        styled.append(f"{s['style']} {s['color']} on surface {a if a is not None else '—'} / {b if b is not None else '—'}"
+                      + (" ✗" if (a is not None and a < need) or (b is not None and b < need) else ""))
+    if styled:
+        out.append("TextTheme styles with their own colour (light / dark surface): " + " · ".join(styled[:5]))
+    return out
+
+
+def _fl_class_index(files: list[Path]) -> dict[str, Path]:
+    idx: dict[str, Path] = {}
+    for p in files:
+        for name, _ in FL_WIDGET_BASE.findall(read(p, 300_000)):
+            idx.setdefault(name, p)
+    return idx
+
+
+def _fl_screen_of(body: str, idx: dict[str, Path]) -> str | None:
+    """The first of the app's own widgets a builder returns, past wrappers (Builder, a transition page, Scaffold)."""
+    for name in re.findall(r"(?<![\w.])(?:const\s+)?([A-Z]\w*)\s*(?:<[^>]{0,40}>)?\s*\(", body):
+        if name in idx and name not in FL_WRAPPERS:
+            return name
+    return None
+
+
+def _fl_path(v: str | None, consts: dict[str, str]) -> str | None:
+    if not v:
+        return None
+    s = _unquote(v.strip())
+    if s is None:
+        m = re.match(r"^(\w+)\.(\w+)$", v.strip())
+        if m and m.group(2) in consts:
+            s = _unquote(consts[m.group(2)])
+    if s is None:
+        return None
+    return re.sub(r"\$\{?(\w+)\}?", lambda k: _unquote(consts.get(k.group(1), "")) or "{" + k.group(1) + "}", s)
+
+
+def flutter_go_router(root: Path, files: list[Path], idx: dict[str, Path], consts: dict[str, str]) -> dict:
+    """go_router's tree: each GoRoute's full path and screen, the ShellRoute around it, the redirects."""
+    routes, shells, guards = [], [], []
+
+    def walk(t: str, body: str, prefix: str, shell: str | None, depth: int):
+        if depth > 8:
+            return
+        for el in _split_top(body):
+            m = re.match(r"^(?:const\s+)?(GoRoute|ShellRoute|StatefulShellRoute(?:\.indexedStack)?|StatefulShellBranch|TypedGoRoute)\s*\(", el)
+            if not m:
+                continue
+            fl = _fields(_balanced(el, m.end() - 1))
+            kind = m.group(1)
+            here = prefix
+            if kind == "GoRoute":
+                p = _fl_path(fl.get("path"), consts)
+                if p is not None:
+                    here = p if p.startswith("/") else _join_route(prefix, p)
+            builder = fl.get("builder") or fl.get("pageBuilder") or ""
+            screen = _fl_screen_of(builder, idx) if builder else None
+            new_shell = shell
+            if kind.startswith(("ShellRoute", "StatefulShellRoute")) and screen:
+                new_shell = screen
+                shells.append(screen)
+            elif kind == "GoRoute":
+                routes.append({"path": here, "screen": screen, "shell": shell, "redirect": "redirect" in fl})
+            sub = fl.get("routes") or fl.get("branches")
+            if sub and sub.startswith("["):
+                walk(t, _balanced(sub, 0), here, new_shell, depth + 1)
+
+    for p in files:
+        t = _no_comments(read(p, 300_000))
+        for m in re.finditer(r"\bGoRouter\s*\(", t):
+            fl = _fields(_balanced(t, m.end() - 1))
+            if fl.get("redirect"):
+                red = fl["redirect"]
+                if re.match(r"^\w+$", red):                # redirect: _redirect — the function's body
+                    fm = re.search(r"(?:^|\n)[\w<>?, ]*\b" + re.escape(red) + r"\s*\([^)]*\)\s*(?:async\s*)?\{", t)
+                    red = _balanced(t, fm.end() - 1) if fm else red
+                dests = list(dict.fromkeys(re.findall(r"return\s+['\"]([^'\"]+)['\"]", red) + re.findall(r"return\s+(\w+\.\w+)\s*;", red)))
+                dests = [_fl_path(d if d.startswith(("'", '"')) or "." in d else f"'{d}'", consts) or d for d in dests]
+                guards.append({"file": rel(root, p), "to": dests})
+            rs = fl.get("routes", "")
+            if rs.startswith("["):
+                walk(t, _balanced(rs, 0), "/", None, 0)
+            elif re.match(r"^\$?\w+$", rs):                # routes: $appRoutes (go_router_builder) or a list elsewhere
+                lm = re.search(r"(?:final|const|var)\s+(?:List<\w+>\s+)?" + re.escape(rs.lstrip("$")) + r"\s*=\s*(?:<\w+>)?\[", t)
+                if lm:
+                    walk(t, _balanced(t, lm.end() - 1), "/", None, 0)
+    return {"routes": routes, "shells": list(dict.fromkeys(shells)), "guards": guards}
+
+
+def flutter_named_routes(root: Path, files: list[Path], idx: dict[str, Path], consts: dict[str, str]) -> list[dict]:
+    """The Navigator's routes: MaterialApp(routes: {'/': (c) => Home()}), onGenerateRoute's cases, home:."""
+    out = []
+    for p in files:
+        t = _no_comments(read(p, 300_000))
+        for m in re.finditer(r"\b(?:Material|Cupertino|Widgets)App\s*\(", t):
+            fl = _fields(_balanced(t, m.end() - 1))
+            if fl.get("home"):
+                s = _fl_screen_of(fl["home"], idx)
+                if s:
+                    out.append({"path": "/ (home)", "screen": s, "shell": None, "redirect": False})
+            r = fl.get("routes", "")
+            if r.startswith("{"):
+                for part in _split_top(_balanced(r, 0)):
+                    km = re.match(r"^\s*(['\"][^'\"]*['\"]|\w+\.\w+)\s*:\s*(.*)$", part, re.S)
+                    if km:
+                        out.append({"path": _fl_path(km.group(1), consts) or km.group(1), "screen": _fl_screen_of(km.group(2), idx),
+                                    "shell": None, "redirect": False})
+        for m in re.finditer(r"case\s+(['\"][^'\"]+['\"]|\w+\.\w+)\s*:\s*(?:return\s+)?(?:MaterialPageRoute|CupertinoPageRoute|PageRouteBuilder)", t):
+            body = t[m.end():m.end() + 300]
+            out.append({"path": _fl_path(m.group(1), consts) or m.group(1), "screen": _fl_screen_of(body, idx), "shell": None, "redirect": False})
+    return out
+
+
+def flutter_auto_route(root: Path, files: list[Path], idx: dict[str, Path], consts: dict[str, str]) -> list[dict]:
+    """auto_route: `@RoutePage()` screens, with the paths `AutoRoute(page: XRoute.page, path: …)` gives them."""
+    pages = {}
+    for p in files:
+        t = read(p, 300_000)
+        for name in re.findall(r"@RoutePage(?:<[^>]*>)?\([^)]*\)\s*class\s+(\w+)", t):
+            pages[re.sub(r"(Screen|Page|View)$", "", name) + "Route"] = name
+    out = []
+    for p in files:
+        t = _no_comments(read(p, 300_000))
+        for m in re.finditer(r"\b\w*AutoRoute\s*\(", t):
+            fl = _fields(_balanced(t, m.end() - 1))
+            pm = re.match(r"^(\w+)\.page$", fl.get("page", ""))
+            if pm and pm.group(1) in pages:
+                out.append({"path": _fl_path(fl.get("path"), consts) or f"({pm.group(1)})", "screen": pages[pm.group(1)], "shell": None,
+                            "redirect": "guards" in fl})
+    for route, name in pages.items():
+        if not any(r["screen"] == name for r in out):
+            out.append({"path": f"({route})", "screen": name, "shell": None, "redirect": False})
+    return out
+
+
+def _fl_signals(t: str) -> list[str]:
+    sig = []
+    n = len(re.findall(r"\b(?:TextField|TextFormField|CupertinoTextField|DropdownButton\w*|DropdownMenu|Checkbox|Switch|Radio|Slider|"
+                       r"CupertinoSwitch|SegmentedButton|DatePickerDialog|showDatePicker)\s*[<(]", t))
+    if n:
+        sig.append(f"{n} field{'s' if n > 1 else ''}")
+    if re.search(r"\bForm\s*\(", t):
+        sig.append("form")
+    if re.search(r"\b(?:DataTable|Table|PaginatedDataTable)\s*\(", t):
+        sig.append("table")
+    elif re.search(r"\b(?:ListView|GridView|SliverList|SliverGrid|CustomScrollView|ReorderableListView)(?:\.\w+)?\s*\(", t):
+        sig.append("list")
+    if re.search(r"\b(?:showDialog|showModalBottomSheet|showCupertinoDialog|showCupertinoModalPopup|AlertDialog|SimpleDialog)\b", t):
+        sig.append("dialog")
+    chrome = [w for w in ("AppBar", "SliverAppBar", "NavigationBar", "NavigationRail", "BottomNavigationBar", "TabBar", "Drawer", "FloatingActionButton",
+                          "CupertinoNavigationBar", "CupertinoTabBar") if re.search(r"\b" + w + r"\s*[.(]", t)]
+    if chrome:
+        sig.append(", ".join(chrome[:3]))
+    return sig
+
+
+def _fl_components(t: str, idx: dict[str, Path], own: Path) -> list[str]:
+    used = [n for n in dict.fromkeys(re.findall(r"(?<![\w.])(?:const\s+)?([A-Z]\w*)\s*\(", t)) if n in idx and idx[n] != own]
+    return used[:6]
+
+
+def flutter_pages(root: Path, files: list[Path], deps: dict, consts: dict[str, str]) -> dict:
+    idx = _fl_class_index(files)
+    gr = flutter_go_router(root, files, idx, consts) if "go_router" in deps else {"routes": [], "shells": [], "guards": []}
+    routes = gr["routes"] or (flutter_auto_route(root, files, idx, consts) if "auto_route" in deps else []) or flutter_named_routes(root, files, idx, consts)
+    by_screen: dict[str, list[dict]] = {}
+    for r in routes:
+        if r["screen"]:
+            by_screen.setdefault(r["screen"], []).append(r)
+    pages = []
+    if len(by_screen) >= 2 or (by_screen and not any(re.search(r"(?:^|/)(pages|screens|views)/|_(page|screen)\.dart$", rel(root, p)) for p in files)):
+        for name, rs in by_screen.items():
+            f = idx[name]
+            t = read(f, 200_000)
+            paths = list(dict.fromkeys(r["path"] for r in rs))
+            rec = {"file": rel(root, f), "lines": t.count("\n") + 1, "signals": _fl_signals(t), "classes": [],
+                   "components": _fl_components(t, idx, f), "renders": None,
+                   "route": ", ".join(f"`{x}`" for x in paths[:3]) + (f" and {len(paths) - 3} more" if len(paths) > 3 else "") + f" · {name}",
+                   "routeGuards": []}
+            shell = next((r["shell"] for r in rs if r["shell"]), None)
+            if shell and shell in idx:
+                st = read(idx[shell], 200_000)
+                rec["inside"] = {"name": shell, "file": rel(root, idx[shell]), "lines": st.count("\n") + 1, "holder": "`child`"}
+            signin = [d for d in (gr["guards"][0]["to"] if gr["guards"] else []) if re.search(r"log-?in|sign|auth|welcome|onboard", d, re.I)]
+            if gr["guards"] and not set(paths) & set(signin):   # the sign-in page it redirects to is not behind it
+                to = gr["guards"][0]["to"]
+                rec["routeGuards"] = ["the router's redirect" + (f" (to {', '.join(f'`{d}`' for d in to[:2])})" if to else "")]
+            pages.append(rec)
+        mode = "go_router" if gr["routes"] else "auto_route" if "auto_route" in deps and routes else "Navigator"
+    else:                                           # no route table: the page folders and the files named like pages
+        for f in files:
+            rp = rel(root, f)
+            if not re.search(r"(?:^|/)(pages|screens|views)/|_(page|screen)\.dart$", rp):
+                continue
+            t = read(f, 200_000)
+            names = [n for n, _ in FL_WIDGET_BASE.findall(t)]
+            if not names:
+                continue
+            pages.append({"file": rp, "lines": t.count("\n") + 1, "signals": _fl_signals(t), "classes": [], "components": _fl_components(t, idx, f),
+                          "renders": None, "route": f"{names[0]} (no route table)", "routeGuards": []})
+        mode = "page files"
+    return {"pages": pages[:32], "routes": [(r["path"], r["screen"] or "?") for r in routes][:30], "mode": mode, "guards": gr["guards"],
+            "shells": [s for s in gr["shells"] if s in idx], "idx": idx}
+
+
+def flutter_usage(root: Path, files: list[Path], theme_files: set[str], scales: list[dict] | None = None) -> dict:
+    """What widgets use: spacing and radius numbers, font sizes, literal colours against the theme, the Material and Cupertino widgets."""
+    spc, rad, fsz, lit, theme_col, text_ref, widgets = (collections.Counter() for _ in range(7))
+    steps = collections.Counter()           # references to a spacing scale's named steps (Insets.md)
+    scale_names = {sc["name"]: sc["file"] for sc in scales or []}
+    a11y = collections.Counter()
+    for p in files:
+        rp = rel(root, p)
+        t = _no_comments(read(p, 300_000))
+        for m in re.finditer(r"\bEdgeInsets(?:Directional)?\.(all|symmetric|only|fromLTRB|fromSTEB)\s*\(([^)]*)\)", t):
+            for v in re.findall(r"(?:^|[,:(\s])(\d+(?:\.\d+)?)(?=\s*[,)]|\s*$)", m.group(2)):
+                spc[v.rstrip("0").rstrip(".") if "." in v else v] += 1
+        # a SizedBox without a child is a gap; one with a child is that child's size
+        gaps = [v for sm in re.finditer(r"\bSizedBox\s*\(", t) for args in [_balanced(t, sm.end() - 1)]
+                if not re.search(r"\bchild\s*:", args) for v in re.findall(r"\b(?:height|width)\s*:\s*(\d+(?:\.\d+)?)\s*(?:,|$)", args)]
+        for v in gaps + re.findall(r"\bGap\s*\(\s*(\d+(?:\.\d+)?)\s*\)", t):
+            spc[v.rstrip("0").rstrip(".") if "." in v else v] += 1
+        for name, file in scale_names.items():
+            if rp != file:
+                # Insets.md, and Dimens.of(context).paddingScreen (a scale per screen size); not a call like Dimens.of(…)
+                steps.update(f"{name}.{m}" for m in re.findall(r"\b" + re.escape(name) + r"\.(?:of\(\s*\w+\s*\)\.)?([a-z]\w*)\b(?!\s*\()", t))
+        for v in re.findall(r"\b(?:BorderRadius|Radius)\.circular\s*\(\s*(\d+(?:\.\d+)?)\s*\)", t):
+            rad[v.rstrip("0").rstrip(".") if "." in v else v] += 1
+        if rp not in theme_files:             # the TextTheme's own sizes are the theme, not a widget's choice
+            for v in re.findall(r"\bfontSize\s*:\s*(\d+(?:\.\d+)?)", t):
+                fsz[v.rstrip("0").rstrip(".") if "." in v else v] += 1
+        if rp not in theme_files:
+            lit.update(re.findall(r"\bColor\(\s*0x[0-9a-fA-F]{8}\s*\)|\bColors\.\w+", t))
+        theme_col.update(re.findall(r"\bcolorScheme\.(\w+)", t))
+        text_ref.update(re.findall(r"\btextTheme\.(\w+)", t))
+        widgets.update(re.findall(r"(?<![\w.])(?:const\s+)?(ElevatedButton|FilledButton|OutlinedButton|TextButton|IconButton|FloatingActionButton|"
+                                  r"ListTile|Card|Chip|FilterChip|ChoiceChip|NavigationBar|NavigationRail|BottomNavigationBar|TabBar|AppBar|"
+                                  r"SegmentedButton|SearchBar|Badge|CupertinoButton|CupertinoListTile|CupertinoNavigationBar|CupertinoTabBar)"
+                                  r"(?:\.\w+)?\s*\(", t))
+        a11y["semantics"] += len(re.findall(r"\bSemantics\s*\(", t))
+        a11y["labels"] += len(re.findall(r"\bsemanticLabel\s*:|\bsemanticsLabel\s*:", t))
+        a11y["tooltips"] += len(re.findall(r"\btooltip\s*:", t))
+        a11y["iconButtons"] += len(re.findall(r"(?<![\w.])(?:const\s+)?IconButton(?:\.\w+)?\s*\(", t))
+        a11y["gestures"] += len(re.findall(r"(?<![\w.])(?:GestureDetector|InkWell)\s*\(", t))
+        a11y["noScale"] += len(re.findall(r"TextScaler\.noScaling|textScaleFactor\s*:\s*1(?:\.0)?\b|TextScaler\.linear\(\s*1(?:\.0)?\s*\)", t))
+        a11y["clamped"] += len(re.findall(r"withClampedTextScaling|\.clamp\(\s*(?:min|max)ScaleFactor", t))
+    return {"spacing": spc.most_common(8), "steps": steps.most_common(6), "stepTotal": sum(steps.values()), "spacingTotal": sum(spc.values()),
+            "radius": rad.most_common(5), "fontSize": fsz.most_common(6), "literal": sum(lit.values()),
+            "literalTop": lit.most_common(4), "themeColors": theme_col.most_common(6), "themeColorTotal": sum(theme_col.values()),
+            "textStyles": text_ref.most_common(6), "widgets": widgets.most_common(12), "a11y": dict(a11y)}
+
+
+def flutter_start(root: Path, ps: dict) -> dict:
+    deps = {**(ps.get("dependencies") or {}), **(ps.get("dev_dependencies") or {})} if isinstance(ps.get("dependencies"), dict) else {}
+    files = _dart_files(root)
+    consts = _fl_consts(files)
+    pg = flutter_pages(root, files, deps, consts)
+    theme = flutter_theme(root, files, consts)
+    usage = flutter_usage(root, files, {s["file"] for s in theme["schemes"] + theme["textStyles"] + theme["palettes"]}, theme["scales"])
+    before, layouts = [], []
+    app_file = None
+    app_bits = {}
+    best = -1
+    for p in files:
+        t = _no_comments(read(p, 300_000))
+        for m in re.finditer(r"\b(?:Material|Cupertino)App(?:\.router)?\s*\(", t):
+            fl = _fields(_balanced(t, m.end() - 1))
+            score = sum(k in fl for k in ("theme", "darkTheme", "themeMode", "routerConfig", "routes", "home", "localizationsDelegates", "navigatorKey")) \
+                + (3 if p.name in ("main.dart", "app.dart") else 0) - (5 if re.search(r"error|test|debug|mock", p.name) else 0)
+            if score <= best:
+                continue
+            best = score
+            app_file = rel(root, p)
+            app_bits = {"theme": fl.get("theme"), "darkTheme": fl.get("darkTheme"), "themeMode": fl.get("themeMode"),
+                        "kind": "CupertinoApp" if "CupertinoApp" in m.group(0) else "MaterialApp" + (".router" if ".router" in m.group(0) else ""),
+                        "locales": bool(fl.get("supportedLocales") or fl.get("localizationsDelegates"))}
+    main = root / "lib" / "main.dart"
+    mt = _no_comments(read(main, 200_000)) if main.is_file() else ""
+    rm = re.search(r"\brunApp\s*\(", mt)
+    root_widget = re.sub(r"\s+", " ", _balanced(mt, rm.end() - 1)).strip() if rm else None
+    if root_widget and len(root_widget) > 40:          # RefenaScope.withContainer(container: …, child: …) → its outer call
+        om = re.match(r"^(?:const\s+)?([\w.]+)\s*\(", root_widget)
+        root_widget = f"{om.group(1)}(…)" if om else root_widget[:40] + "…"
+    wraps = [w for w in re.findall(r"([A-Z]\w*)\s*\(", root_widget or "") if w in ("ProviderScope", "MultiProvider", "MultiBlocProvider", "RefenaScope",
+                                                                                   "ChangeNotifierProvider", "BlocProvider", "GetMaterialApp", "TranslationProvider")]
+    if app_file:
+        def short(e: str) -> str:
+            e = re.sub(r"\s+", " ", e).strip().replace("( ", "(").replace(" )", ")")
+            return e if len(e) <= 48 else e[:47] + "…"
+        theme_expr = f"`{short(app_bits['theme'])}`" if app_bits.get("theme") else "the default"
+        layouts.append({"file": app_file, "css": [], "fonts": [], "providers": wraps, "chrome": [], "scope": "",
+                        "scopeText": f"holds the {app_bits['kind']}, with theme {theme_expr}"
+                                     + (f" and darkTheme `{short(app_bits['darkTheme'])}`" if app_bits.get("darkTheme") else "")})
+    for s in pg["shells"]:
+        before.append(f"`{rel(root, pg['idx'][s])}` ({s}) is the shell around the routes under it: the navigation bar or rail is there")
+    for g in pg["guards"]:
+        before.append(f"`{g['file']}`: the router redirects " + (f"to {', '.join(f'`{d}`' for d in g['to'][:3])} " if g["to"] else "")
+                      + "when its check fails (a sign-in): render past it with the stored flag the check reads (`--prefs KEY=VALUE`), "
+                      "by signing in (`--enter Email=… --enter Password=… --tap 'Sign in'`), or pump the screen itself (`--widget`)")
+    prefs = sorted({k for p in files for k in re.findall(r"\b(?:prefs|preferences|sharedPreferences|_prefs|storage)\.(?:get|set)(?:String|Bool|Int|Double|StringList)?\(\s*['\"]([\w.:-]+)['\"]", read(p, 200_000))})
+    if prefs:
+        before.append("stored settings (shared_preferences keys): " + ", ".join(f"`{k}`" for k in prefs[:8])
+                      + f" — a widget test starts with none: `--prefs {prefs[0]}=…` sets one before the app starts")
+    plugins = [k for k in deps if k in ("firebase_core", "google_maps_flutter", "camera", "webview_flutter", "flutter_inappwebview", "local_auth",
+                                        "geolocator", "image_picker", "file_picker", "path_provider", "package_info_plus", "device_info_plus",
+                                        "connectivity_plus", "flutter_secure_storage", "sqflite", "isar", "hive_flutter", "shared_preferences")]
+    fonts = []
+    for fam in (ps.get("flutter") or {}).get("fonts") or [] if isinstance(ps.get("flutter"), dict) else []:
+        if isinstance(fam, dict) and fam.get("family"):
+            n = len(fam.get("fonts") or []) if isinstance(fam.get("fonts"), list) else 0
+            fonts.append(f"{fam['family']} ({n} file{'s' if n != 1 else ''})")
+    gf = sorted(set(m for p in files for m in re.findall(r"GoogleFonts\.(\w+?)(?:TextTheme)?\(", read(p, 200_000)) if m not in ("getFont", "getTextTheme", "config")))
+    ff = sorted(set(m for p in files for m in re.findall(r"fontFamily\s*:\s*['\"]([^'\"]+)['\"]", read(p, 200_000))))
+    l10n = [rel(root, p) for p in sorted((root / "lib").rglob("*.arb"))][:4] if (root / "lib").is_dir() else []
+    l10n += [rel(root, p) for p in sorted(root.glob("l10n/*.arb"))][:4] if not l10n else []
+    slang = [rel(root, p) for p in (root / "lib").rglob("strings*.g.dart")][:1] if (root / "lib").is_dir() else []
+    platform = sum(1 for p in files if re.search(r"Platform\.is(?:IOS|Android|MacOS|Windows|Linux)|kIsWeb|defaultTargetPlatform", read(p, 200_000)))
+    # `flutter create`'s counter, untouched: its seed colour is the template's, not a choice
+    template = "_incrementCounter" in mt and len(files) <= 3
+    return {"template": template, "pages": pg["pages"], "routes": pg["routes"], "mode": pg["mode"], "layouts": layouts, "stackBefore": before, "theme": theme,
+            "usage": usage, "appFile": app_file, "app": app_bits, "rootWidget": root_widget, "wraps": wraps, "plugins": plugins,
+            "fonts": fonts, "googleFonts": gf, "fontFamilies": ff, "l10n": l10n, "slang": slang, "platform": platform, "consts": len(consts)}
+
+
+def dart_fanin(root: Path, files: list[Path], pkg: str | None) -> list[dict]:
+    """The app's own files imported most, with a widget's constructor fields (its props)."""
+    counts: collections.Counter = collections.Counter()
+    for p in files:
+        t = read(p, 200_000)
+        seen = set()
+        for spec in re.findall(r"^\s*import\s+['\"]([^'\"]+)['\"]", t, re.M):
+            if pkg and spec.startswith(f"package:{pkg}/"):
+                target = root / "lib" / spec[len(f"package:{pkg}/"):]
+            elif not spec.startswith(("package:", "dart:")):
+                target = (p.parent / spec)
+            else:
+                continue
+            target = Path(os.path.normpath(target))
+            if target.is_file() and target != p and target not in seen:
+                seen.add(target)
+                counts[target] += 1
+    out = []
+    for f, n in counts.most_common(40):
+        if n < 2:
+            break
+        t = read(f, 200_000)
+        wm = FL_WIDGET_BASE.search(t)
+        if not wm:
+            continue
+        cm = re.search(r"(?:const\s+)?" + re.escape(wm.group(1)) + r"\s*\(\s*\{([^}]*)\}", t)
+        props = [x for x in re.findall(r"(?:required\s+)?this\.(\w+)", cm.group(1))] if cm else []
+        out.append({"file": rel(root, f), "importers": n, "props": props[:8]})
+        if len(out) >= 8:
+            break
+    return out
+
+
+def flutter_copy(fl: dict) -> dict:
+    dicts = []
+    for f in fl["l10n"]:
+        try:
+            n = len([k for k in json.loads(read(Path(fl["root"]) / f)).keys() if not k.startswith("@")])
+        except (json.JSONDecodeError, AttributeError, OSError):
+            n = 0
+        dicts.append((f, n))
+    libs = (["flutter_localizations (ARB files, `AppLocalizations.of(context)`)"] if fl["l10n"] else []) + (["slang (`t.…`)"] if fl["slang"] else [])
+    return {"dictionaries": dicts, "typed": None, "libs": libs, "hook": None}
+
+
+def md_flutter_lines(fl: dict) -> list[str]:
+    out = []
+    u = fl["usage"]
+    if u["widgets"]:
+        out.append("- Widgets by use (Material and Cupertino): " + " · ".join(f"{n} ×{c}" for n, c in u["widgets"][:10])
+                   + ". A match task builds with these and the app's theme (" + ("`CupertinoTheme.of(context)`" if (fl.get("appKind") or "").startswith("Cupertino")
+                                                                             else "`Theme.of(context).colorScheme`, `textTheme`") + "), not hand-rolled containers.")
+    if u["themeColors"] or u["literal"]:
+        out.append("- Colours: from the theme ×" + str(u["themeColorTotal"])
+                   + (f" ({', '.join(f'`colorScheme.{k}` ×{n}' for k, n in u['themeColors'][:4])})" if u["themeColors"] else "")
+                   + f", literals in widgets ×{u['literal']}" + (f" ({', '.join(f'`{k}` ×{n}' for k, n in u['literalTop'][:3])})" if u["literalTop"] else "")
+                   + (f"; text styles read: {', '.join(f'`{k}` ×{n}' for k, n in u['textStyles'][:4])}" if u["textStyles"] else ""))
+    a = u["a11y"]
+    bits = [f"{a.get('semantics', 0)} `Semantics`", f"{a.get('labels', 0)} semantic labels",
+            f"{a.get('tooltips', 0)} tooltip{'s' if a.get('tooltips', 0) != 1 else ''} (for {a.get('iconButtons', 0)} `IconButton`{'s' if a.get('iconButtons', 0) != 1 else ''})"]
+    if a.get("gestures"):
+        bits.append(f"{a['gestures']} `GestureDetector` / `InkWell` (a tap target with no role unless wrapped in `Semantics(button: true)`)")
+    if a.get("noScale"):
+        bits.append(f"`TextScaler.noScaling` or a text scale of 1 ×{a['noScale']}: that text ignores the user's font size")
+    out.append("- Accessibility in code: " + " · ".join(bits))
+    if fl["platform"]:
+        out.append(f"- `Platform.isIOS` / `kIsWeb` / `defaultTargetPlatform` in {fl['platform']} file{'s' if fl['platform'] > 1 else ''}: a widget test runs as Android unless told otherwise (`debugDefaultTargetPlatformOverride`)")
+    return out
+
+
+def md_flutter_tokens(fl: dict) -> list[str]:
+    out = []
+    th = fl["theme"]
+    for pair in th["schemes"]:
+        light, dark = dict(pair["light"]), dict(pair["dark"])
+        keys = list(dict.fromkeys(list(light) + list(dark)))
+        out.append(f"### ColorScheme `{pair['name'] or '(unnamed)'}` in `{pair['file']}`")
+        out.append(("- light / dark: " if light and dark else "- colours: ") + " · ".join(
+            f"{k} {light.get(k, '—')}" + (f" / {dark.get(k, '—')}" if dark else "") for k in keys[:14]) + (" …" if len(keys) > 14 else ""))
+        out += [f"- {x}" for x in flutter_scheme_contrast(pair, th["textStyles"])]
+    known = [s for s in th["seeds"] if re.match(r"^#[0-9A-F]{6}", s["seed"])]
+    for s in known:
+        out.append(f"### ColorScheme from a seed — `{s['file']}`")
+        out.append(f"- seed {s['seed']}" + (f" ({s['brightness']})" if s["brightness"] != "?" else "")
+                   + ": Material 3 generates the scheme from it, so its colours are only known when rendered (`flutter_render.mjs` measures them)")
+    if th["seeds"] and not known:
+        out.append(f"### ColorScheme from a seed chosen at run time — `{th['seeds'][0]['file']}`")
+        out.append("- the scheme is generated from a colour the app picks while running: only a render shows its colours")
+    if th["textStyles"]:
+        out.append(f"### TextTheme — `{th['textStyles'][0]['file']}`")
+        out.append("- " + " · ".join(f"{s['style']} {s['size'] or '—'}" + (f" {s['weight']}" if s['weight'] else "") + (f" {s['color']}" if s['color'] else "")
+                                     for s in th["textStyles"]))
+    for pal in th["palettes"]:
+        out.append(f"### `{pal['name']}` in `{pal['file']}`")
+        out.append("- " + " · ".join(f"{k} {v}" for k, v in pal["colors"]))
+    for sc in th["scales"]:
+        out.append(f"### `{sc['name']}` in `{sc['file']}`")
+        out.append("- " + " · ".join(f"{k} {v}" for k, v in sc["values"]))
+    if th["extensions"]:
+        out.append("### Theme extensions: " + ", ".join(f"`{e}`" for e in th["extensions"]) + " (read with `Theme.of(context).extension<T>()`)")
+    if th["cupertino"]:
+        out.append("### CupertinoThemeData — " + ", ".join(f"`{c['file']}` primary {c['primary']}" for c in th["cupertino"]))
+    return out
+
+
+def md_flutter_usage(fl: dict) -> list[str]:
+    u = fl["usage"]
+    out = []
+    if u.get("steps"):
+        out.append("- spacing from a scale: " + ", ".join(f"`{k}` ×{n}" for k, n in u["steps"]))
+    if u["spacing"]:
+        out.append(f"- spacing{' as bare numbers' if u.get('steps') else ''} (EdgeInsets, SizedBox gaps, Gap): " + ", ".join(f"{k} ×{n}" for k, n in u["spacing"]))
+    if u["radius"]:
+        out.append("- radius (BorderRadius.circular): " + ", ".join(f"{k} ×{n}" for k, n in u["radius"]))
+    if u["fontSize"]:
+        out.append("- font sizes set in widgets: " + ", ".join(f"{k} ×{n}" for k, n in u["fontSize"]))
+    return out
+
+
+FL_MOTION = {"flutter_animate": "flutter_animate", "rive": "Rive", "lottie": "Lottie", "animations": "animations"}
+
+
+def flutter_stack(root: Path, ps: dict) -> dict:
+    """detect_stack's answer for a Flutter app (or a pub workspace of them)."""
+    deps = {**(ps.get("dependencies") or {}), **(ps.get("dev_dependencies") or {})} if isinstance(ps.get("dependencies"), dict) else {}
+    is_app = "flutter" in deps and (root / "lib").is_dir()
+    env = ps.get("environment") if isinstance(ps.get("environment"), dict) else {}
+    router = next((label for key, label in FL_ROUTERS.items() if key in deps), None)
+    return {
+        "name": ps.get("name"), "depsSource": "pubspec.yaml", "framework": "Flutter" if is_app else None,
+        "router": router, "react": None, "reactNative": None, "rnWeb": None, "vue": None, "svelte": None,
+        "frameworkVersion": env.get("flutter") or None, "dartSdk": env.get("sdk"),
+        "workspaceApps": [] if is_app else flutter_workspace_apps(root), "integrations": [],
+        "tailwind": None, "tailwindMajor": None, "tailwindConfigFiles": [],
+        "ui": sorted({label for key, label in FL_KITS.items() if key in deps and label}),
+        "icons": sorted({"Cupertino icons" if k == "cupertino_icons" else "SVG assets (flutter_svg)" if k == "flutter_svg" else k for k in deps
+                         if k in ("cupertino_icons", "font_awesome_flutter", "lucide_icons", "phosphor_flutter", "flutter_svg", "hugeicons")}),
+        "motion": sorted({label for key, label in FL_MOTION.items() if key in deps}),
+        "state": sorted({label for key, label in FL_STATE.items() if key in deps}),
+        "shadcn": None, "typescript": False, "deps": {k: (v if isinstance(v, str) else "") for k, v in deps.items()},
+    }
+
+
+def flutter_start_here(root: Path, stack: dict) -> dict:
+    ps = flutter_pubspec(root) or {}
+    fl = flutter_start(root, ps)
+    fl["root"] = str(root)
+    files = _dart_files(root)
+    th, app = fl["theme"], fl["app"]
+    dark = None
+    if app:
+        tm = (app.get("themeMode") or "").strip()
+        if app.get("darkTheme"):
+            dark = ("a `darkTheme` beside the light one; " + (f"`themeMode: {tm}`" if tm else "no `themeMode`, so the device's setting picks")
+                    + ". `flutter_render.mjs` renders both, the dark one under a dark platform brightness")
+        elif app.get("theme") and re.search(r"Brightness|brightness", app.get("theme") or ""):
+            dark = "the theme is built per brightness in code; `flutter_render.mjs` renders the dark one under a dark platform brightness"
+        else:
+            dark = "no `darkTheme`: a dark device shows the light theme"
+    stack_notes = "references/stacks/flutter.md"
+    render = ("render with `node <skill>/scripts/flutter_render.mjs <project>`: a widget test starts the app through its `main()`"
+              + (f" (`{fl['rootWidget']}`)" if fl["rootWidget"] else "") + " at 375 / 768 / 1440, in light and dark and with text at 200 %, "
+              "saves the screenshots, and measures the contrast of every text, tap targets and labels, and layout overflow, each with the widget's "
+              "file and line; `--route /path` opens a route, `--tap` and `--enter` walk there, `--widget` pushes one screen")
+    before = list(fl["stackBefore"])
+    unmocked = [p for p in fl["plugins"] if p not in ("shared_preferences", "path_provider")]
+    if unmocked:
+        before.append("plugins a widget test has no platform for: " + ", ".join(f"`{p}`" for p in unmocked[:6])
+                      + " — the harness mocks shared_preferences and path_provider; others need `--setup` (answer their channel) or `--widget … --standalone`")
+    before.append(render)
+    return {
+        "vocabulary": [], "imported": dart_fanin(root, files, stack.get("name")), "pages": fl["pages"], "routes": fl["routes"],
+        "layouts": fl["layouts"], "stackBefore": before, "theme": dark, "flutter": {**{k: fl[k] for k in (
+            "theme", "usage", "mode", "fonts", "googleFonts", "fontFamilies", "platform", "rootWidget", "wraps", "appFile", "l10n", "template")},
+            "appKind": app.get("kind") if app else None},
+        "copy": flutter_copy(fl), "boot": {"files": [], "apiModule": None, "base": None}, "dev": {"proxies": [], "helpers": [], "scripts": {}},
+        "gates": [], "kits": {"kits": [], "styled": None, "modules": None}, "kitDark": bool(app.get("darkTheme")) if app else False,
+        "kitLook": True, "stackNotes": stack_notes, "kitNotes": None, "nuxtui": None, "locale": None,
+        "widgets": sorted(n for n, f in _fl_class_index(files).items() if not n.startswith("_")
+                          and {x.lower() for x in f.relative_to(root).parts[:-1]} & {"widgets", "widget", "components", "common", "shared", "core"})[:40],
+        "dartFiles": len(files),
+    }
+
+
 # ------------------------------------------------------------ React Native / Expo
 # A React Native app has no stylesheet and no HTML. Its look is a theme object (a colour map per scheme,
 # a spacing scale), StyleSheet.create in each component, or NativeWind's classes; its pages are screens in
@@ -5315,6 +6145,8 @@ def gates(root: Path, src_files: list[Path], native: bool = False) -> list[str]:
 
 
 def start_here(root: Path, src_files: list[Path], css_files: list[Path], stack: dict, deps: dict) -> dict:
+    if stack.get("framework") == "Flutter":
+        return flutter_start_here(root, stack)
     ui_files = [p for p in src_files if p.suffix in {".tsx", ".jsx", ".vue", ".svelte", ".astro", ".html", ".mdx"}]
     texts = [read(p, 200_000) for p in ui_files[:MAX_SRC_FILES]]
     ng = angular_start(root, src_files, css_files, deps) if stack.get("framework") == "Angular" else None
@@ -5462,6 +6294,8 @@ def md_start_here(sh: dict) -> list[str]:
     out += md_kit_lines(sh.get("kits") or {})
     if sh.get("rn"):
         out += md_rn_lines(sh["rn"], {})
+    if sh.get("flutter"):
+        out += md_flutter_lines(sh["flutter"])
     if sh.get("ngUsed"):
         out.append("- Used most (by selector, counted by the templates that use them): " + " · ".join(
             f"`{u['file']}` `<{u['selector']}>` ({u['templates']}" + (f"; inputs {', '.join(u['inputs'])}" if u["inputs"] else "")
@@ -5622,12 +6456,20 @@ def md(data: dict) -> str:
     site = (data.get("startHere") or {}).get("site")
     if site and (site["kits"] or site["libs"]):
         bits.append(" · ".join(x for x in (site["kits"], ", ".join(site["libs"])) if x))
-    if s["framework"] in ("Nuxt", "Vue", "SvelteKit", "Svelte", "Astro", "Angular", "Laravel", "Eleventy", "Expo", "React Native") and s.get("frameworkVersion"):
+    if s["framework"] in ("Nuxt", "Vue", "SvelteKit", "Svelte", "Astro", "Angular", "Laravel", "Eleventy", "Expo", "React Native", "Flutter") and s.get("frameworkVersion"):
         bits[-1] = bits[-1].replace(s["framework"], f"{s['framework']} {s['frameworkVersion']}", 1)
     if s.get("reactNative") and s["framework"] == "Expo":
         bits.append(f"React Native {s['reactNative']}")
     if s["framework"] in ("Expo", "React Native"):
         bits.append(f"react-native-web {s['rnWeb']}" if s.get("rnWeb") else "no react-native-web (no web build)")
+    if s.get("dartSdk"):
+        bits.append(f"Dart {s['dartSdk']}")
+    fls = (data.get("startHere") or {}).get("flutter")
+    if fls:
+        bits.append("Cupertino (`CupertinoApp`)" if (fls.get("appKind") or "").startswith("Cupertino")
+                    else "Material 2 (`useMaterial3: false`)" if fls["theme"]["m3"] is False else "Material 3")
+    if s.get("state"):
+        bits.append("state: " + ", ".join(s["state"]))
     if s["react"]:
         bits.append(f"React {s['react']}")
     if s.get("vue") and s["framework"] != "Vue":
@@ -5651,7 +6493,7 @@ def md(data: dict) -> str:
     out += ["## Stack", "- " + (" · ".join(bits) if bits else "no package.json or no recognised UI stack")]
     if s.get("workspaceApps"):
         out.append("- not an app itself; the UI apps are: " + ", ".join(f"`{a}`" for a in s["workspaceApps"]) + " — run inspect.py (and the dev server) in the one you are changing")
-    if s.get("depsSource") and s["depsSource"] != "package.json":
+    if s.get("depsSource") and s["depsSource"] not in ("package.json", "pubspec.yaml"):
         out.append(f"- dependencies read from `{s['depsSource']}` (workspace root)")
     out.append("")
     if data.get("startHere"):
@@ -5682,9 +6524,11 @@ def md(data: dict) -> str:
     kit_md = md_kit_tokens((data.get("startHere") or {}).get("kits") or {})
     rn = (data.get("startHere") or {}).get("rn")
     kit_md += md_rn_tokens(rn, Path(data["root"])) if rn else []
+    kit_md += md_flutter_tokens(fls) if fls else []
     out += kit_md
     if not (t["theme"] or t["root"] or t.get("sass") or t["configExtend"] or kit_md):
-        out.append("- none declared (no @theme, :root vars, Sass variables, or config extend)")
+        out.append("- none declared (no ColorScheme, seed colour, TextTheme or ThemeExtension: Material's defaults)" if fls
+                   else "- none declared (no @theme, :root vars, Sass variables, or config extend)")
     out.append("")
 
     # Fonts
@@ -5704,29 +6548,43 @@ def md(data: dict) -> str:
             out.append(f"- {kit['kit']} theme: " + ", ".join(kit["fonts"]))
     for line in (rn or {}).get("fonts") or []:
         out.append(f"- {line}")
+    if fls:
+        if fls["fonts"]:
+            out.append("- pubspec fonts (bundled): " + ", ".join(fls["fonts"]))
+        if fls["googleFonts"]:
+            out.append("- google_fonts: " + ", ".join(fls["googleFonts"]) + " — fetched at run time unless the files are bundled as assets (`GoogleFonts.config.allowRuntimeFetching = false`)")
+        if fls["fontFamilies"]:
+            out.append("- fontFamily set in code: " + ", ".join(fls["fontFamilies"][:6]))
     fontsource = sorted(k for k in (s.get("deps") or {}) if k.startswith("@fontsource"))
     if fontsource:
         out.append("- loaded from npm (no network needed): " + ", ".join(f"`{k}`" for k in fontsource))
     if u["fontClasses"]:
         out.append("- classes in use: " + ", ".join(f"font-{k} ×{n}" for k, n in u["fontClasses"]))
     if len(out) and out[-1] == "## Fonts":
-        out.append("- nothing explicit (system / Tailwind default stack)")
+        out.append("- nothing explicit: the platform's face (Roboto on Android and the web, San Francisco on iOS)" if fls
+                   else "- nothing explicit (system / Tailwind default stack)")
     out.append("")
 
     # Components
+    if (data.get("startHere") or {}).get("flutter") is not None:
+        c = {"primitives": [], "composed": data["startHere"].get("widgets") or []}
     out.append(f"## Components ({len(c['primitives']) + len(c['composed'])} found)")
     if c["primitives"]:
         out.append("- primitives (`ui/`): " + ", ".join(Path(p).stem for p in c["primitives"]))
     if c["composed"]:
         out.append("- composed: " + ", ".join(Path(p).stem for p in c["composed"][:40]) + (" …" if len(c["composed"]) > 40 else ""))
     if not (c["primitives"] or c["composed"]):
-        out.append("- none found in components/ ui/ primitives/ dirs")
+        out.append("- no widget classes in widgets/ components/ common/ shared/ core/" if fls else "- none found in components/ ui/ primitives/ dirs")
     out.append("")
 
     # Usage
-    out.append(f"## What the code actually uses ({u['scannedFiles']} source files)")
+    out.append(f"## What the code actually uses ({(data.get('startHere') or {}).get('dartFiles') or u['scannedFiles']} source files)")
     total = u["rawTotal"] + u["semanticTotal"]
-    if (data.get("startHere") or {}).get("kitLook") and (not s.get("tailwind") or total < 10):   # counts would match props (shadow="hover")
+    if fls:                   # Flutter: the numbers in EdgeInsets, SizedBox and BorderRadius
+        out += md_flutter_usage(fls)
+        u = {**u, "radius": [], "shadow": [], "textSize": [], "spacing": [], "arbitraryTotal": 0}
+        total = -1
+    elif (data.get("startHere") or {}).get("kitLook") and (not s.get("tailwind") or total < 10):   # counts would match props (shadow="hover")
         out.append("- not a Tailwind project: the look is the kit's theme and components above; class counts are left out")
         u = {**u, "radius": [], "shadow": [], "textSize": [], "spacing": [], "arbitraryTotal": 0}
         total = -1

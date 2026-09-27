@@ -61,3 +61,13 @@ Run them after the last render, not alongside it: `tsc --noEmit` still writes `t
 ## React Native or Expo
 
 Serve it with `npx expo start --web` (the `web` script) and render the URL once it answers; the first request bundles the app, and a load that times out is retried once. A screen behind sign-in or onboarding renders with the state the app keeps on the device put in place: `--storage 'mmkv.default\KEY=…'` for MMKV, `--storage KEY=…` for AsyncStorage (the inspector prints the keys). Without a linking config, React Navigation shows every screen at `/`: tap to the one you want with `--act`. An app without `react-native-web` cannot be rendered; `references/stacks/react-native.md` has what to check by reading.
+
+## Flutter
+
+Render it with `node <skill>/scripts/flutter_render.mjs <project>`, not `render.mjs`: Flutter draws on a canvas, and a browser audit finds no text in it. The render is a widget test. It needs the Flutter SDK, runs `flutter pub get` the first time, and takes 15–60 seconds.
+- **A screen behind sign-in or onboarding.** Either set the stored flag the redirect reads (`--prefs signed_in=true`, with the key the inspector prints), or sign in through the form: `--enter Email=… --enter Password=… --tap 'Sign in'`. Then add `--route /path`. Steps run in the order given.
+- **An app whose `main()` cannot start in a test** (Firebase, a native library, a server it waits for). Pump the screen itself: `--widget 'Screen(…)' --standalone`. It gets the app's theme and localizations; put any providers it needs in the expression.
+- **A spinner that never settles, or placeholders where images should be.** The test has no network: `--network` lets requests through where the machine can reach the host.
+- **A plugin that throws `MissingPluginException`.** Answer its channel in a `--setup` file.
+
+`references/stacks/flutter.md` has the details.

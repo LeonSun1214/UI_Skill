@@ -5,7 +5,7 @@
  * test page once. Prints one line per check and exits 1 if anything essential is missing.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -56,6 +56,20 @@ else ok('version', `${mine || '?'}${installs.length ? ` (installed: ${installs.m
 const py = spawnSync('python3', ['--version'], { encoding: 'utf8' });
 if (py.status === 0) ok('python3', (py.stdout || py.stderr).trim());
 else warn('python3', 'not found — inspect.py and contrast.py need Python 3');
+
+// flutter: only a Flutter app needs it (flutter_render.mjs); looked up, not run
+{
+  const exe = process.platform === 'win32' ? 'flutter.bat' : 'flutter';
+  const dirs = [process.env.FLUTTER_ROOT && join(process.env.FLUTTER_ROOT, 'bin'), ...(process.env.PATH || '').split(process.platform === 'win32' ? ';' : ':')].filter(Boolean);
+  const bin = dirs.map((d) => join(d, exe)).find((f) => existsSync(f));
+  if (bin) {
+    let root = dirname(dirname(bin)), version = '?';
+    try { root = dirname(dirname(realpathSync(bin))); } catch { /* keep the unresolved path */ }
+    try { version = JSON.parse(readFileSync(join(root, 'bin', 'cache', 'flutter.version.json'), 'utf8')).frameworkVersion; }
+    catch { try { version = readFileSync(join(root, 'version'), 'utf8').trim(); } catch { /* not run yet */ } }
+    ok('flutter', `SDK ${version} at ${root} (flutter_render.mjs renders Flutter apps)`);
+  } else rows.push(['–', 'flutter', 'not found — only needed to render a Flutter app (flutter_render.mjs)']);
+}
 
 // self-render
 if (pw && browserVia) {

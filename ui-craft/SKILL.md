@@ -1,14 +1,14 @@
 ---
 name: ui-craft
 metadata:
-  version: 0.17.0
+  version: 0.18.0
 description: >-
-  Build, change, and review UI in web projects (React, Vue, Svelte, Astro, Angular, Laravel Blade or plain HTML; Next.js, Nuxt, SvelteKit, Livewire, Eleventy, Jekyll; Tailwind, Bootstrap, MUI, Ant Design, Chakra, Element Plus, Vuetify, CSS-in-JS or plain CSS) and React Native / Expo apps with a render → look → measure → fix loop, so what ships is checked against a real screenshot and DOM measurements (contrast, tap targets, overflow, focus, hover, motion, dark mode), not guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even when they never say "design" or "UI". Also use it to inspect an existing project's design conventions before adding to it.
+  Build, change, and review UI in web projects (React, Vue, Svelte, Astro, Angular, Laravel Blade or plain HTML; Next.js, Nuxt, SvelteKit, Livewire, Eleventy, Jekyll; Tailwind, Bootstrap, MUI, Ant Design, Chakra, Element Plus, Vuetify, CSS-in-JS or plain CSS) and React Native / Expo or Flutter apps with a render → look → measure → fix loop, so what ships is checked against a real screenshot and measurements (contrast, tap targets, overflow, focus, hover, motion, dark mode), not guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even when they never say "design" or "UI". Also use it to inspect a project's design conventions before adding to it.
 ---
 
 # ui-craft
 
-Version 0.17.0. (An older copy of this file means the installed skill is behind the
+Version 0.18.0. (An older copy of this file means the installed skill is behind the
 repository: re-run `install.sh`; `doctor.mjs` says when that is the case.)
 
 UI work has a gap that code review can't close: the first draft always has two or
@@ -97,7 +97,9 @@ with `artisan` beside it is Laravel; a `_config.yml` with `_layouts/` is Jekyll;
 manifest are a hand-written site. `@mui/material`, `antd`, `@chakra-ui/react`, `element-plus`, `vuetify` or
 `styled-components` means the look is a theme object and the kit's components, not classes. `expo` or
 `react-native` is a React Native app: its pages are screens, its look a theme object and `StyleSheet`,
-and it renders in a browser only through react-native-web.
+and it renders in a browser only through react-native-web. A `pubspec.yaml` that depends on `flutter`
+is a Flutter app: its pages are widgets behind routes, its look a `ThemeData`, and it renders through
+`flutter_render.mjs` (a widget test), not a browser.
 
 ### 1. Inspect the project before touching it (existing projects)
 
@@ -137,7 +139,11 @@ code styles itself, and how dark mode switches. On React Native it lists the scr
 Router's files, or React Navigation's navigators with each screen's URL from the linking config
 and the auth branch it sits in), the theme's colour map with both schemes side by side and the
 contrast of its text colours, the spacing scale, the `.web.tsx` twins, and the keys the app
-keeps on the device with their names in a browser. Each stack has notes to read once (`references/stacks/<stack>.md`, named
+keeps on the device with their names in a browser. On Flutter it lists the screens (go_router,
+auto_route or named routes, with the shell and the redirect in front of each), the `ColorScheme`
+per brightness with the contrast of its pairs, the `TextTheme`'s own colours, the palette and
+spacing classes, the shared_preferences keys, and what a widget test will lack (plugins, network,
+native code). Each stack has notes to read once (`references/stacks/<stack>.md`, named
 in the output). Read the one page whose
 signals match yours (or the file it renders) and the vocabulary lines; that is
 the whole of the reading for a match task. Below it the report has the tokens the project
@@ -268,6 +274,15 @@ with `--storage-state FILE`: sign in once, not on every render) ·
 `--serial` (the viewports render side by side by default; one at a time for a dev
 server that cannot take three page loads at once).
 
+**A Flutter app** paints its own pixels (on the web, one canvas with no DOM), so it renders through
+`node <skill-dir>/scripts/flutter_render.mjs <project> --out .ui-craft/trips-1` instead: a widget test
+that starts the app through its `main()`, then at 375 / 768 / 1440, in light and dark and at 200 % text,
+saves the screenshots and measures the contrast of every text and icon, tap targets (48dp, 44pt),
+labels and layout overflow, each finding with the widget's file and line. Reach the screen with
+`--route /path`, `--prefs KEY=VALUE` (the stored flag a redirect reads), `--enter FIELD=TEXT` and
+`--tap TEXT` (in order), or `--widget 'Screen(…)'` for one screen (`--standalone` when `main()` cannot
+start in a test). Its output ends with the same kind of `Verified` block, and `--compare` works the same.
+
 It writes `contact.png` (all viewports above the fold, one image), `contact-dark.png`
 when dark mode was rendered, `<w>-fold.png`, `<w>-full.png`, `<w>-dark-fold.png`, and
 `report.json`. It prints one verdict line per viewport, the details of every FAIL
@@ -360,6 +375,7 @@ read only the section you hit.
 | Monorepo | inspect, serve and render the one app you change |
 | Next.js | render `http://localhost:PORT`, never `127.0.0.1`; `requests: none` means the data came with the HTML: start what `dev` starts instead of mocking |
 | Nuxt, Vue, SvelteKit, Astro, Angular, Laravel or a static site | the stack notes the inspector names; a kit's own defaults (Nuxt UI's faint rings, Material's faint focus tint, Starlight's theme) are inherited |
+| Flutter | `flutter_render.mjs`, not `render.mjs`; behind a sign-in: `--prefs KEY=…` with the key the inspector prints, or `--enter`/`--tap` through the form; a plugin, Firebase or native library that fails in a test: `--widget 'Screen(…)' --standalone`; `references/stacks/flutter.md` |
 | React Native or Expo | `npx expo start --web` serves it (react-native-web); a screen behind sign-in or onboarding: `--storage 'mmkv.default\KEY=…'` with the key the inspector prints; the dark pass tries a dark device on its own. No `react-native-web`: review by reading, `references/stacks/react-native.md` |
 | A component kit (MUI, Ant Design, Chakra, Element Plus, Vuetify, styled-components, CSS Modules) | `references/stacks/kits.md`, that kit's section: its faint defaults (MUI's focus ripple, Ant Design's `#91caff` ring, Element Plus's `#409eff`) are inherited, and the one-line fixes are there; dark mode through the app's own switch: `--dark-storage` with the key the inspector prints |
 
@@ -395,7 +411,7 @@ never a temp directory.
 |---|---|
 | Starting on any existing codebase | run `scripts/inspect.py` — nothing else for a match task |
 | The page won't just render (a login, a backend, a splash, a dialog, Next.js) | that section of `references/real-projects.md` |
-| A Nuxt, Vue, SvelteKit, Astro, Angular, Laravel, React Native or static-site project | `references/stacks/<stack>.md`, once (the inspector names it) |
+| A Nuxt, Vue, SvelteKit, Astro, Angular, Laravel, React Native, Flutter or static-site project | `references/stacks/<stack>.md`, once (the inspector names it) |
 | A component kit or CSS-in-JS (the inspector's `Kit notes:` line) | that section of `references/stacks/kits.md` |
 | Choosing a look, or the output feels generic | `references/anti-generic.md` |
 | Picking token values, light or dark | run `scripts/contrast.py` |

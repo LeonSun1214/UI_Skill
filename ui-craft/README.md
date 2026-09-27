@@ -3,8 +3,9 @@
 A Claude Code skill for UI work in web projects built with React, Vue, Svelte, Astro,
 Angular, Laravel Blade or plain HTML (Vite, Next.js, Nuxt, SvelteKit, Angular CLI, Livewire,
 Inertia, Eleventy, Jekyll; Tailwind, Bootstrap, MUI, Ant Design, Chakra, Element Plus, Vuetify,
-styled-components, CSS Modules or plain CSS), and in React Native / Expo apps through
-react-native-web, that **renders what it built and measures it** before calling it done.
+styled-components, CSS Modules or plain CSS), in React Native / Expo apps through
+react-native-web, and in Flutter apps through a widget test, that **renders what it built and
+measures it** before calling it done.
 
 Most UI skills give the model a database of styles and palettes. ui-craft gives it
 the three things it actually lacks: eyes (screenshots at three viewports, light and
@@ -103,7 +104,8 @@ After pulling a newer version, run the installer again: the skill Claude loads i
 copy under `~/.claude/skills`, not the repository, and `doctor` warns when that copy
 is older than the one it is run from.
 
-Requirements: Node 18+, Python 3 (standard library only), any Chromium-based browser.
+Requirements: Node 18+, Python 3 (standard library only), any Chromium-based browser; the
+Flutter SDK for rendering a Flutter app.
 Nothing is installed into your projects; render output goes to `.ui-craft/` (git-ignore it).
 
 ## Use
@@ -148,6 +150,7 @@ Verified (render.mjs · .ui-craft/pricing-2):
 | Eleventy, Jekyll | `inspect.py` reads the config (Eleventy's directories, Jekyll's `permalink` and `defaults`), each template's route, its layout chain (through directory data files and `defaults`), its includes, and the site data; Hugo is detected. Notes: `references/stacks/static.md` |
 | A component kit or CSS-in-JS | `inspect.py` reads the kit's theme where the project keeps it (MUI's `createTheme` palette, radius, fonts and overrides; Ant Design's tokens in `ConfigProvider` or umi's config and ProLayout settings; Chakra's `extendTheme` scales; Element Plus's variables and a runtime theme picker; Vuetify's themes and component defaults; a styled-components theme object and the keys components read), counts the kit's components by use, says how the code styles itself (`sx`, `styled()`, CSS Modules) and how dark mode switches, with the `--dark-storage` key (`mui-mode`, `chakra-ui-color-mode`, VueUse's `vueuse-color-scheme`, the app's own). On a React app it follows the route table (objects, `<Route>` elements, umi's `config/routes.ts`) to every page with its layout and guards. The render reads MUI's focus ripple and Vuetify's focus overlay, and says when a dark pass moved nothing instead of counting its findings twice. Notes: `references/stacks/kits.md` |
 | React Native / Expo | `npx expo start --web` serves the app through react-native-web, and the render works on it: a `Pressable` without a role (a focusable `<div>`) is counted as a control and reported as `no role`; a page that scrolls inside a ScrollView gets a full screenshot of all of it; the dark pass tries a dark device (react-native-web reads the scheme in JS) and is dropped when nothing moves; `--storage 'mmkv.default\KEY=…'` puts a session or an onboarding flag where MMKV or AsyncStorage keep it. `inspect.py` lists the screens (Expo Router's files and layouts with their redirects; React Navigation's navigators, the auth branch each screen sits in, the linking path), the theme's colour map with both schemes and the contrast of its text colours (React Navigation's and Paper's defaults filled in behind a spread), the spacing scale, `StyleSheet` numbers, fonts, the `.web.tsx` twins, and the storage keys with their names in a browser. Notes: `references/stacks/react-native.md` |
+| Flutter | `scripts/flutter_render.mjs <project>` renders it through Flutter itself (on the web Flutter draws one canvas, which a browser audit cannot read): a widget test starts the app through its `main()` with shared_preferences and path_provider mocked and the app's fonts loaded (Roboto, Material Icons, the pubspec's fonts, google_fonts' faces fetched once), and at 375 / 768 / 1440, in light and dark and at 200 % text, saves screenshots and measures the contrast of every text and icon, tap targets against 48dp and 44pt, labels on tappable nodes, and layout overflow, each finding with the widget's file and line. `--route` arrives like a deep link, `--prefs KEY=VALUE` sets the flag a redirect reads, `--enter` and `--tap` walk through a form, `--widget` pushes one screen (`--standalone` when `main()` cannot start in a test). `inspect.py` lists the screens (go_router with shells and redirects, auto_route, named routes), the `ColorScheme` per brightness with the contrast of its pairs, the `TextTheme`'s own colours, palette and spacing classes, fonts, the shared_preferences keys, and the plugins a test has no platform for. Notes: `references/stacks/flutter.md` |
 | A theme service switches dark mode | `--dark-storage theme=dark` sets the app's stored choice for the dark pass and reloads, so the app's own switch runs (a body class, a stored setting) instead of a class the render guesses; the inspector prints the flag when it finds the service |
 
 ## Scripts
@@ -161,6 +164,7 @@ All standard tools; the skill calls them, and so can you.
 | `scripts/contrast.py fg bg …` / `--css tokens.css` | WCAG ratios for pairs or a token file, light and dark side by side |
 | `scripts/verify.py <project>` | the facts a model invents: imported packages installed, icon names exported, Google Fonts families/weights real and carrying the page's language subset, `@font-face` files present |
 | `scripts/direction.py init / check --fix / write / from-css` | the brief as `brief.json`: every colour role measured light and dark, failing tokens nudged, the `@theme` block written into the CSS and `DIRECTION.md` generated so the next session inherits the decisions |
+| `scripts/flutter_render.mjs <project>` | the render for a Flutter app: a widget test with screenshots at 375/768/1440, light and dark and 200 % text, contrast of every text and icon, tap targets, labels, overflow with file and line, `contact.png`, `report.json`, the `Verified` block |
 | `scripts/harness.mjs` | component-in-isolation page for Vite + React (React only) |
 | `scripts/login-state.mjs` | capture a logged-in session for `--storage-state` |
 | `scripts/doctor.mjs` (`npm run doctor`) | is this machine ready? |
@@ -171,7 +175,7 @@ All standard tools; the skill calls them, and so can you.
 a screenshot), `constraints.md` (the rules with sources, marked measured or manual),
 `patterns.md` (what each page type owes the user), `real-projects.md` (a page that
 won't just render) and `stacks/` (what differs in a Nuxt, Vue, SvelteKit, Astro, Angular,
-Laravel, React Native or static-site project, and with a component kit).
+Laravel, React Native, Flutter or static-site project, and with a component kit).
 
 ## Evals
 
@@ -187,19 +191,25 @@ git-ignored `ui-craft-workspace/`.
 
 ## Limits
 
-- Web, and React Native through react-native-web. `render.mjs` works on any URL; `inspect.py`
+- Web, React Native through react-native-web, and Flutter through a widget test. `render.mjs` works on any URL; `inspect.py`
   understands Tailwind (v3 config or v4 `@theme`), Bootstrap and plain CSS variables, Next.js,
   Nuxt, Vue + Vite, SvelteKit, Astro, Angular, Laravel (Blade, Livewire, Inertia), Eleventy,
   Jekyll and hand-written HTML, the themes of MUI, Ant Design, Chakra, Element Plus, Vuetify,
   styled-components, Emotion and CSS Modules, and React Native (Expo Router, React Navigation,
-  theme colour maps, React Native Paper, NativeWind / Uniwind). The benchmark tasks are React
+  theme colour maps, React Native Paper, NativeWind / Uniwind) and Flutter (go_router, auto_route,
+  named routes, ThemeData and ColorScheme, Material and Cupertino). The benchmark tasks are React
   and Nuxt; the other stacks are checked on fixtures and real projects, not yet on a full task.
   A React Native app without react-native-web cannot be rendered: the inspector's contrast of
   the theme's pairs and the stack notes' checklist are what is left, and what only a phone
   shows (native tab bars, safe areas, `hitSlop`, the user's font size) is not measured. Not yet:
   Rails and Django templates, Hugo's templates, and the themes of Mantine, Naive UI, PrimeVue,
   Quasar, Ant Design Vue and Tamagui (detected, not read). The component harness is React
-  only. No Flutter or SwiftUI.
+  only. No SwiftUI yet.
+- A Flutter render is a widget test on the machine, not a phone: no network (images from the web
+  show their placeholder unless `--network` reaches the host), no plugins beyond the two it mocks,
+  no native libraries or Firebase (the app's error screen is reported as such; `--widget …
+  --standalone` renders a screen without them), and Cupertino text is drawn in Roboto. It needs
+  the Flutter SDK.
 - It measures what the DOM exposes. Text over images and gradients is reported as
   unverifiable; colour-only meaning, zoom to 200%, dragging alternatives and flashing
   are listed in `constraints.md` as manual checks.
