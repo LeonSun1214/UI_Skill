@@ -1,0 +1,32 @@
+{
+  "name": "harbour-orders",
+  "main": "expo-router/entry",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "expo start",
+    "web": "expo start --web",
+    "ios": "expo start --ios",
+    "android": "expo start --android"
+  },
+  "dependencies": {
+    "@expo-google-fonts/inter": "^0.4.1",
+    "expo": "~55.0.5",
+    "expo-font": "~55.0.4",
+    "expo-router": "~55.0.3",
+    "expo-splash-screen": "~55.0.10",
+    "expo-status-bar": "~55.0.1",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-native": "0.83.2",
+    "react-native-mmkv": "^4.0.0",
+    "react-native-reanimated": "4.2.1",
+    "react-native-safe-area-context": "~5.6.2",
+    "react-native-screens": "~4.23.0",
+    "react-native-web": "~0.21.0"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.2",
+    "@types/react": "~19.2.2"
+  }
+}

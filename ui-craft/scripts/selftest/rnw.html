@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RNW screen</title>
+<!-- react-native-web marks its stylesheet with this id; the renderer reads a page with it as React Native. -->
+<style id="react-native-stylesheet">
+  html, body { height: 100%; margin: 0; }
+  #root { display: flex; height: 100%; }
+  .screen { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .scroll { flex: 1; overflow-y: auto; min-height: 0; }
+  .text { font: 16px/1.5 system-ui, sans-serif; }
+  .row { padding: 16px; height: 120px; }
+  .pressable { cursor: pointer; padding: 12px 16px; margin: 8px 16px; min-height: 44px; box-sizing: border-box; border-radius: 8px; }
+  @keyframes enter { from { opacity: 0; } to { opacity: 1; } }
+</style>
+</head>
+<body>
+<div id="root">
+  <div class="screen" id="screen">
+    <div class="scroll">
+      <div class="text row" role="heading" aria-level="1">Orders</div>
+      <!-- a Pressable without a role: a focusable div with a pointer cursor -->
+      <div class="text pressable" tabindex="0" id="plain">Open order 1042</div>
+      <!-- the same with role="button" -->
+      <div class="text pressable" tabindex="0" role="button" id="withrole">Open order 1043</div>
+      <div class="text row">Row 1</div><div class="text row">Row 2</div><div class="text row">Row 3</div>
+      <div class="text row">Row 4</div><div class="text row">Row 5</div><div class="text row">Row 6</div>
+      <div class="text row">Row 7</div><div class="text row" id="last">Last row</div>
+    </div>
+  </div>
+</div>
+<script>
+  // Colours come from JS, the way a React Native theme hook picks Colors[scheme]: no CSS dark rule anywhere.
+  // ?nodark keeps the light colours whatever the device says (an app without a dark mode).
+  const mq = matchMedia('(prefers-color-scheme: dark)');
+  const paint = () => {
+    const dark = mq.matches && !location.search.includes('nodark');
+    const screen = document.getElementById('screen');
+    screen.style.backgroundColor = dark ? '#0b1220' : '#ffffff';
+    screen.style.color = dark ? '#f8fafc' : '#0f172a';
+    document.querySelectorAll('.pressable').forEach((p) => { p.style.backgroundColor = dark ? '#1e293b' : '#f1f5f9'; });
+  };
+  mq.addEventListener('change', paint);
+  paint();
+  // An entering animation the way Reanimated runs one on the web: a CSS animation set from JS, and only when the
+  // device does not ask for reduced motion. There is no prefers-reduced-motion rule in any stylesheet.
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) document.getElementById('last').style.animation = 'enter 400ms both';
+  // A stored flag the app reads at boot (MMKV on the web is localStorage under `mmkv.default\KEY`).
+  if (localStorage.getItem('mmkv.default\\onboarded') === 'true') document.title = 'RNW screen (onboarded)';
+</script>
+</body>
+</html>

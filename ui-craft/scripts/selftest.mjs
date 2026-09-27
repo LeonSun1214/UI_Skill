@@ -327,6 +327,26 @@ try {
     expect(/the pass moved nothing on the page/.test(r.stdout), 'the Verified block does not say so');
     return v(r).fails.join(' | ');
   });
+  await check('react-native-web: a pressable without a role, an inner scroller, the device scheme, --storage', async () => {
+    const r = await render(`${base}/rnw.html`, join(work, 'rnw'), '--storage', 'mmkv.default\\onboarded=true');
+    const a = v(r).audit, f = v(r).focus;
+    expect(a.rnw, 'not read as react-native-web');
+    expect(a.noRole.length === 1 && /#plain/.test(a.noRole[0]) && v(r).fails.includes('no role 1'), `role-less pressables: ${JSON.stringify(a.noRole)} · ${v(r).fails.join(' | ')}`);
+    expect(f.tabbed === 2, `the Tab walk reached ${f.tabbed} of the 2 pressables`);
+    expect(v(r).screenshots.scrollsInside > 0, 'the full screenshot did not grow for the inner scroller');
+    expect(v(r).dark && v(r).dark.mode === 'device scheme' && v(r).dark.themeChanged, `no device-scheme dark pass: ${JSON.stringify(v(r).dark && { mode: v(r).dark.mode, changed: v(r).dark.themeChanged })}`);
+    expect(!a.fonts.used.includes('Times New Roman'), `the body's default face read as used: ${a.fonts.used.join(', ')}`);
+    expect(a.pageTitle === 'RNW screen (onboarded)', `--storage was not set before the app's script: title ${a.pageTitle}`);
+    expect(a.motion.animatedElements === 1 && a.motion.underReduce === 0 && !v(r).warns.some((w) => /reduced-motion/.test(w)),
+      `motion honoured in script read as missing: ${JSON.stringify(a.motion)} · ${v(r).warns.join(' | ')}`);
+    return `${a.noRole[0]} · scrolls inside +${v(r).screenshots.scrollsInside}px · dark ${v(r).dark.pageColors.background} · used ${a.fonts.used.join(', ')}`;
+  });
+  await check('react-native-web without a dark mode: the tried pass is dropped', async () => {
+    const r = await render(`${base}/rnw.html?nodark`, join(work, 'rnw2'));
+    expect(!v(r).dark && v(r).darkUnchanged, `dark kept: ${JSON.stringify({ dark: !!v(r).dark, unchanged: v(r).darkUnchanged })}`);
+    expect(/tried under a dark device scheme/.test(r.stdout), 'the output does not say the pass was tried');
+    return 'dropped, and said so';
+  });
   await check('--dismiss Escape lifts the splash', async () => {
     const a = await render(`${base}/splash.html`, join(work, 's0'));
     const b = await render(`${base}/splash.html`, join(work, 's1'), '--dismiss', 'Escape');

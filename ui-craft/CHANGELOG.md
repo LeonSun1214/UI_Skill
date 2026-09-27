@@ -1,5 +1,77 @@
 # Changelog
 
+## 0.17.0 — React Native and Expo
+
+The first part of the second tier: apps whose pages are screens and whose look is a theme
+object. The inspector read an Expo app as "React 19" with no pages; Ignite's 22 files
+under `app/screens/` were its pages because of the folder's name; the React Native Paper
+example was "static HTML", greenfield. Rendering Expo Web showed what react-native-web
+hides from a web audit: a `Pressable` without a role is a `<div tabindex="0">`, which the
+Tab walk, the target and name checks and the hover probe all skipped; the page scrolls
+inside a ScrollView, so the full screenshot was one viewport tall; the colours are on a
+view, not on `<body>`, and the scheme is switched in JS, so no dark pass ran on apps that
+have one. Checked on the Expo SDK 57 template, Ignite (React Navigation, MMKV), Obytes
+(Expo Router, Uniwind), the React Native Paper example and Bluesky, and on two fixtures.
+Notes: `evals/notes/stacks-react-native.md`.
+
+- `inspect.py`, detection: Expo and React Native are frameworks, with the React Native and
+  react-native-web versions on the stack line ("no react-native-web (no web build)" when it
+  is missing); Paper, NativeWind, Uniwind, Tamagui, gluestack-ui, Unistyles, Restyle and the
+  icon and motion packages are named. Imports resolve to `.web.tsx`, `.native.tsx`, `.ios.tsx`
+  and `.android.tsx` files where no plain file exists.
+- `inspect.py`, screens: Expo Router's file routes (groups dropped, `+not-found`, `+api` routes
+  apart), each layout's navigator (stack, tabs, native tabs, drawer, one level down into a
+  component such as `<AppTabs />`) and its `<Redirect>` guards; a route file that re-exports
+  its screen is followed to it. React Navigation's navigators in the dynamic API
+  (`<Stack.Screen name component>`, `getComponent`, a render child) and the static API
+  (`screens: { … }`, `createXScreen`), nested navigators in their own files or in functions of
+  the same file, screens a shared function adds to several navigators, the branch of an auth
+  ternary each screen sits in (`shown when !signedIn`), `initialRouteName`, and each screen's
+  URL from the linking config or from a route table the app keeps itself.
+- `inspect.py`, the look: colour maps from theme files — `Colors.light` / `Colors.dark`, `colors`
+  in `colors.ts` beside `colorsDark.ts`, `lightTheme` / `darkTheme` — with palette references
+  resolved across files, printed with both schemes side by side, and the contrast of each text
+  colour on the background (✗ below 4.5:1) and of Material's `onX` colours on `X`. A theme
+  spread over React Navigation's or Paper's MD3 theme has that theme's values filled in; one
+  made only of library themes says so. Spacing and radius scales, and what components use:
+  `StyleSheet.create` and typed style objects, theme colours against literals, font sizes,
+  radii and spacing values. Fonts from `useFonts` (an object or a named one), the
+  `@expo-google-fonts` packages, and the expo-font plugin, which does not reach the web.
+- `inspect.py`, before a screen renders: dark mode through the device (`useColorScheme`) and a
+  stored choice, with its name in a browser (`mmkv.default\KEY`) and the `--dark-storage`
+  flag; the keys the app keeps in MMKV, AsyncStorage or SecureStore, with the `--storage` flag
+  for the session key; the `.web.tsx` twins and `Platform.OS === 'web'` branches; role and
+  label counts, `allowFontScaling={false}` and `hitSlop`; native-only modules with no web
+  version; the `web` script and Expo Web's port; no web build at all.
+- `inspect.py`, fixes on the way: comments are stripped with strings kept whole, so the `/*` in
+  a tsconfig path (`"#/*"`) no longer swallows the `paths` up to a later block comment;
+  counts that tie keep one order from run to run.
+- `render.mjs`, react-native-web: a focusable element with a pointer cursor that is no control
+  is audited as one (targets, names, focus, hover) and reported as `no role` when it has no
+  role; a role-less `Pressable` is the usual case. A page whose document does not scroll but a
+  view inside it does is scrolled there for lazy content, and its full screenshot grows the
+  viewport to show the whole view. The page's colour is taken from the outermost view that
+  covers the viewport when `<html>` and `<body>` paint none. A react-native-web page gets a dark
+  pass under a dark device scheme without a dark rule to find, reported as `device scheme`,
+  and dropped (and said so) when the page did not change. A cover made of atomic classes is
+  named by its test id or its text.
+- `render.mjs`, motion: a page that animates without a `prefers-reduced-motion` rule is loaded
+  once more under reduced motion. When its animations stop there (Reanimated's entering
+  animations, Framer Motion's `useReducedMotion`), the warning is dropped and the Motion line
+  says the setting is honoured in script.
+- `render.mjs`: `--storage K=V` sets localStorage before the page's scripts run and keeps what
+  the page writes later; the sign-in hint names it on react-native-web. The fonts line waits
+  for `document.fonts.ready` (up to 3 s) and names the faces the text is set in, not the
+  body's default. Dev servers' own sockets (Metro, Reactotron, React DevTools) are not console
+  errors.
+- `references/stacks/react-native.md`: where screens and the theme are, dark mode, serving
+  with Expo Web, storage on the web, what the render cannot see, and each finding in React
+  Native props (`role`, `accessibilityLabel`, `role="heading"`, `alt`, hover, targets); a
+  checklist for an app without a web build.
+- Self-test: a react-native-web page (a role-less pressable, an inner scroller, a scheme
+  switched in JS, `--storage`) and the same page without a dark mode (38 checks). CI: the
+  `expo-app` and `rn-nav-app` fixtures, 31 assertions.
+
 ## 0.16.0 — Component kits: MUI, Ant Design, Chakra, Element Plus, Vuetify, styled-components, CSS Modules
 
 The third part of the first tier: React and Vue projects whose look is a kit's theme, not

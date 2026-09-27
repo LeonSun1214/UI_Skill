@@ -208,6 +208,43 @@ jobs:
           grep -q ".dark. (dark): primary #4db6ac" /tmp/inspect-vuetify.txt
           grep -q "component defaults: VBtn variant flat, rounded lg" /tmp/inspect-vuetify.txt
           grep -q "render dark with .--dark-storage app-theme=dark." /tmp/inspect-vuetify.txt
+          # Expo Router: groups, a redirect guard, a route file that re-exports its screen, an API route, a light/dark
+          # colour map with its contrast, a web twin, MMKV keys and their names on the web, fonts, StyleSheet numbers
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/expo-app | tee /tmp/inspect-expo.txt | head -5
+          grep -q "Expo ~55.0.5 (Expo Router, file routes in src/app/) · React Native 0.83.2 · react-native-web ~0.21.0" /tmp/inspect-expo.txt
+          grep -q "(tabs)/index.tsx. · ./. · 26 lines · list, data: .Orders. · uses ThemedText, OrderCard · inside src/app/(tabs)/_layout.tsx (tabs) · behind a redirect to ./sign-in. when .!token." /tmp/inspect-expo.txt
+          grep -q "(tabs)/settings.tsx. · ./settings. · 2 lines .* renders SettingsScreen (.src/features/settings/settings-screen.tsx." /tmp/inspect-expo.txt
+          grep -q "sign-in.tsx. · ./sign-in. · 28 lines · 2 fields" /tmp/inspect-expo.txt
+          grep -q "API routes (.+api.): ./api/health." /tmp/inspect-expo.txt
+          grep -q "Web twins (1): .src/components/order-card.web.tsx." /tmp/inspect-expo.txt
+          grep -q "light / dark: text #0F172A / #F8FAFC · background #FFFFFF / #0B1220" /tmp/inspect-expo.txt
+          grep -q "textMuted 4.8 / 2.5 ✗" /tmp/inspect-expo.txt
+          grep -q "xs 4 · sm 8 · md 16 · lg 24 · xl 32" /tmp/inspect-expo.txt
+          grep -q "kept in MMKV .app.colorScheme. (on the web: localStorage .mmkv.default.app.colorScheme.)" /tmp/inspect-expo.txt
+          grep -q "a signed-in screen renders with that session in place: .--storage .mmkv.default.auth.token=" /tmp/inspect-expo.txt
+          grep -q "useFonts. in .src/app/_layout.tsx.: Inter_400Regular, Inter_600SemiBold" /tmp/inspect-expo.txt
+          grep -q "allowFontScaling={false}. ×1: that text ignores the user's font size" /tmp/inspect-expo.txt
+          grep -q "expo start --web. serves the app through react-native-web at :8081" /tmp/inspect-expo.txt
+          grep -q "in .src/constants/theme.ts. (light and dark)" /tmp/inspect-expo.txt
+          if grep -q "Radius: ..rounded" /tmp/inspect-expo.txt; then echo "Tailwind counts in a StyleSheet app"; exit 1; fi
+          # React Navigation without a web build: an auth ternary, tabs nested in a stack, linking paths, a Paper MD3
+          # theme filled in behind its spread, colors.ts beside colorsDark.ts, AsyncStorage, a native-only module
+          python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/rn-nav-app | tee /tmp/inspect-rnnav.txt | head -5
+          grep -q "React Native 0.82.1 (React Navigation, with a linking config) · no react-native-web (no web build)" /tmp/inspect-rnnav.txt
+          grep -q "SignInScreen.tsx. · .SignIn. · ./sign-in. · 22 lines · 2 fields · uses Text, TextInput, Button · inside Stack (stack) · shown when .!signedIn." /tmp/inspect-rnnav.txt
+          grep -q "FeedScreen.tsx. · .Feed. · ./. · 29 lines · list · uses Card, Text, FAB · inside Tab (tabs) in Stack (stack) as .Main." /tmp/inspect-rnnav.txt
+          grep -q "ProfileScreen.tsx. · .Profile. · ./me." /tmp/inspect-rnnav.txt
+          grep -q "DetailsScreen.tsx. · .Details. · ./notes/:id." /tmp/inspect-rnnav.txt
+          grep -q "React Native Paper — its components by use" /tmp/inspect-rnnav.txt
+          grep -q "primary #0B6E4F / #5DD39E" /tmp/inspect-rnnav.txt
+          grep -q "on top of: .MD3LightTheme." /tmp/inspect-rnnav.txt
+          grep -q "onPrimary on primary 6.3 / 7.1" /tmp/inspect-rnnav.txt
+          grep -q "text #1C1917 / #F7F5F2 · background #F7F5F2 / #0C0A09" /tmp/inspect-rnnav.txt
+          grep -q "textDim 7.0 / 4.1 ✗" /tmp/inspect-rnnav.txt
+          grep -q ".session.token. (AsyncStorage)" /tmp/inspect-rnnav.txt
+          grep -q "no .react-native-web. in the dependencies: the app does not run in a browser" /tmp/inspect-rnnav.txt
+          grep -q "react-native-maps. (maps) has no web version" /tmp/inspect-rnnav.txt
+          if grep -q "The renderer tries a dark device" /tmp/inspect-rnnav.txt; then echo "a dark pass promised without a web build"; exit 1; fi
           # Laravel: routes to views (Route::view, controllers, a Livewire page, Fortify), middleware from groups and
           # controllers (except, only), @extends and component layouts, Blade components, Flux, Inertia, @vite
           python3 ui-craft/scripts/inspect.py ui-craft/evals/fixtures/laravel-app | tee /tmp/inspect-laravel.txt | head -5

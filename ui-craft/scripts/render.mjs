@@ -15,7 +15,7 @@
  *   node render.mjs <url | path/to/page.html> [--out DIR] [--viewports 375,768,1440]
  *                   [--wait MS] [--wait-for SELECTOR] [--no-fold] [--dark | --no-dark] [--no-hover]
  *                   [--storage-state FILE] [--cookie k=v] [--header k:v] [--auth user:pass]
- *                   [--init-script FILE] [--mock PATTERN=FILE|JSON|STATUS] [--dismiss KEY|SELECTOR] [--compare DIR] [--strict]
+ *                   [--init-script FILE] [--storage K=V] [--mock PATTERN=FILE|JSON|STATUS] [--dismiss KEY|SELECTOR] [--compare DIR] [--strict]
  *
  * Writes  DIR/contact.png             all viewports above the fold, one image (look first)
  *         DIR/<width>-fold.png        above the fold      DIR/<width>-full.png   full page
@@ -29,7 +29,7 @@
  * version, the machine's Chrome/Edge, or the binary named by UI_CRAFT_CHROME.
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -51,6 +51,8 @@ const USAGE = `usage: node render.mjs <url | path/to/page.html> [options]
   --header k:v         extra HTTP header on every request, e.g. Authorization (repeatable)
   --auth user:pass     HTTP basic auth
   --init-script F      JS file run in every page before its scripts (seed localStorage, flags, fetch mocks)
+  --storage K=V        set localStorage K to V before the page's scripts run, unless the page has set it since: a session
+                       token, an onboarding flag (a React Native app's MMKV is localStorage under 'mmkv.default\\KEY') (repeatable)
   --mock PATTERN=X     answer requests whose URL matches PATTERN (glob or /regex/) with X: a file, an inline body
                        ('**/api/teams=[]', '**/api/config={"demo":false}') or a bare status ('**/api/auth/me=401') (repeatable)
   --dismiss X          after load, press a key (Escape, Enter) or click a selector, at 0 / 400 / 900 ms: lifts a splash, closes a cookie bar
@@ -71,7 +73,7 @@ if (!argv.length || argv.includes('--help') || argv.includes('-h')) {
   process.exit(argv.length ? 0 : 1);
 }
 const opt = { out: '.ui-craft/latest', viewports: [375, 768, 1440], wait: 500, waitFor: null, fold: true, dark: 'auto', hover: true, strict: false,
-  storageState: null, cookies: [], headers: {}, auth: null, initScript: null, mocks: [], compare: null, dismiss: null, acts: [], timings: false, serial: false,
+  storageState: null, cookies: [], headers: {}, auth: null, initScript: null, storage: [], mocks: [], compare: null, dismiss: null, acts: [], timings: false, serial: false,
   darkStorage: [], saveState: null };
 let target = null;
 for (let i = 0; i < argv.length; i++) {
@@ -90,6 +92,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--header') { const v = argv[++i]; const k = v.indexOf(':'); if (k > 0) opt.headers[v.slice(0, k).trim()] = v.slice(k + 1).trim(); }
   else if (a === '--auth') { const v = argv[++i]; const k = v.indexOf(':'); if (k > 0) opt.auth = { username: v.slice(0, k), password: v.slice(k + 1) }; }
   else if (a === '--init-script') opt.initScript = argv[++i];
+  else if (a === '--storage') { const v = argv[++i] || ''; const k = v.indexOf('='); if (k > 0) opt.storage.push([v.slice(0, k), v.slice(k + 1)]); }
   else if (a === '--mock') { const v = argv[++i]; const k = v.lastIndexOf('='); if (k > 0) opt.mocks.push({ pattern: v.slice(0, k), file: v.slice(k + 1) }); }
   else if (a === '--compare') opt.compare = argv[++i];
   else if (a === '--dismiss') opt.dismiss = argv[++i];
@@ -113,11 +116,31 @@ catch (e) { console.error(e.message); process.exit(2); }
 async function launch() { return (await launchChromium(pw)).browser; }
 void discoverChromium;
 
+// `[data-uic-clickable]` is set by the page audit on a focusable element with a pointer cursor that is no
+// control above: react-native-web renders a Pressable without a role that way (a div with tabindex=0).
 const INTERACTIVE_SELECTOR = [
   'a[href]', 'button', 'input:not([type=hidden])', 'select', 'textarea', 'summary',
   '[role=button]', '[role=link]', '[role=checkbox]', '[role=radio]', '[role=switch]',
-  '[role=tab]', '[role=menuitem]', '[role=option]',
+  '[role=tab]', '[role=menuitem]', '[role=option]', '[data-uic-clickable]',
 ].join(',');
+
+// A page whose document does not scroll but a view inside it does (react-native-web's ScrollView, an app
+// shell's main pane): mark that view, the largest one that scrolls and covers half the viewport or more,
+// and return how much taller its content is than the view. 0 when the document scrolls, or nothing does.
+function markScroller() {
+  document.querySelectorAll('[data-uic-scroller]').forEach((n) => n.removeAttribute('data-uic-scroller'));
+  if (document.documentElement.scrollHeight > innerHeight + 1) return 0;
+  let best = null, area = innerWidth * innerHeight * 0.5;
+  for (const el of document.body.querySelectorAll('*')) {
+    if (el.scrollHeight <= el.clientHeight + 1 || !/auto|scroll/.test(getComputedStyle(el).overflowY)) continue;
+    const r = el.getBoundingClientRect();
+    const a = Math.max(0, Math.min(r.right, innerWidth) - Math.max(r.left, 0)) * Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));
+    if (a >= area) { best = el; area = a; }
+  }
+  if (!best) return 0;
+  best.setAttribute('data-uic-scroller', '');
+  return best.scrollHeight - best.clientHeight;
+}
 
 // ------------------------------------------------------------ in-page audit
 // Serialized into the page: no closures over module scope, only the argument.
@@ -250,9 +273,28 @@ function domAudit(INTERACTIVE) {
 
   const all = [...document.body.querySelectorAll('*')];
 
-  // --- page colors (what a theme switch must change)
+  // --- react-native-web, and controls that are only clickable. RNW renders a Pressable without a role
+  // as a focusable div with a pointer cursor (a web `div` with onClick and tabindex is the same thing):
+  // mark it, so the target, name, focus and hover audits count it as the control it is.
+  const rnw = !!document.getElementById('react-native-stylesheet');
+  for (const el of document.querySelectorAll('[tabindex]:not([tabindex^="-"])')) {
+    if (el === document.body || el.hasAttribute('data-uic-clickable') || el.matches(INTERACTIVE)) continue;
+    if (getComputedStyle(el).cursor === 'pointer') el.setAttribute('data-uic-clickable', '');
+  }
+  const noRole = [...document.querySelectorAll('[data-uic-clickable]')].filter((el) => !el.hasAttribute('role') && visible(el));
+
+  // --- page colors (what a theme switch must change). When neither <html> nor <body> paints a colour,
+  // the page's is on the outermost element that covers the viewport (RNW puts a screen's on a view).
   const bodyCs = getComputedStyle(document.body);
-  const bodyBg = effectiveBackground(document.body);
+  const paints = (n) => { const c = toRGBA(getComputedStyle(n).backgroundColor); return !!c && c.a > 0; };
+  let bodyBg = effectiveBackground(document.body);
+  if (!paints(document.body) && !paints(document.documentElement) && getComputedStyle(document.body).backgroundImage === 'none') {
+    const cover = all.find((el) => {
+      const r = el.getBoundingClientRect();
+      return r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9 && (paints(el) || getComputedStyle(el).backgroundImage !== 'none');
+    });
+    if (cover) bodyBg = effectiveBackground(cover);
+  }
   const pageColors = {
     background: bodyBg.unverifiable ? null : rgbStr(bodyBg),
     color: (() => { const c = toRGBA(bodyCs.color); return c ? rgbStr(c) : null; })(),
@@ -529,9 +571,19 @@ function domAudit(INTERACTIVE) {
     const prev = fontMap.get(family);
     if (!prev || rank[f.status] > rank[prev.status]) fontMap.set(family, { family, status: f.status });
   });
+  const firstFamily = (el) => getComputedStyle(el).fontFamily.split(',')[0].replace(/["']/g, '').trim();
+  // The faces the text is set in, by how much text each carries: a family only <body> has (the browser's
+  // Times New Roman where every text node sits in a styled view, as in react-native-web) is not used.
+  const textFamilies = new Map();
+  for (const el of all) {
+    const own = [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent.trim()).join('');
+    if (own && visible(el)) textFamilies.set(firstFamily(el), (textFamilies.get(firstFamily(el)) || 0) + own.length);
+  }
+  const byText = [...textFamilies.entries()].sort((a, b) => b[1] - a[1]).map(([f]) => f);
   const usedFamilies = [...new Set(['body', 'h1', 'h2', 'p', 'button']
     .map((s) => document.querySelector(s)).filter(Boolean)
-    .map((el) => getComputedStyle(el).fontFamily.split(',')[0].replace(/["']/g, '').trim()))];
+    .map(firstFamily))].filter((f) => !textFamilies.size || textFamilies.has(f));
+  if (byText.length && !usedFamilies.includes(byText[0])) usedFamilies.push(byText[0]);
   const fonts = { declared: [...fontMap.values()], used: usedFamilies };
 
   // --- images, headings, landmarks, viewport
@@ -609,7 +661,7 @@ function domAudit(INTERACTIVE) {
   const alerts = [...document.querySelectorAll('[role="alert"], [role="status"], [aria-live="polite"], [aria-live="assertive"]')]
     .map((el) => (el.textContent || '').trim().replace(/\s+/g, ' ')).filter(Boolean).slice(0, 6).map((t) => t.slice(0, 80));
   const invalidFields = document.querySelectorAll('[aria-invalid="true"]').length;
-  return { pageColors, contrast, nonText, targets, unnamedControls, overflow, motion, darkSupport, fonts, imagesMissingAlt, structure, viewportMeta, bodyText, pageTitle, passwordField, devOverlay, alerts, invalidFields, ragged };
+  return { pageColors, contrast, nonText, targets, unnamedControls, noRole: noRole.map(short).slice(0, 20), rnw, overflow, motion, darkSupport, fonts, imagesMissingAlt, structure, viewportMeta, bodyText, pageTitle, passwordField, devOverlay, alerts, invalidFields, ragged };
 }
 
 // ------------------------------------------------- keyboard focus (real Tabs)
@@ -961,9 +1013,15 @@ async function focusAudit(page, max = 30) {
         addedTint,
         idx, obscured, obscuredBy: obscured ? (() => {
           let cover = onTop;          // the positioned layer or landmark that holds what is on top: the open drawer, not its logo's svg
-          for (let m = onTop; m && m !== document.body; m = m.parentElement) {
+          for (let m = onTop, branch = onTop; m && m !== document.body; branch = m, m = m.parentElement) {
+            if (m.contains(el)) { cover = branch; break; }   // above here the focused control is inside too: the cover is the branch below
             const p = getComputedStyle(m).position;
             if (p === 'fixed' || p === 'absolute' || p === 'sticky' || /^(nav|aside|header|dialog)$/i.test(m.tagName)) { cover = m; break; }
+          }
+          // react-native-web's classes are atomic hashes (css-view-g5y9jx): name its view by test id, or by what it holds.
+          if (!cover.id && /^css-(view|text)-/.test(cover.classList[0] || '')) {
+            const tid = cover.getAttribute('data-testid'), t = (cover.textContent || '').trim().replace(/\s+/g, ' ');
+            return tid ? `[data-testid="${tid}"]` : t ? `the view holding "${t.slice(0, 28)}"` : 'a view';
           }
           return cover.tagName.toLowerCase() + (cover.id ? '#' + cover.id : cover.classList.length ? '.' + cover.classList[0] : '');
         })() : null,
@@ -1052,7 +1110,7 @@ async function hoverAudit(page, max = 20) {
       if (el.closest('[aria-hidden="true"]')) return null;
       if (el.disabled || el.getAttribute('aria-disabled') === 'true') return null; // no state change owed
       const tag = el.tagName.toUpperCase();
-      const isButton = tag === 'BUTTON' || el.getAttribute('role') === 'button' || (tag === 'INPUT' && /submit|button|reset/.test(el.type));
+      const isButton = tag === 'BUTTON' || el.getAttribute('role') === 'button' || (tag === 'INPUT' && /submit|button|reset/.test(el.type)) || el.hasAttribute('data-uic-clickable');
       const host = cs.display === 'inline' && el.closest('p,li,dd,td,th,blockquote,figcaption,small');
       const inlineText = !!host && (host.innerText || '').trim().length > (el.innerText || '').trim().length + 2; // prose, not a nav item in an <li>
       if (!isButton && (tag !== 'A' || inlineText)) return null; // only buttons and standalone links
@@ -1241,6 +1299,12 @@ async function renderViewport(width) {
     await context.addCookies(opt.cookies.map((c) => ({ ...c, url })));
   }
   if (opt.initScript) await context.addInitScript({ path: opt.initScript });
+  // Set once per origin: a value the page (or --dark-storage) writes later is kept across reloads.
+  if (opt.storage.length) {
+    await context.addInitScript((kv) => {
+      for (const [k, v] of kv) { try { if (localStorage.getItem(k) === null) localStorage.setItem(k, v); } catch { /* no storage here */ } }
+    }, opt.storage);
+  }
   // `scroll-behavior: smooth` makes scrollTo() animate, so a fold screenshot taken right after
   // "scroll back to top" can land mid-way down the page. Measure with instant scrolling; the
   // page's own transitions are untouched. Dev chrome is hidden too: the error overlays (their errors
@@ -1278,7 +1342,8 @@ async function renderViewport(width) {
   const origin = (() => { try { return new URL(url).origin; } catch { return ''; } })();
   page.on('console', (m) => {
     // "Failed to load resource" carries no URL; the request/response listeners record those with one.
-    if (m.type() === 'error' && !/^Failed to load resource|WebSocket connection to '[^']*(_next\/hmr|webpack-hmr|@vite\/client|__vite_hmr|sockjs)/.test(m.text())) consoleErrors.push(m.text().slice(0, 200));
+    // Dev servers' own sockets are not the page's: HMR, and a React Native app's Metro, Reactotron (:9090) and React DevTools (:8097).
+    if (m.type() === 'error' && !/^Failed to load resource|WebSocket connection to '[^']*(_next\/hmr|webpack-hmr|@vite\/client|__vite_hmr|sockjs|:9090\/|:8097|\/hot\b|\/message\b)/.test(m.text())) consoleErrors.push(m.text().slice(0, 200));
   });
   page.on('pageerror', (e) => consoleErrors.push(`pageerror: ${String(e.message).slice(0, 200)}`));
   page.on('requestfailed', (r) => {
@@ -1339,14 +1404,24 @@ async function renderViewport(width) {
   }
   await page.waitForTimeout(opt.wait);
 
-  // Scroll through once so lazy / IntersectionObserver content mounts, then back to top.
+  // Scroll through once so lazy / IntersectionObserver content mounts, then back to top. A page that
+  // scrolls inside a view (react-native-web's ScrollView, an app shell's main pane) is scrolled there.
   if (!loadError) {
     await page.evaluate(async () => {
       const h = document.documentElement.scrollHeight;
       for (let y = 0; y < h; y += 600) { window.scrollTo(0, y); await new Promise((r) => setTimeout(r, 40)); }
       window.scrollTo(0, 0);
     });
+    if (await page.evaluate(markScroller)) {
+      await page.evaluate(async () => {
+        const sc = document.querySelector('[data-uic-scroller]');
+        for (let y = 0; sc && y < sc.scrollHeight; y += 600) { sc.scrollTop = y; await new Promise((r) => setTimeout(r, 40)); }
+        if (sc) sc.scrollTop = 0;
+      });
+    }
     await page.waitForTimeout(150);
+    // Faces a script adds after load (expo-font, a font loader) are measured loaded, not mid-flight.
+    await page.evaluate(() => Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 3000))])).catch(() => {});
   }
 
   const key = String(width);
@@ -1362,8 +1437,34 @@ async function renderViewport(width) {
     await page.screenshot({ path: foldPath });
     folds.push({ width, height, path: foldPath });
   }
-  await page.screenshot({ path: join(opt.out, `${key}-full.png`), fullPage: true });
+  // The whole page: the document's height, or — where the page scrolls inside a view — the viewport made
+  // tall enough to show all of that view's content (a flex layout grows the view with it), then put back.
+  const innerExtra = loadError ? 0 : await page.evaluate(markScroller);
+  if (innerExtra > 0) {
+    await page.setViewportSize({ width, height: Math.min(height + innerExtra, 12000) });
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: join(opt.out, `${key}-full.png`) });
+    await page.setViewportSize({ width, height });
+    await page.waitForTimeout(200);
+  } else {
+    await page.screenshot({ path: join(opt.out, `${key}-full.png`), fullPage: true });
+  }
   lap('screenshots');
+  // Motion without a reduced-motion rule may still honour the setting in script (Reanimated's entering
+  // animations, Framer Motion's useReducedMotion): load the page once more under reduced motion and count.
+  if (audit && audit.motion.animatedElements && !audit.motion.reducedMotionRule) {
+    const rp = await context.newPage();
+    try {
+      await rp.emulateMedia({ reducedMotion: 'reduce' });
+      await rp.goto(page.url(), { waitUntil: 'load', timeout: 30000 });
+      await rp.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+      await rp.waitForTimeout(opt.wait);
+      audit.motion.underReduce = await rp.evaluate(() => [...document.body.querySelectorAll('*')]
+        .filter((el) => { const cs = getComputedStyle(el); return cs.animationName && cs.animationName !== 'none'; }).length);
+    } catch { /* not measured: the warning stands */ }
+    await rp.close();
+    lap('reduced motion');
+  }
   const formState = () => (loadError ? Promise.resolve('') : page.evaluate(async () => {
     // A framework marks a field touched on its next render after blur (Angular without zone.js: a frame later).
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 50))));
@@ -1403,10 +1504,13 @@ async function renderViewport(width) {
     });
   }
 
-  // --- dark-mode pass: only when the page has a dark rule (or --dark). Same audit, new colours.
+  // --- dark-mode pass: only when the page has a dark rule (or --dark). Same audit, new colours. A
+  // react-native-web app has no dark rule to find: its components read the device's scheme in JS, so the
+  // pass is tried under a dark device, and dropped if the page did not move.
   recordRequests = false;
-  let dark = null;
-  const wantDark = !loadError && opt.dark !== 'skip' && (opt.dark === 'force' || opt.darkStorage.length > 0 || (audit && audit.darkSupport.any));
+  let dark = null, darkUnchanged = false;
+  const deviceTry = !!audit && audit.rnw && !audit.darkSupport.any && opt.dark === 'auto' && !opt.darkStorage.length;
+  const wantDark = !loadError && opt.dark !== 'skip' && (opt.dark === 'force' || opt.darkStorage.length > 0 || (audit && (audit.darkSupport.any || audit.rnw)));
   if (wantDark) {
     await pauseTransitions(page); // a body with transition-colors would otherwise be measured mid-fade
     await page.emulateMedia({ colorScheme: 'dark' });
@@ -1469,7 +1573,8 @@ async function renderViewport(width) {
     // A background that turns into a gradient or an image (null: unverifiable) has moved too.
     const changed = !!(audit && audit.pageColors.background !== dAudit.pageColors.background && (dAudit.pageColors.background || audit.pageColors.background));
     dark = {
-      mode: audit && audit.darkSupport.class && !audit.darkSupport.media ? 'class'
+      mode: audit && audit.rnw && !audit.darkSupport.any ? 'device scheme'
+        : audit && audit.darkSupport.class && !audit.darkSupport.media ? 'class'
         : audit && audit.darkSupport.attr && !audit.darkSupport.media && !audit.darkSupport.class ? 'attribute'
           : audit && audit.darkSupport.scheme && !audit.darkSupport.media ? 'color-scheme' : 'media',
       classes: audit && audit.darkSupport.class ? audit.darkSupport.classes.map(([c]) => c) : [],
@@ -1490,6 +1595,12 @@ async function renderViewport(width) {
     const sig = (fs) => fs.map((f) => `${f.selector}|${f.ratio}`).sort().join('\n');
     dark.echo = !changed && !dark.forced && !!audit && sig(dark.contrast.failures) === sig(audit.contrast.failures)
       && sig(dark.nonText.failures) === sig(audit.nonText.failures);
+    if (deviceTry && !changed) {                      // no dark mode, or one the app keeps to itself
+      dark = null; darkUnchanged = true;
+      const k = darkFolds.findIndex((f) => f.path === dFold);
+      if (k >= 0) darkFolds.splice(k, 1);
+      if (dFold) await rm(dFold, { force: true });
+    }
     await page.emulateMedia({ colorScheme: 'light' });
   }
   lap('dark');
@@ -1505,11 +1616,12 @@ async function renderViewport(width) {
     const hard24 = audit.targets.below24.filter((t) => !t.inlineText).length;
     if (hard24) fails.push(`targets<24px ${hard24}`);
     if (audit.unnamedControls.length) fails.push(`unnamed controls ${audit.unnamedControls.length}`);
+    if ((audit.noRole || []).length) fails.push(`no role ${audit.noRole.length}`);
     if (audit.imagesMissingAlt.length) fails.push(`img without alt ${audit.imagesMissingAlt.length}`);
     if (audit.viewportMeta.blocksZoom) fails.push('zoom blocked');
     if (audit.nonText.weak.length) warns.push(`weak button surface <3:1 ${audit.nonText.weak.length}`);
     if (audit.targets.between24and44.length) warns.push(`targets 24–44px ${audit.targets.between24and44.length}`);
-    if (audit.motion.animatedElements && !audit.motion.reducedMotionRule) warns.push('animations without prefers-reduced-motion');
+    if (audit.motion.animatedElements && !audit.motion.reducedMotionRule && !(audit.motion.underReduce < audit.motion.animatedElements)) warns.push('animations without prefers-reduced-motion');
     if (audit.structure.h1Count !== 1) warns.push(`h1 count ${audit.structure.h1Count}`);
     if ((audit.ragged || []).length) warns.push(`ragged grid ${audit.ragged.length}`);
     if (audit.structure.skippedLevels.length) warns.push(`skipped heading levels ${audit.structure.skippedLevels.length}`);
@@ -1563,9 +1675,10 @@ async function renderViewport(width) {
     width, height, status, fails, warns, loadError,
     console: consoleErrors.slice(0, 20), failedRequests: failedRequests.slice(0, 20), failedAssets: failedAssets.slice(0, 10), httpErrors: httpErrors.slice(0, 20),
     documentStatus, actsNavigated, loadRetried, requests: requests.slice(0, 40), frameworkRequests,
-    audit, focus, hover, dark, dialog, acts: opt.acts, actErrors, darkActErrors,
+    audit, focus, hover, dark, darkUnchanged, dialog, acts: opt.acts, actErrors, darkActErrors,
     walk: { touchedForms: walkTouchedForms, scrollRestored }, // what the Tab and hover walks changed, and what was put back
-    screenshots: { fold: opt.fold ? `${key}-fold.png` : null, full: `${key}-full.png`, darkFold: dark && dark.screenshot },
+    screenshots: { fold: opt.fold ? `${key}-fold.png` : null, full: `${key}-full.png`, darkFold: dark && dark.screenshot,
+      scrollsInside: innerExtra > 0 ? innerExtra : 0 }, // the page scrolls inside a view: the full screenshot grew the viewport by this
     timings,
   };
   await context.close();
@@ -1628,7 +1741,7 @@ if (first) {
   // Which page this was: a session that did not stick lands on the sign-in page, and every number
   // below would then describe that page. Say so where it cannot be missed.
   const h1s = (first.audit.structure && first.audit.structure.headings || []).filter((h) => h.level === 1).map((h) => h.text);
-  console.log(`  page: ${JSON.stringify(first.audit.pageTitle || '(no title)')}${h1s.length ? ` · h1 ${h1s.map((t) => JSON.stringify(t.slice(0, 40))).join(', ')}` : ' · no h1'}${(/sign ?in|log ?in|登录/i.test((first.audit.pageTitle || '') + ' ' + h1s.join(' ')) || (first.audit.passwordField && /sign ?in|log ?in|login|登录|password|密码/i.test((first.audit.bodyText || '').slice(0, 400)))) ? '  ← looks like a sign-in page: was the session passed? (--cookie / --storage-state)' : ''}`);
+  console.log(`  page: ${JSON.stringify(first.audit.pageTitle || '(no title)')}${h1s.length ? ` · h1 ${h1s.map((t) => JSON.stringify(t.slice(0, 40))).join(', ')}` : ' · no h1'}${(/sign ?in|log ?in|登录/i.test((first.audit.pageTitle || '') + ' ' + h1s.join(' ')) || (first.audit.passwordField && /sign ?in|log ?in|login|登录|password|密码/i.test((first.audit.bodyText || '').slice(0, 400)))) ? `  ← looks like a sign-in page: was the session passed? (${first.audit.rnw ? "--storage 'mmkv.default\\KEY=…' for a React Native app's stored token — inspect.py names the key" : '--cookie / --storage-state'})` : ''}`);
   // A viewport that landed somewhere else (an error page, a rate limit, a redirect to sign-in): its numbers are of that page.
   const odd = Object.entries(report.viewports).filter(([, x]) => x.audit && ((x.documentStatus && x.documentStatus.status >= 400) || x.audit.pageTitle !== first.audit.pageTitle));
   for (const [w, x] of odd) {
@@ -1656,7 +1769,10 @@ if (first) {
   const dcls = (ds.classes || []).map(([c]) => `.${c}`);
   const plainDark = dcls.length === 1 && dcls[0] === '.dark';
   const unmoved = Object.values(report.viewports).some((x) => x.dark && !x.dark.themeChanged && !x.dark.forced);
-  console.log(`  dark mode: ${opt.darkStorage.length ? `switched through the app's own storage (${opt.darkStorage.map(([k, v]) => `${k}=${v}`).join(', ')}) — ` : ''}${ds.any ? `supported (${['media', 'class', 'attr', 'scheme'].filter((k) => ds[k]).map((k) => (k === 'attr' ? 'attribute' : k === 'scheme' ? 'color-scheme' : k === 'class' && !plainDark ? `class ${dcls.join(' ')}` : k)).join('+')})` : 'not implemented'}${report.summary.darkRendered ? ' — rendered and audited' : ''}${restoredAt.length ? ` · at ${restoredAt.join(' / ')} the page took ${plainDark ? '.dark' : 'its dark class'} off mid-pass (a colour-mode script hydrating late); it was put back` : ''}${unmoved && !opt.darkStorage.length ? '  ← the page background did not move: if a script switches the theme (a theme service, a stored choice), render dark through it: --dark-storage KEY=VALUE' : ''}`);
+  const rnwDevice = first.audit.rnw && !ds.any;       // react-native-web: the app reads the device's scheme in JS
+  const rnwUnchanged = rnwDevice && Object.values(report.viewports).some((x) => x.darkUnchanged) && !report.summary.darkRendered;
+  if (rnwUnchanged) console.log('  dark mode: tried under a dark device scheme (react-native-web) — the page did not change: no dark mode, or the app keeps its own choice (render dark through it: --dark-storage KEY=VALUE, where KEY is where the app stores it)');
+  else console.log(`  dark mode: ${opt.darkStorage.length ? `switched through the app's own storage (${opt.darkStorage.map(([k, v]) => `${k}=${v}`).join(', ')}) — ` : ''}${rnwDevice ? 'follows the device scheme (react-native-web: switched in JS)' : ds.any ? `supported (${['media', 'class', 'attr', 'scheme'].filter((k) => ds[k]).map((k) => (k === 'attr' ? 'attribute' : k === 'scheme' ? 'color-scheme' : k === 'class' && !plainDark ? `class ${dcls.join(' ')}` : k)).join('+')})` : 'not implemented'}${report.summary.darkRendered ? ' — rendered and audited' : ''}${restoredAt.length ? ` · at ${restoredAt.join(' / ')} the page took ${plainDark ? '.dark' : 'its dark class'} off mid-pass (a colour-mode script hydrating late); it was put back` : ''}${unmoved && !opt.darkStorage.length ? '  ← the page background did not move: if a script switches the theme (a theme service, a stored choice), render dark through it: --dark-storage KEY=VALUE' : ''}`);
 }
 // ---- findings, once. A line that holds at every viewport is printed once; one that holds at some
 // carries their widths. Printed per viewport, the same finding three times over was a third of the output.
@@ -1674,6 +1790,7 @@ const specs = [
   ['dark focus ring <3:1', (v) => v.dark && !v.dark.echo && v.dark.focus.lowContrastRing, 4, (s) => s],
   ['dark contrast', (v) => v.dark && !v.dark.echo && v.dark.contrast.failures, 6, (f) => `${f.ratio}:1 (need ${f.required}) ${f.selector} — ${f.color} on ${f.background}`],
   ['unnamed', (v) => v.audit.unnamedControls, 6, (s) => s],
+  ['no role (a screen reader cannot say what it is: role="button", or accessibilityRole on a Pressable)', (v) => v.audit.noRole || [], 6, (s) => s],
   ['img without alt', (v) => v.audit.imagesMissingAlt, 4, (s) => s],
   ['ragged grid (the last row is short: fill the sample data, or let the last item span)', (v) => v.audit.ragged || [], 4, (g) => `${g.items} items in ${g.columns} columns, ${g.lastRow} alone in the last row — ${g.selector}`],
   ['dialog', (v) => (v.dialog ? [
@@ -1694,6 +1811,7 @@ const FULL_LIST = {
   'focus invisible': 'focus.invisible', 'focus obscured': 'focus.obscured', 'focus ring <3:1': 'focus.lowContrastRing',
   'no hover feedback': 'hover.noHoverFeedback', 'dark non-text contrast': 'dark.nonText.failures',
   'dark focus ring <3:1': 'dark.focus.lowContrastRing', 'dark contrast': 'dark.contrast.failures', unnamed: 'audit.unnamedControls',
+  'no role (a screen reader cannot say what it is: role="button", or accessibilityRole on a Pressable)': 'audit.noRole',
 };
 const TOTAL = { // counts kept apart from lists that report.json caps
   'focus invisible': (v) => v.focus && v.focus.counts && v.focus.counts.invisible,
@@ -1748,7 +1866,7 @@ const TOTAL = { // counts kept apart from lists that report.json caps
       const dr = worst((v) => v.dark ? (v.dark.focus.counts ? v.dark.focus.counts.lowContrastRing : v.dark.focus.lowContrastRing.length) : 0);
       L.push(`- Dark mode: rendered (${dw.dark.mode}${dw.dark.reloaded ? ', after a reload under the dark scheme' : ''}) · ${dw.dark.contrast.checked} text elements, ${df.n} below threshold${at(df)} · ${dw.dark.nonText.checked} boundaries, ${dbf.n} below 3:1 · ${dr.n} focus rings below 3:1 · background ${widest.audit.pageColors.background || 'a gradient or image'} → ${dw.dark.pageColors.background || 'a gradient or image'}${dw.dark.themeChanged ? '' : ' (unchanged!)'}`);
     } else {
-      L.push(`- Dark mode: ${widest.audit.darkSupport.any ? 'rule present but not rendered' : 'no dark rule — not rendered'}`);
+      L.push(`- Dark mode: ${widest.audit.darkSupport.any ? 'rule present but not rendered' : vps.some((v) => v.darkUnchanged) ? 'tried under a dark device scheme: the page did not change — not rendered' : 'no dark rule — not rendered'}`);
     }
     const t24 = worst((v) => v.audit.targets.below24.filter((t) => !t.inlineText).length), t44 = worst((v) => v.audit.targets.between24and44.length);
     L.push(`- Targets: ${t24.n} below 24px${at(t24)} · ${t44.n} between 24–44px${at(t44)}`);
@@ -1759,9 +1877,11 @@ const TOTAL = { // counts kept apart from lists that report.json caps
     const focusLine = f ? `${f.tabbed - fcn.invisible}/${f.tabbed} tabbed${f.limit && f.tabbed >= f.limit ? ` (the first ${f.limit} tab stops)` : ''} show a visible ring, ${fcn.lowContrastRing} rings below 3:1, ${fcn.obscured} obscured` : 'not probed';
     const hoverLine = h ? `${h.checked - h.noHoverFeedback.length}/${h.checked} buttons and links respond${h.limit && h.checked >= h.limit ? ` (the first ${h.limit} probed)` : ''}${h.cursorNotPointer.length ? `, ${h.cursorNotPointer.length} without pointer cursor` : ''}` : 'not probed';
     L.push(`- Focus: ${focusLine} · Hover: ${hoverLine}`);
-    L.push(`- Motion: reduced-motion rule ${widest.audit.motion.reducedMotionRule ? 'present' : 'missing'} · ${widest.audit.motion.animatedElements} animated elements`);
+    const mo = widest.audit.motion, inScript = typeof mo.underReduce === 'number' && mo.underReduce < mo.animatedElements;
+    L.push(`- Motion: reduced-motion rule ${mo.reducedMotionRule ? 'present' : inScript ? `missing, but honoured in script (${mo.animatedElements} → ${mo.underReduce} animated under reduced motion)` : 'missing'} · ${mo.animatedElements} animated elements`);
     const un = worst((v) => v.audit.unnamedControls.length), ia = worst((v) => v.audit.imagesMissingAlt.length);
-    L.push(`- Names & alt: ${un.n} unnamed controls · ${ia.n} images without alt · ${widest.audit.structure.h1Count} h1 · ${widest.audit.structure.skippedLevels.length} skipped heading levels`);
+    const nr = worst((v) => (v.audit.noRole || []).length);
+    L.push(`- Names & alt: ${un.n} unnamed controls${nr.n ? ` · ${nr.n} clickable without a role` : ''} · ${ia.n} images without alt · ${widest.audit.structure.h1Count} h1 · ${widest.audit.structure.skippedLevels.length} skipped heading levels`);
     const decl = widest.audit.fonts.declared, errs = decl.filter((x) => x.status === 'error').map((x) => x.family);
     const blockedFonts = fontHostsFailed(report);
     // A face that never loaded while its host was blocked failed too (AlibabaSans from a CDN that did not answer).

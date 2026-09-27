@@ -1,14 +1,14 @@
 ---
 name: ui-craft
 metadata:
-  version: 0.16.0
+  version: 0.17.0
 description: >-
-  Build, change, and review UI in web projects (React, Vue, Svelte, Astro, Angular, Laravel Blade or plain HTML; Next.js, Nuxt, SvelteKit, Livewire, Eleventy, Jekyll; Tailwind, Bootstrap, MUI, Ant Design, Chakra, Element Plus, Vuetify, CSS-in-JS or plain CSS) with a render → look → measure → fix loop, so what ships is checked against a real screenshot and real DOM measurements (contrast, tap targets, overflow, keyboard focus, hover, motion, dark mode) instead of guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even when they never say "design" or "UI". Also use it to inspect an existing project's design conventions before adding to it.
+  Build, change, and review UI in web projects (React, Vue, Svelte, Astro, Angular, Laravel Blade or plain HTML; Next.js, Nuxt, SvelteKit, Livewire, Eleventy, Jekyll; Tailwind, Bootstrap, MUI, Ant Design, Chakra, Element Plus, Vuetify, CSS-in-JS or plain CSS) and React Native / Expo apps with a render → look → measure → fix loop, so what ships is checked against a real screenshot and DOM measurements (contrast, tap targets, overflow, focus, hover, motion, dark mode), not guessed from code. Use this whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even when they never say "design" or "UI". Also use it to inspect an existing project's design conventions before adding to it.
 ---
 
 # ui-craft
 
-Version 0.16.0. (An older copy of this file means the installed skill is behind the
+Version 0.17.0. (An older copy of this file means the installed skill is behind the
 repository: re-run `install.sh`; `doctor.mjs` says when that is the case.)
 
 UI work has a gap that code review can't close: the first draft always has two or
@@ -95,7 +95,9 @@ Never assume the stack. Check `package.json` for `next` / `nuxt` / `@sveltejs/ki
 and the Tailwind major (v4 is CSS-first with `@theme`; v3 uses `tailwind.config.*`). A `composer.json`
 with `artisan` beside it is Laravel; a `_config.yml` with `_layouts/` is Jekyll; `.html` files and no
 manifest are a hand-written site. `@mui/material`, `antd`, `@chakra-ui/react`, `element-plus`, `vuetify` or
-`styled-components` means the look is a theme object and the kit's components, not classes.
+`styled-components` means the look is a theme object and the kit's components, not classes. `expo` or
+`react-native` is a React Native app: its pages are screens, its look a theme object and `StyleSheet`,
+and it renders in a browser only through react-native-web.
 
 ### 1. Inspect the project before touching it (existing projects)
 
@@ -131,7 +133,11 @@ includes. On a React app it follows the route table (objects, `<Route>` elements
 `config/routes.ts`) to each page with its layout and guards; with a component kit (MUI, Ant
 Design, Chakra, Element Plus, Vuetify), styled-components or CSS Modules it prints the kit's
 theme (palette or tokens, radius, fonts, component defaults), its components by use, how the
-code styles itself, and how dark mode switches. Each stack has notes to read once (`references/stacks/<stack>.md`, named
+code styles itself, and how dark mode switches. On React Native it lists the screens (Expo
+Router's files, or React Navigation's navigators with each screen's URL from the linking config
+and the auth branch it sits in), the theme's colour map with both schemes side by side and the
+contrast of its text colours, the spacing scale, the `.web.tsx` twins, and the keys the app
+keeps on the device with their names in a browser. Each stack has notes to read once (`references/stacks/<stack>.md`, named
 in the output). Read the one page whose
 signals match yours (or the file it renders) and the vocabulary lines; that is
 the whole of the reading for a match task. Below it the report has the tokens the project
@@ -354,6 +360,7 @@ read only the section you hit.
 | Monorepo | inspect, serve and render the one app you change |
 | Next.js | render `http://localhost:PORT`, never `127.0.0.1`; `requests: none` means the data came with the HTML: start what `dev` starts instead of mocking |
 | Nuxt, Vue, SvelteKit, Astro, Angular, Laravel or a static site | the stack notes the inspector names; a kit's own defaults (Nuxt UI's faint rings, Material's faint focus tint, Starlight's theme) are inherited |
+| React Native or Expo | `npx expo start --web` serves it (react-native-web); a screen behind sign-in or onboarding: `--storage 'mmkv.default\KEY=…'` with the key the inspector prints; the dark pass tries a dark device on its own. No `react-native-web`: review by reading, `references/stacks/react-native.md` |
 | A component kit (MUI, Ant Design, Chakra, Element Plus, Vuetify, styled-components, CSS Modules) | `references/stacks/kits.md`, that kit's section: its faint defaults (MUI's focus ripple, Ant Design's `#91caff` ring, Element Plus's `#409eff`) are inherited, and the one-line fixes are there; dark mode through the app's own switch: `--dark-storage` with the key the inspector prints |
 
 ### 5. Report
@@ -388,7 +395,7 @@ never a temp directory.
 |---|---|
 | Starting on any existing codebase | run `scripts/inspect.py` — nothing else for a match task |
 | The page won't just render (a login, a backend, a splash, a dialog, Next.js) | that section of `references/real-projects.md` |
-| A Nuxt, Vue, SvelteKit, Astro, Angular, Laravel or static-site project | `references/stacks/<stack>.md`, once (the inspector names it) |
+| A Nuxt, Vue, SvelteKit, Astro, Angular, Laravel, React Native or static-site project | `references/stacks/<stack>.md`, once (the inspector names it) |
 | A component kit or CSS-in-JS (the inspector's `Kit notes:` line) | that section of `references/stacks/kits.md` |
 | Choosing a look, or the output feels generic | `references/anti-generic.md` |
 | Picking token values, light or dark | run `scripts/contrast.py` |

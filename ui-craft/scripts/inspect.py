@@ -29,7 +29,7 @@ from pathlib import Path
 SKIP_DIRS = {
     "node_modules", ".next", ".nuxt", ".svelte-kit", "dist", "build", "out", ".git",
     "coverage", ".turbo", ".vercel", ".cache", "storybook-static", ".ui-craft",
-    "__pycache__", ".venv", "venv", "vendor",
+    "__pycache__", ".venv", "venv", "vendor", "Pods", ".expo",
 }
 SRC_EXT = {".tsx", ".jsx", ".ts", ".js", ".mjs", ".mdx", ".astro", ".vue", ".svelte", ".html"}
 CSS_EXT = {".css", ".scss", ".pcss"}
@@ -37,7 +37,8 @@ MAX_SRC_FILES = 600
 MAX_READ = 400_000
 
 KNOWN_FRAMEWORKS = [
-    ("next", "Next.js"), ("@remix-run/react", "Remix"), ("@umijs/max", "Umi"), ("umi", "Umi"), ("react-router", "React Router"),
+    ("next", "Next.js"), ("@remix-run/react", "Remix"), ("@umijs/max", "Umi"), ("umi", "Umi"), ("expo", "Expo"),
+    ("react-native", "React Native"), ("react-router", "React Router"),
     ("react-router-dom", "React Router"), ("@tanstack/react-router", "TanStack Router"),
     ("nuxt", "Nuxt"), ("@sveltejs/kit", "SvelteKit"), ("@angular/core", "Angular"),
     ("astro", "Astro"), ("gatsby", "Gatsby"), ("vue", "Vue"), ("svelte", "Svelte"), ("solid-js", "Solid"),
@@ -56,6 +57,9 @@ KNOWN_UI = {
     "@angular/material": "Angular Material", "primeng": "PrimeNG", "ng-zorro-antd": "NG-ZORRO", "@taiga-ui/core": "Taiga UI",
     "@nebular/theme": "Nebular", "@clr/angular": "Clarity", "@ng-bootstrap/ng-bootstrap": "ng-bootstrap",
     "ngx-bootstrap": "ngx-bootstrap", "@ionic/angular": "Ionic", "@spartan-ng/brain": "spartan/ui",
+    "react-native-paper": "React Native Paper", "tamagui": "Tamagui", "@tamagui/core": "Tamagui", "nativewind": "NativeWind",
+    "uniwind": "Uniwind", "@gluestack-ui/themed": "gluestack-ui", "react-native-unistyles": "Unistyles", "@shopify/restyle": "Restyle",
+    "@rneui/themed": "React Native Elements", "@ui-kitten/components": "UI Kitten", "native-base": "NativeBase", "heroui-native": "HeroUI Native",
 }
 KNOWN_ICONS = {
     "lucide-react": "Lucide", "@heroicons/react": "Heroicons", "@phosphor-icons/react": "Phosphor",
@@ -63,10 +67,13 @@ KNOWN_ICONS = {
     "@iconify/react": "Iconify",
     "lucide-vue-next": "Lucide", "@iconify/vue": "Iconify", "@heroicons/vue": "Heroicons", "@phosphor-icons/vue": "Phosphor",
     "lucide-angular": "Lucide", "@ng-icons/core": "ng-icons", "@fortawesome/angular-fontawesome": "Font Awesome",
+    "@expo/vector-icons": "Expo vector icons", "react-native-vector-icons": "react-native-vector-icons", "expo-symbols": "SF Symbols (expo-symbols)",
+    "lucide-react-native": "Lucide", "phosphor-react-native": "Phosphor",
 }
 KNOWN_MOTION = {
     "framer-motion": "Framer Motion", "motion": "Motion", "gsap": "GSAP",
     "@react-spring/web": "react-spring", "@formkit/auto-animate": "AutoAnimate", "lottie-react": "Lottie",
+    "react-native-reanimated": "Reanimated", "moti": "Moti", "lottie-react-native": "Lottie",
 }
 
 # --- class-usage regexes (Tailwind v3/v4 syntax) -----------------------------
@@ -221,6 +228,9 @@ def detect_stack(root: Path) -> dict:
         router = "file routes in src/routes/"
     if framework == "Astro" and (root / "src" / "pages").is_dir():
         router = "file routes in src/pages/"
+    if framework in ("Expo", "React Native"):
+        rn = rn_app(root, deps)
+        router = rn["router"] if rn else None
     if framework == "Next.js":
         if (root / "app").is_dir() or (root / "src" / "app").is_dir():
             router = "App Router"
@@ -256,6 +266,8 @@ def detect_stack(root: Path) -> dict:
         "framework": framework,
         "router": router,
         "react": deps.get("react"),
+        "reactNative": deps.get("react-native") if framework in ("Expo", "React Native") else None,
+        "rnWeb": deps.get("react-native-web") if framework in ("Expo", "React Native") else None,
         "vue": deps.get("vue"),
         "svelte": deps.get("svelte"),
         "frameworkVersion": laravel["version"] if laravel else next((deps.get(key) for key, label in KNOWN_FRAMEWORKS if label == framework and key in deps), None),
@@ -521,13 +533,13 @@ def find_docs(root: Path) -> list[str]:
 def verdict(stack: dict, tokens: dict, fonts: dict, comps: dict, usage: dict, docs: list[str], sh: dict | None = None) -> dict:
     tokens_declared = bool(tokens["theme"] or tokens["root"] or tokens.get("sass") or tokens["configExtend"])
     sh = sh or {}
-    ng, mt, site, lv = sh.get("ng"), sh.get("material"), sh.get("site"), sh.get("laravel")
+    ng, mt, site, lv, rn = sh.get("ng"), sh.get("material"), sh.get("site"), sh.get("laravel"), sh.get("rn")
     pages = len(sh.get("pages") or [])
     kk = sh.get("kits") or {}
     kit_list = kk.get("kits") or []
     tokens_declared = tokens_declared or any(k.get("colors") or k.get("scales") or k.get("tokens") or k.get("themes") for k in kit_list) \
         or bool((kk.get("styled") or {}).get("colors"))
-    kit_look = sh.get("kitLook") and (not stack.get("tailwind") or usage["rawTotal"] + usage["semanticTotal"] < 10)
+    kit_look = (sh.get("kitLook") or bool(rn)) and (not stack.get("tailwind") or usage["rawTotal"] + usage["semanticTotal"] < 10)
     established = (
         usage["rawTotal"] + usage["semanticTotal"] >= 25
         or len(comps["primitives"]) + len(comps["composed"]) >= 4
@@ -538,6 +550,7 @@ def verdict(stack: dict, tokens: dict, fonts: dict, comps: dict, usage: dict, do
         or bool(lv and pages >= 2 and (sh.get("bladeUsed") or sh.get("bladeKit") or sh.get("layouts")))
         or any(k.get("uses") and sum(c for _, c in k["uses"]) >= 6 for k in kit_list)
         or bool((kk.get("styled") or {}).get("files", 0) >= 5) or bool((kk.get("modules") or {}).get("importers", 0) >= 3)
+        or bool(rn and (rn["theme"]["maps"] or any(sum(c for _, c in uses) >= 6 for _, uses in rn["kits"]) or rn["usage"]["themeColors"] >= 10))
     )
     lines = []
     if mt and (mt["file"] or mt["prebuilt"]):
@@ -556,6 +569,20 @@ def verdict(stack: dict, tokens: dict, fonts: dict, comps: dict, usage: dict, do
         lines.append(f"Styling: **{kk['styled']['kit']}** with a theme object — new components are styled components reading the theme")
     if kk.get("modules"):
         lines.append("Styling: **CSS Modules**, one per component — a new component gets its own module")
+    if rn:
+        for label, uses in rn["kits"]:
+            lines.append(f"UI kit: **{label}** — build with its components and its theme, not hand-rolled views")
+        m = (rn["theme"]["maps"] or [None])[0]
+        if m:
+            lines.append(f"Theme: **`{m['name']}`** in `{m['file']}`" + (" (light and dark)" if m.get("dark") else "")
+                         + " — new components take their colours from it, not literals")
+        ru = rn["usage"]
+        if ru["radius"]:
+            lines.append(f"Radius: **{ru['radius'][0][0]}** dominant (StyleSheet)")
+        if ru["fontSize"]:
+            lines.append(f"Most-used font size: **{ru['fontSize'][0][0]}**")
+        if ru["literalColors"] >= 10 and ru["literalColors"] > ru["themeColors"]:
+            lines.append(f"Colour drift: {ru['literalColors']} literal colours in components against {ru['themeColors']} read from the theme")
     total_color = 0 if kit_look else usage["rawTotal"] + usage["semanticTotal"]
     if total_color:
         sem_pct = round(100 * usage["semanticTotal"] / total_color)
@@ -572,7 +599,7 @@ def verdict(stack: dict, tokens: dict, fonts: dict, comps: dict, usage: dict, do
     all_fonts = fonts["nextFont"] + fonts["googleLinks"] + fonts["fontFace"] + [v for _, v in fonts["tokenFonts"]]
     if all_fonts:
         lines.append("Fonts: " + ", ".join(dict.fromkeys(all_fonts))[:160])
-    dark_on = sh.get("kitDark") if sh.get("kitDark") is not None else \
+    dark_on = sh.get("kitDark") if sh.get("kitDark") is not None else rn["darkOn"] if rn else \
         bool(usage["dark"] or tokens["darkBlock"] or (ng and sh.get("theme")) or (kit_look and sh.get("theme")))
     lines.append("Dark mode: " + ("present" if dark_on else "not used"))
     if usage["arbitraryTotal"] >= 8 and not kit_look:
@@ -1484,10 +1511,13 @@ NG_THEME_CLASS = re.compile(r"^(?:dark|dark[-_](?:theme|mode|scheme)|(?:theme|mo
 NG_PREFIXED_THEME = re.compile(r"^[\w-]+[-_](?:theme|mode|scheme|app)[-_]dark$|^app[-_]dark$", re.I)   # a theme root only when its rule sets variables
 
 
+_STRING_OR_COMMENT = re.compile(r"(\"(?:\\.|[^\"\\\n])*\"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`)|/\*.*?\*/|(?<![:\w'\"`\\])//[^\n]*", re.S)
+
+
 def _no_comments(t: str) -> str:
-    """TypeScript or JSON without comments; a `//` after a colon or a quote (a URL in a string) is kept."""
-    t = re.sub(r"/\*.*?\*/", "", t, flags=re.S)
-    return re.sub(r"(?<![:\w'\"`\\])//[^\n]*", "", t)
+    """TypeScript or JSON without comments. Strings are kept whole: the `/*` in a tsconfig path ("#/*") opens no
+    comment, and a `//` in a URL ends none; a `//` after a colon or a backslash (a regex literal) is kept too."""
+    return _STRING_OR_COMMENT.sub(lambda m: m.group(1) or "", t)
 
 
 def _balanced(t: str, i: int) -> str:
@@ -3186,7 +3216,10 @@ def laravel_start(root: Path, src_files: list[Path], css_files: list[Path], deps
 # A React app names its pages in a route table: objects (useRoutes, createBrowserRouter, a RouteObject[]),
 # <Route> elements (v6 element=, v5 component=), or umi's config/routes.ts. Each route is followed to the
 # file that renders it, through lazy imports and barrels, with the layout and guards around it.
-JS_EXTS = ("", ".tsx", ".ts", ".jsx", ".js", ".vue", "/index.tsx", "/index.ts", "/index.jsx", "/index.js", "/index.vue")
+JS_EXTS = ("", ".tsx", ".ts", ".jsx", ".js", ".vue", "/index.tsx", "/index.ts", "/index.jsx", "/index.js", "/index.vue",
+           # React Native's platform files, after the plain ones: `Foo.web.tsx` stands in where there is no `Foo.tsx`
+           ".web.tsx", ".web.ts", ".native.tsx", ".native.ts", ".ios.tsx", ".android.tsx", ".web.js", ".native.js", ".ios.js", ".android.js",
+           "/index.web.tsx", "/index.native.tsx", "/index.ios.tsx", "/index.android.tsx")
 ROUTE_NOT_PAGES = {"Suspense", "Outlet", "Fragment", "React.Fragment", "ErrorBoundary", "StrictMode", "Navigate", "Redirect", "Switch",
                    "Routes", "Route", "DelayedMount"}
 GUARD_NAME = re.compile(r"Guard|Protected|Private|Require|Authenticated|Authorized|Auth(?:Route|Wrapper|Check)?$")
@@ -3547,7 +3580,7 @@ def _react_kit_uses(src_files: list[Path], pkgs: tuple[str, ...]) -> list[tuple[
                 last = spec.rsplit("/", 1)[-1]
                 if re.match(r"^[A-Z]\w+$", last) and last not in KIT_INFRA:
                     names.add(last)
-        counts.update(names)
+        counts.update(sorted(names))              # sorted: ties keep one order from run to run
     return counts.most_common(12)
 
 
@@ -3561,7 +3594,7 @@ def _vue_kit_uses(src_files: list[Path], prefix: str) -> list[tuple[str, int]]:
             continue
         t = read(p, 200_000)
         tags = set(kebab.findall(t)) | {re.sub(r"(?<!^)(?=[A-Z])", "-", x).lower() for x in pascal.findall(t)}
-        counts.update(tags)
+        counts.update(sorted(tags))
     return counts.most_common(12)
 
 
@@ -4029,6 +4062,1005 @@ def md_kit_tokens(k: dict) -> list[str]:
     return out
 
 
+# ------------------------------------------------------------ React Native / Expo
+# A React Native app has no stylesheet and no HTML. Its look is a theme object (a colour map per scheme,
+# a spacing scale), StyleSheet.create in each component, or NativeWind's classes; its pages are screens in
+# navigators (React Navigation) or files in app/ (Expo Router); its dark mode follows the device. In a
+# browser it runs through react-native-web, and that is what the renderer sees: a file's `.web.tsx` twin
+# replaces it there, and a `Platform.OS === 'web'` branch is not what the phone shows.
+RN_CODE = (".tsx", ".ts", ".jsx", ".js")
+RN_PLATFORM = re.compile(r"\.(web|native|ios|android)$")
+RN_THEME_DIRS = {"theme", "themes", "constants", "styles", "style", "tokens", "design", "colors", "colours", "design-system", "alf", "palette"}
+RN_THEME_WORD = r"(?:colou?rs?|themes?|palette|tokens?|styles?|spacing|metrics|sizes|typography)"
+RN_THEME_STEM = re.compile(r"^" + RN_THEME_WORD + r"|" + RN_THEME_WORD + r"(?:dark|light)?$|(?:^|[-_.])" + RN_THEME_WORD + r"(?:[-_.]|$)", re.I)
+RN_NAMED = {"white", "black", "transparent"}
+RN_BG_KEYS = ("background", "bg", "surface", "card", "base", "screen", "backgroundColor")
+RN_TEXT_KEY = re.compile(r"text|^(?:foreground|fg|label|onBackground|onSurface|onSurfaceVariant|title|body|muted|subtle)$", re.I)
+RN_SEMANTIC_FIRST = ("text", "background", "primary", "tint", "textSecondary", "textDim", "secondary", "surface", "card", "border",
+                     "icon", "accent", "error", "success", "warning", "muted", "separator", "notification")
+RN_NAV_KIND = [(re.compile(r"Drawer"), "drawer"), (re.compile(r"MaterialTopTab|TopTab"), "top tabs"),
+               (re.compile(r"Tab"), "tabs"), (re.compile(r"Stack"), "stack")]
+RN_KITS = {"react-native-paper": "React Native Paper", "tamagui": "Tamagui", "@tamagui/core": "Tamagui",
+           "@gluestack-ui/themed": "gluestack-ui", "@rneui/themed": "React Native Elements", "@ui-kitten/components": "UI Kitten",
+           "native-base": "NativeBase", "heroui-native": "HeroUI Native"}
+RN_NATIVE_ONLY = {"react-native-maps": "maps", "react-native-vision-camera": "camera", "react-native-webview": "web views",
+                  "@react-native-firebase/app": "Firebase (native SDK)", "react-native-nitro-modules": "Nitro modules",
+                  "react-native-ble-plx": "Bluetooth", "@shopify/react-native-skia": "Skia (needs CanvasKit on the web)"}
+
+
+def rn_app(root: Path, deps: dict) -> dict | None:
+    """An Expo or bare React Native app: versions, the router, and what app.json says about the look."""
+    if "react-native" not in deps and "expo" not in deps:
+        return None
+    cfg: dict = {}
+    aj = root / "app.json"
+    if aj.is_file():
+        try:
+            data = json.loads(read(aj))
+            cfg = data.get("expo", data) if isinstance(data, dict) else {}
+        except (json.JSONDecodeError, AttributeError):
+            cfg = {}
+    ui_style, web_output, plugin_fonts = cfg.get("userInterfaceStyle"), (cfg.get("web") or {}).get("output"), []
+    for pl in cfg.get("plugins") or []:
+        if isinstance(pl, list) and pl and pl[0] == "expo-font" and len(pl) > 1 and isinstance(pl[1], dict):
+            plugin_fonts += [Path(str(x)).stem for x in pl[1].get("fonts") or []]
+    for name in ("app.config.ts", "app.config.js"):
+        t = read(root / name) if (root / name).is_file() else ""
+        ui_style = ui_style or (re.search(r"userInterfaceStyle\s*:\s*['\"](\w+)['\"]", t) or [None, None])[1]
+        web_output = web_output or (re.search(r"output\s*:\s*['\"](static|single|server)['\"]", t) or [None, None])[1]
+    app_dir = None
+    if "expo-router" in deps:
+        custom = ((cfg.get("extra") or {}).get("router") or {}).get("root")     # expo.extra.router.root, else src/app, else app (Expo's order)
+        for d in ([root / custom] if isinstance(custom, str) else []) + [root / "src" / "app", root / "app"]:
+            if d.is_dir() and any(p.stem.startswith(("_layout", "index")) for p in d.iterdir() if p.is_file()):
+                app_dir = d
+                break
+    router = "Expo Router" if app_dir else "React Navigation" if any(k.startswith("@react-navigation/") for k in deps) else None
+    return {"expo": deps.get("expo"), "rn": deps.get("react-native"), "web": deps.get("react-native-web"), "router": router,
+            "appDir": app_dir, "uiStyle": ui_style, "webOutput": web_output, "pluginFonts": plugin_fonts}
+
+
+def _rn_twins(f: Path) -> list[str]:
+    """The platform files beside a file: `index.web.tsx` next to `index.tsx`."""
+    stem = RN_PLATFORM.sub("", f.stem)
+    return sorted(p.name for p in f.parent.glob(f"{stem}.*.*") if p != f and RN_PLATFORM.search(p.stem) and p.suffix in RN_CODE
+                  and RN_PLATFORM.sub("", p.stem) == stem)
+
+
+def _rn_signals(text: str) -> list[str]:
+    """What a screen holds: fields, a list, a modal or sheet, a form library, the data it fetches."""
+    sig = []
+    n = len(re.findall(r"<(?:TextInput|TextField|Input|Picker|Select|Switch|Checkbox|Slider|RadioButton\.Group|SegmentedButtons|ControlledInput)\b", text))
+    if n:
+        sig.append(f"{n} field{'s' if n > 1 else ''}")
+    if re.search(r"\buseForm\(|<Formik\b|\buseAppForm\(|\bcreateFormHook\(", text):
+        sig.append("form")
+    if re.search(r"<(?:FlatList|FlashList|SectionList|LegendList|VirtualizedList)\b|\.map\(\s*\(?[\w{}, ]*\)?\s*=>\s*\(?\s*<", text):
+        sig.append("list")
+    if re.search(r"<(?:Modal|BottomSheet\w*|Dialog|Portal|Sheet|ActionSheet)\b", text):
+        sig.append("modal")
+    if re.search(r"<ScrollView\b|<KeyboardAwareScrollView\b|preset=\"scroll\"", text):
+        sig.append("scrolls")
+    data = list(dict.fromkeys(re.findall(r"\buse(\w+)Query\(|\buseQuery\(\s*\{?\s*queryKey:\s*\[\s*['\"]([\w-]+)", text)))
+    names = [a or b for a, b in data][:2]
+    if names:
+        sig.append("data: " + ", ".join(f"`{x}`" for x in names))
+    return sig
+
+
+def _rn_components(text: str) -> list[str]:
+    """The components a screen renders that are the app's own or a kit's: not React Native's primitives."""
+    local, kit = set(), set()
+    for names, spec in re.findall(r"import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*['\"]([^'\"]+)['\"]", text):
+        own = spec.startswith((".", "@/", "~/", "#/", "app/", "src/", "components", "@components")) or spec in RN_KITS
+        if not own:
+            continue
+        for part in names.split(","):
+            n = part.strip().split(" as ")[-1].strip()
+            if re.match(r"^[A-Z]\w+$", n):
+                (kit if spec in RN_KITS else local).add(n)
+    for n, spec in re.findall(r"import\s+([A-Z]\w+)\s+from\s*['\"]([^'\"]+)['\"]", text):
+        if spec.startswith((".", "@/", "~/", "#/", "app/", "src/", "components")):
+            local.add(n)
+    used = [t for t in dict.fromkeys(re.findall(r"(?<![\w.$])<([A-Z]\w*)", text)) if t in local or t in kit]
+    return used[:6]
+
+
+def _rn_layout_kind(root: Path, f: Path, text: str, aliases: list) -> str | None:
+    """What an Expo Router layout renders around its pages: a stack, tabs, a drawer, or only a slot."""
+    for pat, kind in ((r"<NativeTabs\b", "native tabs"), (r"<Tabs\b", "tabs"), (r"<Drawer\b", "drawer"), (r"<(?:Stack|JsStack)\b", "stack"),
+                      (r"<Slot\b", "slot")):
+        if re.search(pat, text):
+            return kind
+    for tag in re.findall(r"<([A-Z]\w+)\s*/>", text):         # <AppTabs />: one level down
+        src = _js_source_of(root, f, text, tag, aliases)
+        if src and src != f:
+            t = read(src, 200_000)
+            for pat, kind in ((r"<NativeTabs\b", "native tabs"), (r"<Tabs\b|<TabList\b", "tabs"), (r"<Drawer\b", "drawer"), (r"<Stack\b", "stack")):
+                if re.search(pat, t):
+                    twins = [x for x in _rn_twins(src) if ".web." in x]
+                    return f"{kind} from `{rel(root, src)}`" + (f" (web: `{twins[0]}`)" if twins else "")
+    return None
+
+
+def _rn_redirects(text: str) -> list[str]:
+    """A layout's guards: `if (cond) return <Redirect href="/login" />`, and Stack.Protected."""
+    out = []
+    for cond, href in re.findall(r"if\s*\(([^)]{1,90})\)\s*\{?\s*return\s*\(?\s*<Redirect\s+href=\{?\s*['\"]([^'\"]+)['\"]", text):
+        out.append(f"a redirect to `{href}` when `{cond.strip()}`")
+    for guard in re.findall(r"<Stack\.Protected\s+guard=\{([^}]{1,60})\}", text):
+        out.append(f"`Stack.Protected` (guard `{guard.strip()}`)")
+    return out
+
+
+def expo_router_site(root: Path, app_dir: Path, aliases: list) -> dict:
+    """Expo Router's file routes: pages with their URL, the layout around them and its redirects; API routes."""
+    files = sorted(p for p in app_dir.rglob("*") if p.is_file() and p.suffix in RN_CODE and not set(p.relative_to(root).parts) & SKIP_DIRS
+                   and not re.search(r"\.(test|spec|d)$", RN_PLATFORM.sub("", p.stem)) and "__tests__" not in p.parts)
+    layouts: dict[Path, dict] = {}
+    for p in files:
+        if RN_PLATFORM.sub("", p.stem) == "_layout" and not RN_PLATFORM.search(p.stem):
+            t = _no_comments(read(p, 200_000))
+            layouts[p.parent] = {"file": p, "text": t, "kind": _rn_layout_kind(root, p, t, aliases), "guards": _rn_redirects(t),
+                                 "lines": t.count("\n") + 1}
+    pages, routes, apis = [], [], []
+    for p in files:
+        stem = RN_PLATFORM.sub("", p.stem)
+        if stem == "_layout" or stem in ("+html", "+native-intent", "+middleware") or (RN_PLATFORM.search(p.stem) and (p.parent / (stem + p.suffix)).is_file()):
+            continue
+        if stem.endswith("+api"):
+            apis.append("/" + "/".join([x for x in p.relative_to(app_dir).parent.parts if not x.startswith("(")] + [stem[:-4]]))
+            continue
+        segs = [x for x in p.relative_to(app_dir).parent.parts if not (x.startswith("(") and x.endswith(")"))]
+        route = "(not found)" if stem == "+not-found" else "/" + "/".join(segs + ([] if stem == "index" else [stem]))
+        t = own = read(p, 200_000)
+        renders = None
+        ex = re.search(r"export\s*\{\s*(?:default|(\w+)\s+as\s+default)\s*\}\s*from\s*['\"]([^'\"]+)['\"]", t) \
+            or re.search(r"import\s+(\w+)\s+from\s*['\"]([^'\"]+)['\"][\s\S]{0,80}export\s+default\s+\1\s*;?\s*$", t)
+        if ex and t.count("\n") < 12:                  # a route file that hands the page to a screen elsewhere
+            tgt = _js_resolve(root, p, ex.group(2), aliases)
+            if tgt and ex.group(1):
+                tgt = _ng_defines(root, tgt, ex.group(1), aliases, exts=JS_EXTS) or tgt
+            if tgt and tgt.is_file():
+                tt = read(tgt, 200_000)
+                dn = re.search(r"export\s+default\s+(?:async\s+)?(?:function|class)\s+(\w+)", tt)
+                renders = {"name": ex.group(1) or (dn.group(1) if dn else tgt.stem), "file": rel(root, tgt), "lines": tt.count("\n") + 1,
+                           "signals": _rn_signals(tt)}
+                t = tt
+        chain = [layouts[d] for d in [p.parent, *p.parent.parents] if d in layouts and (d == app_dir or app_dir in d.parents)]
+        inner = next((lay for lay in chain if lay["kind"] and lay["kind"] != "slot"), None)
+        guards = [g for lay in chain for g in lay["guards"]]
+        web_twin = next((x for x in _rn_twins(p) if ".web." in x), None)
+        rec = {"file": rel(root, p), "lines": own.count("\n") + 1, "signals": [] if renders else _rn_signals(t), "classes": [],
+               "components": _rn_components(t), "renders": renders, "route": f"`{route}`" + (f" (web: `{web_twin}`)" if web_twin else ""),
+               "routeGuards": guards}
+        if inner:
+            rec["inside"] = {"name": f"{rel(root, inner['file'])} ({inner['kind']})", "file": None, "lines": inner["lines"], "holder": ""}
+        pages.append(rec)
+        routes.append((route, rel(root, p)))
+    root_lay = layouts.get(app_dir)
+    return {"pages": pages, "routes": routes, "apis": apis, "layouts": layouts, "rootLayout": root_lay}
+
+
+def _jsx_conditions(body: str, i: int) -> list[str]:
+    """The ternary and && branches of a navigator's JSX that hold position i: `isAuthenticated`, `!isAuthenticated`."""
+    stack, j, quote = [], 0, None
+    while j < i:
+        ch = body[j]
+        if quote:
+            if ch == "\\":
+                j += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "'\"`":
+            quote = ch
+        elif ch in "({":
+            stack.append((ch, j))
+        elif ch in ")}" and stack:
+            stack.pop()
+        j += 1
+    out = []
+    for k, (ch, pos) in enumerate(stack):
+        if ch != "(":
+            continue
+        before = body[:pos].rstrip()
+        opener = next((p for c, p in reversed(stack[:k]) if c == "{"), None)
+        if opener is None:
+            continue
+        expr = body[opener + 1:pos]
+        if before.endswith("?"):
+            out.append(re.sub(r"\s+", " ", expr.rstrip()[:-1].strip())[:50])
+        elif before.endswith(":"):
+            cond = expr.split("?", 1)[0].strip()
+            out.append("!" + re.sub(r"\s+", " ", cond)[:50] if cond else "")
+        elif before.endswith("&&"):
+            out.append(re.sub(r"\s+", " ", expr.rstrip()[:-2].strip())[:50])
+    return [c for c in out if c]
+
+
+def _rn_linking(root: Path, code_files: list[Path]) -> dict[str, str]:
+    """React Navigation's linking config: screen name → the URL path the web shows for it."""
+    paths: dict[str, str] = {}
+
+    def walk(body: str, prefix: str) -> None:
+        for name, v in _fields(body).items():
+            s = _unquote(v)
+            if s is not None:
+                paths.setdefault(name, _join_route(prefix, s))
+            elif v.startswith("{"):
+                inner = _fields(_balanced(v, 0))
+                p = _unquote(inner.get("path"))
+                here = _join_route(prefix, p) if p is not None else prefix
+                if p is not None:
+                    paths.setdefault(name, here)
+                if inner.get("screens", "").startswith("{"):
+                    walk(_balanced(inner["screens"], 0), here)
+
+    for f in code_files:
+        t = read(f, 300_000)
+        if "screens" not in t or not re.search(r"\blinking\b|\bprefixes\b|getStateFromPath|LinkingOptions", t):
+            continue
+        t = _no_comments(t)
+        for m in re.finditer(r"\b(?:config|linking)\s*[:=]\s*(?:\{\s*(?:[^{}]*?\bconfig\s*:\s*)?)?\{\s*(?:initialRouteName\s*:[^,]+,\s*)?screens\s*:\s*\{", t):
+            walk(_balanced(t, m.end() - 1), "/")
+    return paths
+
+
+def _rn_jsx_screens(code: str, nav: str) -> list[dict]:
+    """The `<Nav.Screen>` elements in code: name, the component (component=, getComponent=, a child render function),
+    and the branch of a ternary or && that holds each."""
+    out = []
+    for sm in re.finditer(r"<" + re.escape(nav) + r"\.Screen\b", code):
+        attrs, _, _ = _jsx_attrs(code, sm.end())
+        raw = _jsx_attr(attrs, "name") or ""
+        sname = _unquote(raw) or (re.search(r"['\"]([^'\"]+)['\"]", raw) or [None, raw.strip("{} ")])[1]
+        comp = _jsx_attr(attrs, "component") or ""
+        if not comp:
+            gc = _jsx_attr(attrs, "getComponent") or ""
+            rq = re.search(r"require\(\s*['\"]([^'\"]+)['\"]\s*\)(?:\.(\w+))?", gc)
+            comp = f"require:{rq.group(1)}" if rq else (re.search(r"=>\s*(\w+)", gc) or [None, ""])[1]
+        if not comp:                                 # <Stack.Screen name="X">{(props) => <XScreen {...props} />}</Stack.Screen>
+            cm = re.search(r">\s*\{\s*\(?[^)]*\)?\s*=>\s*<([A-Z]\w*)", code[sm.end():sm.end() + 400])
+            comp = cm.group(1) if cm else ""
+        out.append({"name": sname, "comp": comp.strip("{} "), "conds": _jsx_conditions(code, sm.start()), "link": None})
+    return out
+
+
+def rn_navigation(root: Path, src_files: list[Path], aliases: list) -> dict:
+    """React Navigation's screens: each navigator (stack, tabs, drawer) and the screen files it shows, with the
+    branch of an auth ternary that holds them, the navigator that contains a nested one, and the linking path."""
+    code_files = [p for p in _code_files(src_files, RN_CODE)]
+    navs: dict[str, dict] = {}                  # navigator const → {file, kind, screens: [...]}
+    for f in code_files:
+        t = read(f, 300_000)
+        if ".Screen" not in t and "screens" not in t:
+            continue
+        code = _no_comments(t)
+        for m in re.finditer(r"(?:const|let|var)\s+(\w+)\s*(?::[^=]{1,80})?=\s*(create\w*Navigator\w*)\s*(?:<[^>]*>)?\s*\(", code):
+            name, fn = m.group(1), m.group(2)
+            kind = next((k for pat, k in RN_NAV_KIND if pat.search(fn)), "stack")
+            nav = {"name": name, "file": f, "kind": kind, "screens": [], "initial": None}
+            args = _balanced(code, m.end() - 1).strip()
+            if args.startswith("{"):                # the static API: createNativeStackNavigator({ screens: { … } })
+                fl = _fields(_balanced(args, 0))
+                nav["initial"] = _unquote(fl.get("initialRouteName"))
+                if fl.get("screens", "").startswith("{"):
+                    for sname, v in _fields(_balanced(fl["screens"], 0)).items():
+                        if sname.startswith("..."):
+                            continue
+                        comp, link = v, None
+                        if re.match(r"create\w*Screen\s*\(", v):
+                            v = _balanced(v, v.index("(")).strip()
+                        if v.startswith("{"):
+                            inner = _fields(_balanced(v, 0))
+                            comp = inner.get("screen", "")
+                            link = _unquote(inner.get("linking")) if inner.get("linking") else None
+                            if link is None and (inner.get("linking") or "").startswith("{"):
+                                link = _unquote(_fields(_balanced(inner["linking"], 0)).get("path"))
+                        nav["screens"].append({"name": sname, "comp": comp.strip(), "conds": [], "link": link})
+            else:                                   # the dynamic API: <Stack.Screen name="…" component={…} />
+                nav["screens"] = _rn_jsx_screens(code, name)
+                im = re.search(r"<" + re.escape(name) + r"\.Navigator\b", code)
+                if im:
+                    attrs, _, _ = _jsx_attrs(code, im.end())
+                    ini = _jsx_attr(attrs, "initialRouteName") or ""
+                    nav["initial"] = _unquote(ini) or ini.strip("{} ")[:60] or None
+            if nav["screens"]:
+                navs[name + "@" + str(f)] = nav
+        # Screens a function adds to whichever navigator it is handed: function commonScreens(Stack) { <Stack.Screen … }
+        declared = set(re.findall(r"(?:const|let|var)\s+(\w+)\s*(?::[^=]{1,80})?=\s*create\w*Navigator", code))
+        for fm in re.finditer(r"function\s+(\w+)\s*\(\s*(\w+)\s*[:,)]", code):
+            fname, param = fm.group(1), fm.group(2)
+            brace = code.find("{", fm.end())
+            if param in declared or brace < 0:
+                continue
+            body = _balanced(code, brace)
+            if not re.search(r"<" + re.escape(param) + r"\.Screen\b", body):
+                continue
+            users = [n for n in declared if re.search(re.escape(fname) + r"\(\s*" + re.escape(n) + r"\b", code)]
+            navs[fname + "@" + str(f)] = {"name": fname, "file": f, "kind": f"shared by {len(users)} navigators" if users else "shared screens",
+                                          "screens": _rn_jsx_screens(body, param), "initial": None}
+    links = _rn_linking(root, code_files)
+    by_file: dict[Path, list[dict]] = {}
+    for n in navs.values():
+        by_file.setdefault(n["file"], []).append(n)
+    screens: list[dict] = []
+    nested: dict[int, tuple[dict, dict]] = {}      # id(child navigator) → (parent navigator, the screen that holds it)
+    resolved: list[tuple[dict, dict, Path | None, bool]] = []
+    for nav in navs.values():
+        code = _no_comments(read(nav["file"], 300_000))
+        for s in nav["screens"]:
+            comp = s["comp"]
+            if comp.startswith("require:"):
+                f = _js_resolve(root, nav["file"], comp[8:], aliases)
+            else:
+                f = _js_source_of(root, nav["file"], code, comp.split(".")[0] if comp else None, aliases) if comp else None
+            children = []
+            if f and f != nav["file"] and f in by_file:            # a navigator in its own file
+                children = by_file[f]
+            elif f and f == nav["file"] and comp:                   # a function in this file that renders a navigator
+                fm = re.search(r"(?:function\s+" + re.escape(comp) + r"\s*\(|(?:const|let)\s+" + re.escape(comp) + r"\s*=\s*(?:\([^)]*\)|\w+)\s*=>)", code)
+                body = _balanced(code, code.find("{", fm.end())) if fm and code.find("{", fm.end()) >= 0 else ""
+                children = [n for n in by_file.get(f, []) if n is not nav and re.search(r"<" + re.escape(n["name"]) + r"\.Navigator\b", body)]
+            for c in children:
+                nested[id(c)] = (nav, s)
+            resolved.append((nav, s, f, bool(children)))
+    for nav, s, f, holds_nav in resolved:
+        if holds_nav:
+            continue                                  # a navigator inside a navigator: its own screens are the pages
+        screens.append({"nav": nav, "screen": s, "file": f, "parent": nested.get(id(nav)),
+                        "link": s["link"] if s["link"] is not None else links.get(s["name"])})
+    # URLs from a route table the app keeps itself (`new Router({ Home: '/', Profile: '/profile/:name' })`)
+    if sum(1 for sc in screens if sc["link"] is None) >= 3:
+        names = {sc["screen"]["name"] for sc in screens}
+        for f in code_files:
+            t = read(f, 300_000)
+            if t.count("'/") + t.count('"/') < 5:
+                continue
+            for body in _rn_objects(_no_comments(t)).values():
+                fl = _fields(body)
+                paths = {k: (_unquote(v) or _unquote((_split_top(v[1:-1]) or [""])[0]) if v.startswith("[") else _unquote(v)) for k, v in fl.items() if k in names}
+                paths = {k: v for k, v in paths.items() if v and v.startswith("/")}
+                if len(paths) >= 5:
+                    for sc in screens:
+                        if sc["link"] is None and sc["screen"]["name"] in paths:
+                            sc["link"] = paths[sc["screen"]["name"]]
+                    links.update(paths)
+                    break
+    has_prop = any(re.search(r"<NavigationContainer\b[^>]*\blinking=", read(f, 300_000)) for f in code_files[:400])
+    return {"navs": list(navs.values()), "screens": screens,
+            "linking": bool(links) or has_prop or any(s["link"] is not None for n in navs.values() for s in n["screens"])}
+
+
+def rn_screen_pages(root: Path, nav: dict) -> tuple[list[dict], list[tuple[str, str]]]:
+    """React Navigation screens as page lines: the file, its URL (linking), the navigator, the branch it is in."""
+    pages, routes, seen = [], [], set()
+    for sc in nav["screens"]:
+        f = sc["file"]
+        if not f or not f.is_file() or f in seen:
+            continue
+        seen.add(f)
+        t = read(f, 200_000)
+        n, s = sc["nav"], sc["screen"]
+        link = sc["link"] if sc["link"] is None or sc["link"].startswith("/") else _join_route("/", sc["link"])
+        where = f"`{link}`" if link is not None else "no URL"
+        twins = [x for x in _rn_twins(f) if ".web." in x]
+        rec = {"file": rel(root, f), "lines": t.count("\n") + 1, "signals": _rn_signals(t), "classes": [], "components": _rn_components(t),
+               "renders": None, "route": f"`{s['name']}` · {where}" + (f" (web: `{twins[0]}`)" if twins else ""), "routeGuards": []}
+        conds = list(s["conds"])
+        parent = sc["parent"]
+        label = f"{n['name']} ({n['kind']})" + (f" in {parent[0]['name']} ({parent[0]['kind']}) as `{parent[1]['name']}`" if parent else "")
+        nt = read(n["file"], 200_000)
+        rec["inside"] = {"name": label, "file": rel(root, n["file"]), "lines": nt.count("\n") + 1, "holder": "navigator"}
+        if parent:
+            conds += parent[1]["conds"]
+        if conds:
+            rec["when"] = "shown when " + " and ".join(f"`{c}`" for c in dict.fromkeys(conds))
+        pages.append(rec)
+        routes.append((link if link is not None else f"({s['name']})", rel(root, f)))
+    return pages, routes
+
+
+# --- the theme: colour maps (one per scheme), spacing and radius scales, a kit's theme
+def _rn_rgb(v: str) -> tuple[float, float, float, float] | None:
+    v = v.strip().lower()
+    if v in ("white", "black"):
+        return (255, 255, 255, 1) if v == "white" else (0, 0, 0, 1)
+    m = re.match(r"^#([0-9a-f]{3,8})$", v)
+    if m:
+        h = m.group(1)
+        if len(h) in (3, 4):
+            h = "".join(c * 2 for c in h)
+        if len(h) not in (6, 8):
+            return None
+        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), int(h[6:8], 16) / 255 if len(h) == 8 else 1)
+    m = re.match(r"^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:[\s,/]+([\d.]+%?))?\s*\)$", v)
+    if m:
+        a = m.group(4)
+        alpha = (float(a[:-1]) / 100 if a.endswith("%") else float(a)) if a else 1
+        return (float(m.group(1)), float(m.group(2)), float(m.group(3)), alpha)
+    return None
+
+
+def _rn_contrast(fg: str, bg: str) -> float | None:
+    a, b = _rn_rgb(fg), _rn_rgb(bg)
+    if not a or not b or b[3] < 1:
+        return None
+    if a[3] < 1:
+        a = tuple(a[k] * a[3] + b[k] * (1 - a[3]) for k in range(3)) + (1,)
+
+    def lum(c):
+        f = [x / 255 for x in c[:3]]
+        f = [x / 12.92 if x <= 0.04045 else ((x + 0.055) / 1.055) ** 2.4 for x in f]
+        return 0.2126 * f[0] + 0.7152 * f[1] + 0.0722 * f[2]
+    hi, lo = sorted((lum(a), lum(b)), reverse=True)
+    return round((hi + 0.05) / (lo + 0.05), 1)
+
+
+def _rn_is_color(v: str | None) -> bool:
+    return bool(v) and (bool(re.match(r"^(?:#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)|hsla?\([^)]*\))$", v.strip())) or v.strip().lower() in RN_NAMED)
+
+
+def _rn_objects(code: str) -> dict[str, str]:
+    """Top-level object literals by name: `const X = {…}`, `export default {…}` (as `default`), `module.exports = {…}`,
+    and an object handed to a theme factory (`createTheme({…})` as X)."""
+    out: dict[str, str] = {}
+    for m in re.finditer(r"^(?:export\s+)?(?:const|let|var)\s+(\w+)\s*(?::[^=\n]{1,80})?=\s*(?:new\s+)?(?:[\w.]+\s*(?:<[^>()]*>)?\s*\(\s*)?\{", code, re.M):
+        out.setdefault(m.group(1), _balanced(code, m.end() - 1))
+    m = re.search(r"^export\s+default\s+(?:\w+\s*\(\s*)?\{", code, re.M) or re.search(r"^module\.exports\s*=\s*\{", code, re.M)
+    if m:
+        out.setdefault("default", _balanced(code, m.end() - 1))
+    return out
+
+
+class _RNResolver:
+    """Resolves a theme value to a literal: `palette.neutral800`, `colors.primary[400]`, an imported object's key."""
+
+    def __init__(self, root: Path, aliases: list):
+        self.root, self.aliases, self.cache = root, aliases, {}
+
+    def objects(self, f: Path) -> tuple[str, dict[str, str]]:
+        if f not in self.cache:
+            code = _no_comments(read(f, 300_000))
+            self.cache[f] = (code, _rn_objects(code))
+        return self.cache[f]
+
+    def value(self, f: Path, expr: str, depth: int = 0) -> str | None:
+        expr = expr.strip().rstrip(",").strip()
+        if depth > 4 or not expr:
+            return None
+        s = _unquote(expr)
+        if s is not None:
+            return s
+        if re.match(r"^-?[\d.]+$", expr):
+            return expr
+        m = re.match(r"^([A-Za-z_$][\w$]*)((?:\.[\w$]+|\[\s*['\"]?[\w$-]+['\"]?\s*\])*)(?:\s+as\s+const)?$", expr)
+        if not m:
+            return None
+        base, path = m.group(1), [x for x in re.findall(r"\.([\w$]+)|\[\s*['\"]?([\w$-]+)['\"]?\s*\]", m.group(2))]
+        keys = [a or b for a, b in path]
+        code, objs = self.objects(f)
+        if base in objs:
+            return self._walk(f, objs[base], keys, depth)
+        cm = re.search(r"(?:const|let|var)\s+" + re.escape(base) + r"\s*=\s*(['\"][^'\"]*['\"]|[\w.$\[\]'\"]+)\s*;?\s*$", code, re.M)
+        if cm and not keys:
+            return self.value(f, cm.group(1), depth + 1)
+        src = _js_source_of(self.root, f, code, base, self.aliases)
+        if src and src != f and src.is_file():
+            code2, objs2 = self.objects(src)
+            dm = re.search(r"import\s+" + re.escape(base) + r"\s+from", code)
+            name = "default" if dm else base
+            if name in objs2:
+                return self._walk(src, objs2[name], keys, depth + 1)
+            if name == "default":
+                em = re.search(r"export\s+default\s+(\w+)", code2)
+                if em and em.group(1) in objs2:
+                    return self._walk(src, objs2[em.group(1)], keys, depth + 1)
+        return None
+
+    def _walk(self, f: Path, body: str, keys: list[str], depth: int) -> str | None:
+        cur = body
+        for k in keys:
+            fl = _fields(cur)
+            v = fl.get(k)
+            if v is None:                            # a spread base: `...DefaultTheme.colors` is not ours to read
+                return None
+            if v.startswith("{"):
+                cur = _balanced(v, 0)
+                continue
+            return self.value(f, v, depth + 1)
+        return None
+
+    def flat(self, f: Path, body: str, depth: int = 0) -> tuple[list[tuple[str, str]], list[str], list[str]]:
+        """A map's colour entries (resolved), the nested scales in it, and the bases it spreads."""
+        colors, scales = [], []
+        spreads = [x[3:].strip() for x in _split_top(body) if x.startswith("...")]      # `...DefaultTheme.colors`: a base theme
+        for k, v in _fields(body).items():
+            if v.startswith("{"):
+                inner = _fields(_balanced(v, 0))
+                if sum(1 for x in inner.values() if _rn_is_color(self.value(f, x, depth + 1) or "")) >= 3:
+                    mid = inner.get("500") or inner.get("DEFAULT") or list(inner.values())[len(inner) // 2]
+                    scales.append(f"{k} {self.value(f, mid, depth + 1) or '?'}")
+                continue
+            r = self.value(f, v, depth + 1)
+            if r and _rn_is_color(r):
+                colors.append((k, r))
+        return colors, scales, spreads
+
+
+RN_BASE_THEMES = {    # the colours a theme spread over these starts from (React Navigation 7, React Native Paper's MD3 baseline)
+    ("@react-navigation/native", "DefaultTheme"): {"primary": "rgb(0, 122, 255)", "background": "rgb(242, 242, 242)", "card": "rgb(255, 255, 255)",
+                                                   "text": "rgb(28, 28, 30)", "border": "rgb(216, 216, 216)", "notification": "rgb(255, 59, 48)"},
+    ("@react-navigation/native", "DarkTheme"): {"primary": "rgb(10, 132, 255)", "background": "rgb(1, 1, 1)", "card": "rgb(18, 18, 18)",
+                                                "text": "rgb(229, 229, 231)", "border": "rgb(39, 39, 41)", "notification": "rgb(255, 69, 58)"},
+    ("react-native-paper", "MD3LightTheme"): {"primary": "rgb(103, 80, 164)", "onPrimary": "rgb(255, 255, 255)", "background": "rgb(255, 251, 254)",
+                                              "onBackground": "rgb(28, 27, 31)", "surface": "rgb(255, 251, 254)", "onSurface": "rgb(28, 27, 31)",
+                                              "onSurfaceVariant": "rgb(73, 69, 79)", "outline": "rgb(121, 116, 126)", "error": "rgb(179, 38, 30)"},
+    ("react-native-paper", "MD3DarkTheme"): {"primary": "rgb(208, 188, 255)", "onPrimary": "rgb(56, 30, 114)", "background": "rgb(28, 27, 31)",
+                                             "onBackground": "rgb(230, 225, 229)", "surface": "rgb(28, 27, 31)", "onSurface": "rgb(230, 225, 229)",
+                                             "onSurfaceVariant": "rgb(202, 196, 208)", "outline": "rgb(147, 143, 153)", "error": "rgb(242, 184, 181)"},
+}
+RN_BASE_THEMES[("expo-router", "DefaultTheme")] = RN_BASE_THEMES[("@react-navigation/native", "DefaultTheme")]
+RN_BASE_THEMES[("expo-router", "DarkTheme")] = RN_BASE_THEMES[("@react-navigation/native", "DarkTheme")]
+
+
+def _rn_base_colors(code: str, spreads: list[str]) -> tuple[str, dict[str, str]] | None:
+    """The library theme a map spreads (`...DarkTheme.colors`, imported as itself or renamed) and its colours."""
+    for sp in spreads:
+        local = sp.split(".")[0]
+        for names, spec in re.findall(r"import\s*\{([^}]*)\}\s*from\s*['\"](@react-navigation/native|expo-router|react-native-paper)['\"]", code):
+            for part in names.split(","):
+                bits = [x.strip() for x in part.split(" as ")]
+                if bits[-1] == local and (spec, bits[0]) in RN_BASE_THEMES:
+                    return bits[0], RN_BASE_THEMES[(spec, bits[0])]
+    return None
+
+
+def _rn_lib_spreads(code: str, spreads: list[str]) -> list[str]:
+    """The library themes a map is made of: `...LightTheme.colors` from react-native-paper → "React Native Paper's `LightTheme`"."""
+    libs = {"@react-navigation/native": "React Navigation", "expo-router": "React Navigation", "react-native-paper": "React Native Paper",
+            "@react-navigation/native-stack": "React Navigation"}
+    out, adapted = [], {}
+    for names, spec in re.findall(r"import\s*\{([^}]*)\}\s*from\s*['\"]([^'\"]+)['\"]", code):
+        for part in names.split(","):
+            bits = [x.strip() for x in part.split(" as ")]
+            if spec in libs and bits[-1]:
+                adapted[bits[-1]] = f"{libs[spec]}'s `{bits[0]}`"
+    for names in re.findall(r"const\s*\{([^}]*)\}\s*=\s*adaptNavigationTheme\(", code):     # Paper's adapter over React Navigation's
+        for part in names.split(","):
+            bits = [x.strip() for x in part.split(":")]
+            adapted[bits[-1]] = f"React Navigation's theme adapted by Paper (`{bits[0]}`)"
+    for sp in spreads:
+        hit = adapted.get(sp.split(".")[0])
+        if hit and hit not in out:
+            out.append(hit)
+    return out
+
+
+def _rn_order(colors: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    first = {k: i for i, k in enumerate(RN_SEMANTIC_FIRST)}
+    return sorted(colors, key=lambda kv: first.get(kv[0], len(first)))
+
+
+def _rn_pair_name(name: str) -> tuple[str, str] | None:
+    """`lightTheme` → (theme, light); `colorsDark` → (colors, dark); `DarkTheme` → (Theme, dark)."""
+    m = re.match(r"^(light|dark|Light|Dark|LIGHT|DARK)_?(\w*)$", name) or re.match(r"^(\w*?)_?(Light|Dark|light|dark|LIGHT|DARK)$", name)
+    if not m:
+        return None
+    a, b = m.group(1), m.group(2)
+    if a.lower() in ("light", "dark"):
+        return (b.lower() or "theme", a.lower())
+    return (a.lower() or "theme", b.lower())
+
+
+def rn_theme(root: Path, src_files: list[Path], aliases: list) -> dict:
+    """Where the app's look is declared: colour maps (light and dark when both exist), scales, the fonts it loads."""
+    res = _RNResolver(root, aliases)
+    cands = []
+    for p in _code_files(src_files, RN_CODE):
+        rp = p.relative_to(root)
+        dirs = {x.lower() for x in rp.parts[:-1]}
+        if dirs & RN_THEME_DIRS or RN_THEME_STEM.search(RN_PLATFORM.sub("", p.stem)):
+            if re.search(r"\.(test|spec|stories)$", p.stem) or dirs & {"__tests__", "node_modules"}:
+                continue
+            cands.append(p)
+    maps: list[dict] = []
+    scales: list[dict] = []
+    bases: list[dict] = []
+    for f in cands[:40]:
+        code, objs = res.objects(f)
+        for name, body in objs.items():
+            fl = _fields(body)
+            if "light" in fl and "dark" in fl and fl["light"].startswith("{") and fl["dark"].startswith("{"):
+                lc, _, _ = res.flat(f, _balanced(fl["light"], 0))
+                dc, _, _ = res.flat(f, _balanced(fl["dark"], 0))
+                if len(lc) >= 3:
+                    maps.append({"file": f, "name": name, "light": lc, "dark": dc, "scales": [], "spreads": [], "pair": True})
+                    continue
+            target = body
+            label = name
+            if "colors" in fl and fl["colors"].startswith("{"):
+                target, label = _balanced(fl["colors"], 0), f"{name}.colors"
+            colors, sc, spreads = res.flat(f, target)
+            if not colors and not sc and spreads and label.endswith(".colors"):
+                libs = _rn_lib_spreads(code, spreads)
+                if libs:
+                    bases.append({"file": f, "name": label[:-7], "bases": libs})
+                    continue
+            base = _rn_base_colors(code, spreads)
+            if base:                                   # the rest of the map is the library theme's: fill it in
+                have = {k for k, _ in colors}
+                colors += [(k, v) for k, v in base[1].items() if k not in have]
+                spreads = [base[0]]
+            if len(colors) >= 3 or len(sc) >= 2 or (spreads and colors):
+                maps.append({"file": f, "name": label, "light": colors, "dark": [], "scales": sc, "spreads": spreads, "pair": False})
+            nums = [(k, _lit(v)) for k, v in fl.items() if _lit(v) and re.match(r"^-?[\d.]+$", _lit(v) or "")]
+            if len(nums) >= 4 and re.search(r"spacing|space|gap|size|radi|rounded|inset", name, re.I):
+                scales.append({"file": f, "name": name, "values": nums[:10]})
+            for key in ("spacing", "space", "radii", "radius", "borderRadius", "fontSize", "fontSizes"):
+                if key in fl and fl[key].startswith("{"):
+                    inner = [(k, _lit(v)) for k, v in _fields(_balanced(fl[key], 0)).items() if _lit(v) and re.match(r"^-?[\d.]+$", _lit(v) or "")]
+                    if len(inner) >= 3:
+                        scales.append({"file": f, "name": f"{name}.{key}", "values": inner[:10]})
+    # Pair maps kept apart: `colors` in colors.ts with `colors` in colorsDark.ts; lightTheme / darkTheme.
+    paired: list[dict] = []
+    used = set()
+    for i, a in enumerate(maps):
+        if a["pair"] or i in used:
+            continue
+        for j, b in enumerate(maps):
+            if j <= i or j in used or b["pair"]:
+                continue
+            same_name = a["name"] == b["name"] and a["file"] != b["file"] and \
+                re.sub(r"[-_.]?dark", "", a["file"].stem, flags=re.I).lower() == re.sub(r"[-_.]?dark", "", b["file"].stem, flags=re.I).lower() and \
+                ("dark" in a["file"].stem.lower()) != ("dark" in b["file"].stem.lower())
+            pa, pb = _rn_pair_name(a["name"].split(".")[0]), _rn_pair_name(b["name"].split(".")[0])
+            by_name = pa and pb and pa[0] == pb[0] and pa[1] != pb[1]
+            if same_name or by_name:
+                light, dark = (a, b) if ("dark" in b["file"].stem.lower() if same_name else pb[1] == "dark") else (b, a)
+                paired.append({"file": light["file"], "darkFile": dark["file"], "name": light["name"] + (f" / {dark['name']}" if light["name"] != dark["name"] else ""),
+                               "light": light["light"], "dark": dark["light"], "scales": light["scales"], "spreads": light["spreads"], "pair": True})
+                used |= {i, j}
+                break
+    maps = [m for k, m in enumerate(maps) if k not in used] + paired
+    # The one to print first: a pair with the most semantic keys, then single maps; palettes (numbered keys) last.
+    def weight(m):
+        sem = sum(1 for k, _ in m["light"] if not re.search(r"\d", k))
+        return (not m["pair"], -sem, -len(m["scales"]))
+    maps.sort(key=weight)
+    semantic = [m for m in maps if any(not re.search(r"\d", k) for k, _ in m["light"]) or m["scales"]]
+    palettes = [m for m in maps if m not in semantic] if semantic else []
+    return {"maps": (semantic or maps)[:4], "palettes": [(m["name"], m["file"], len(m["light"])) for m in palettes][:3], "scales": scales[:4],
+            "bases": bases[:3]}
+
+
+def rn_theme_contrast(m: dict) -> list[str]:
+    """The text keys of a colour map against its background, per scheme (WCAG 1.4.3: 4.5:1)."""
+    light, dark = dict(m["light"]), dict(m.get("dark") or [])
+    bg = next((k for k in RN_BG_KEYS if k in light), None)
+    if not bg:
+        return []
+    out = []
+    for k in [k for k in light if RN_TEXT_KEY.search(k) and k != bg][:4]:
+        a = _rn_contrast(light[k], light[bg])
+        b = _rn_contrast(dark[k], dark[bg]) if k in dark and bg in dark else None
+        if a is None:
+            continue
+        out.append(f"{k} {a}" + (f" / {b}" if b is not None else "") + (" ✗" if a < 4.5 or (b is not None and b < 4.5) else ""))
+    lines = [f"text on `{bg}` ({'light / dark' if dark else 'light'}, 4.5:1 needed): " + " · ".join(out)] if out else []
+    on = []                                       # Material's pairs: onPrimary on primary, onSurface on surface
+    for k in [k for k in light if re.match(r"^on[A-Z]", k)]:
+        base = k[2].lower() + k[3:]
+        if base in light and base != bg:
+            a = _rn_contrast(light[k], light[base])
+            b = _rn_contrast(dark[k], dark[base]) if k in dark and base in dark else None
+            if a is not None:
+                on.append(f"{k} on {base} {a}" + (f" / {b}" if b is not None else "") + (" ✗" if a < 4.5 or (b is not None and b < 4.5) else ""))
+    if on:
+        lines.append("content on its colour (4.5:1 for text on it): " + " · ".join(on[:5]))
+    return lines
+
+
+def rn_style_usage(root: Path, src_files: list[Path], theme_files: set[Path]) -> dict:
+    """How components style themselves: StyleSheet, inline styles, NativeWind classes; the numbers and colours they use."""
+    fsz, rad, spc, lit_col, theme_col = (collections.Counter() for _ in range(5))
+    sheets = inline = class_names = files = typed = 0
+    for p in _code_files(src_files, (".tsx", ".jsx", ".ts", ".js")):
+        if p in theme_files or re.search(r"\.(test|spec|stories)$", p.stem):
+            continue
+        t = read(p, 200_000)
+        if "react-native" not in t and "StyleSheet" not in t and "style=" not in t:
+            continue
+        files += 1
+        sheets += "StyleSheet.create" in t
+        typed += bool(re.search(r":\s*(?:ThemedStyle<\s*)?(?:ViewStyle|TextStyle|ImageStyle)\b", t))
+        inline += len(re.findall(r"style=\{\{", t))
+        class_names += len(re.findall(r"\bclassName=", t))
+        for v in re.findall(r"\bfontSize\s*:\s*([\w.\[\]'\"]+)", t):
+            fsz[v.strip("'\"")] += 1
+        for v in re.findall(r"\bborderRadius\s*:\s*([\w.\[\]'\"]+)", t):
+            rad[v.strip("'\"")] += 1
+        for v in re.findall(r"\b(?:padding|margin)(?:Horizontal|Vertical|Top|Bottom|Left|Right|Start|End)?\s*:\s*([\w.\[\]'\"]+)|\b(?:gap|rowGap|columnGap)\s*:\s*([\w.\[\]'\"]+)", t):
+            x = (v[0] or v[1]).strip("'\"")
+            if x not in ("0", "auto", "undefined"):
+                spc[x] += 1
+        for v in re.findall(r"\b(?:color|backgroundColor|borderColor|tintColor|borderTopColor|borderBottomColor|shadowColor|placeholderTextColor)\s*[:=]\s*\{?\s*['\"](#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)|white|black)['\"]", t):
+            lit_col[v.lower()] += 1
+        for v in re.findall(r"\b(?:theme\.colors|colors|Colors\[[^\]]{1,40}\]|palette|theme)\.([A-Za-z]\w*)", t):
+            if v not in ("palette", "colors", "spacing", "typography"):
+                theme_col[v] += 1
+    return {"files": files, "sheets": sheets, "typed": typed, "inline": inline, "classNames": class_names,
+            "fontSize": fsz.most_common(6), "radius": rad.most_common(5), "spacing": spc.most_common(8),
+            "literalColors": sum(lit_col.values()), "literalTop": lit_col.most_common(4),
+            "themeColors": sum(theme_col.values()), "themeTop": theme_col.most_common(6)}
+
+
+def rn_fonts(root: Path, src_files: list[Path], deps: dict, app: dict) -> list[str]:
+    """The faces the app loads: useFonts / Font.loadAsync, @expo-google-fonts packages, the expo-font plugin."""
+    loaded: dict[str, str] = {}
+    where: list[str] = []
+    for p in _code_files(src_files, RN_CODE):
+        t = read(p, 200_000)
+        bodies = [_balanced(t, m.end() - 1) for m in re.finditer(r"\b(?:useFonts|loadAsync)\(\s*\{", t)]
+        for name in re.findall(r"\b(?:useFonts|loadAsync)\(\s*([A-Za-z_]\w*)\s*\)", t):
+            src = _js_source_of(root, p, t, name, ts_aliases(root))
+            objs = _rn_objects(_no_comments(read(src, 200_000))) if src else {}
+            if name in objs:
+                bodies.append(objs[name])
+        for body in bodies:
+            for k, v in _fields(body).items():
+                if k.startswith("..."):
+                    continue
+                rq = re.search(r"require\(\s*['\"]([^'\"]+)['\"]", v)
+                loaded.setdefault(k.strip("'\""), Path(rq.group(1)).name if rq else v.strip()[:40])
+            if rel(root, p) not in where:
+                where.append(rel(root, p))
+    out = []
+    if loaded:
+        out.append("`useFonts` in " + ", ".join(f"`{w}`" for w in where[:3]) + ": " + ", ".join(f"{k} (`{v}`)" if v.endswith((".ttf", ".otf")) else k for k, v in list(loaded.items())[:6]))
+    g = sorted(k for k in deps if k.startswith("@expo-google-fonts/"))
+    if g:
+        out.append("bundled from npm (no network needed): " + ", ".join(f"`{k}`" for k in g))
+    if app.get("pluginFonts"):
+        out.append("the expo-font plugin embeds " + ", ".join(app["pluginFonts"][:4]) + " in the native build; the web loads a face only through `useFonts`")
+    return out
+
+
+def rn_dark(root: Path, src_files: list[Path], app: dict, deps: dict) -> tuple[str | None, bool]:
+    """How dark mode switches: the device's scheme (useColorScheme), an app setting kept in storage, or not at all."""
+    n_scheme, stored, nativewind, mmkv_id = 0, None, False, "mmkv.default"
+    for p in _code_files(src_files, RN_CODE):
+        t = read(p, 200_000)
+        if re.search(r"\buseColorScheme\s*\(|\bAppearance\.getColorScheme\(|\buseTheme\(\)\.dark\b|\bcolorScheme\b|\buseUniwind\s*\(", t):
+            n_scheme += 1
+        m = re.search(r"useMMKV(?:String|Boolean)?\(\s*['\"]([^'\"]*(?:theme|scheme|mode|appearance)[^'\"]*)['\"]", t, re.I) \
+            or re.search(r"(?:const|let)\s+\w*THEME\w*\s*=\s*['\"]([\w.:-]+)['\"]", t)
+        if m and not stored:
+            mmkv = "MMKV" in t or "mmkv" in t
+            stored = (m.group(1), mmkv)
+        nativewind = nativewind or bool(re.search(r"\bcolorScheme\.set\(|\bsetColorScheme\(|Uniwind\.setTheme\(", t))
+        idm = re.search(r"(?:new\s+MMKV|createMMKV)\(\s*\{[^}]*\bid\s*:\s*['\"]([^'\"]+)['\"]", t)
+        if idm:
+            mmkv_id = idm.group(1)
+    if not n_scheme and not stored:
+        return None, False
+    bits = [f"follows the device's scheme (read in {n_scheme} file{'s' if n_scheme > 1 else ''})" if n_scheme else "chosen in the app"]
+    if stored:
+        key = f"{mmkv_id}\\{stored[0]}" if stored[1] else stored[0]
+        bits.append(f"a choice the user makes is kept in {'MMKV' if stored[1] else 'storage'} `{stored[0]}` (on the web: localStorage `{key}`)")
+    if app.get("uiStyle") in ("light", "dark"):
+        bits.append(f"app.json sets `userInterfaceStyle: \"{app['uiStyle']}\"`, so the native build stays {app['uiStyle']} whatever the code says")
+    line = "; ".join(bits) + (". The renderer tries a dark device on its own (react-native-web reads the scheme in JS)" if app.get("web") else "")
+    if stored and app.get("web"):
+        line += f"; to render the app's own dark setting: `--dark-storage '{key}=dark'`"
+    return line, True
+
+
+def rn_storage(root: Path, src_files: list[Path], aliases: list) -> dict:
+    """The keys the app keeps on the device (MMKV, AsyncStorage, SecureStore), and what they are called in a browser."""
+    keys: dict[str, str] = {}
+    mmkv_id = "mmkv.default"
+    call = re.compile(r"(useMMKV\w*|\b\w*[sS]torage\.(?:getString|getBoolean|getNumber|set|remove|delete)|\b(?:getItem|setItem|removeItem|getItemAsync|setItemAsync|deleteItemAsync|multiGet)(?:<[^>()]*>)?)\(\s*(?:['\"]([^'\"]+)['\"]|([A-Za-z_]\w*))")
+    for p in _code_files(src_files, RN_CODE):
+        t = read(p, 200_000)
+        if not re.search(r"MMKV|mmkv|AsyncStorage|SecureStore|[sS]torage\.|getItem|setItem", t):
+            continue
+        idm = re.search(r"(?:new\s+MMKV|createMMKV)\(\s*\{[^}]*\bid\s*:\s*['\"]([^'\"]+)['\"]", t)
+        if idm:
+            mmkv_id = idm.group(1)
+        consts = dict(re.findall(r"(?:const|let)\s+(\w+)\s*=\s*['\"]([\w.:@/-]+)['\"]", t))
+        for m in call.finditer(t):
+            fn, key = m.group(1), m.group(2) or consts.get(m.group(3) or "")
+            if not key or len(key) > 60:
+                continue
+            if "SecureStore" in t and "Async" in fn:
+                kind = "SecureStore"
+            elif fn.startswith("useMMKV") or "mmkv" in t.lower():
+                kind = "MMKV"
+            elif "AsyncStorage" in t:
+                kind = "AsyncStorage"
+            else:                                  # a wrapper: getItem from the app's own storage module
+                src = _js_source_of(root, p, t, fn.split("<")[0].split(".")[-1], aliases) if fn.split("<")[0] in ("getItem", "setItem", "removeItem") else None
+                st = read(src, 100_000) if src else ""
+                kind = "MMKV" if "mmkv" in st.lower() else "AsyncStorage" if "AsyncStorage" in st else "SecureStore" if "SecureStore" in st else None
+            if kind:
+                keys.setdefault(key, kind)
+    return {"keys": keys, "mmkvId": mmkv_id}
+
+
+def rn_start(root: Path, src_files: list[Path], css_files: list[Path], deps: dict, app: dict) -> dict:
+    """Everything the Start-here section needs for a React Native app."""
+    aliases = ts_aliases(root)
+    if app["router"] == "Expo Router":
+        site = expo_router_site(root, app["appDir"], aliases)
+        pages, routes = site["pages"], site["routes"]
+        layouts, before = [], []
+        rl = site["rootLayout"]
+        if rl:
+            t = rl["text"]
+            prov = [x for x in dict.fromkeys(re.findall(r"<(\w*Provider|GestureHandlerRootView|SafeAreaProvider|KeyboardProvider|PortalHost)\b", t))][:6]
+            chrome = [rl["kind"]] if rl["kind"] and rl["kind"] != "slot" else []
+            layouts.append({"file": rel(root, rl["file"]), "css": [c for c in re.findall(r"import\s+['\"]([^'\"]+\.css)['\"]", t)], "fonts": [],
+                            "providers": prov, "chrome": chrome, "scope": "", "scopeText": "wraps every page"})
+            if "preventAutoHideAsync" in t:
+                before.append(f"`{rel(root, rl['file'])}` keeps the splash screen up (`SplashScreen.preventAutoHideAsync`) until it hides it: on the web there is no splash, the page shows once the fonts load")
+        for d, lay in sorted(site["layouts"].items()):
+            if lay is rl:
+                continue
+            scope = rel(root, d)
+            layouts.append({"file": rel(root, lay["file"]), "css": [], "fonts": [], "providers": [], "chrome": [lay["kind"]] if lay["kind"] else [],
+                            "scope": scope, "scopeText": f"wraps `{scope}/*`"})
+        for lay in site["layouts"].values():
+            for g in lay["guards"]:
+                before.append(f"`{rel(root, lay['file'])}`: {g}")
+        if site["apis"]:
+            before.append("API routes (`+api`): " + ", ".join(f"`{a}`" for a in site["apis"][:6]) + " — served by `expo start` itself")
+        router = f"Expo Router, file routes in {rel(root, app['appDir'])}/"
+    else:
+        nav = rn_navigation(root, src_files, aliases)
+        pages, routes = rn_screen_pages(root, nav)
+        layouts, before = [], []
+        for n in nav["navs"]:
+            if n["initial"]:
+                before.append(f"`{rel(root, n['file'])}`: {n['name']} starts at `{n['initial']}` (`initialRouteName`)")
+        if nav["navs"] and not nav["linking"]:
+            before.append("no linking config: on the web every screen shows at `/`, so the render reaches a screen past the first by tapping to it (`--act click:text=…`)")
+        router = "React Navigation" + (", with a linking config" if nav["linking"] else "")
+    store = rn_storage(root, src_files, aliases)
+    if store["keys"]:
+        web = {"MMKV": lambda k: f"{store['mmkvId']}\\{k}", "AsyncStorage": lambda k: k}
+        shown = [f"`{k}` ({v})" for k, v in list(store["keys"].items())[:8]]
+        auth = [k for k, v in store["keys"].items() if re.search(r"token|auth|session|jwt|credential|user", k, re.I) and v in web]
+        secure = [k for k, v in store["keys"].items() if v == "SecureStore"]
+        line = "the app keeps state on the device: " + ", ".join(shown)
+        if any(v == "MMKV" for v in store["keys"].values()):
+            line += f"; on the web MMKV is localStorage under `{store['mmkvId']}\\KEY`"
+        if auth:
+            k = auth[0]
+            line += f"; a signed-in screen renders with that session in place: `--storage '{web[store['keys'][k]](k)}=…'` (the value the app writes there)"
+        if secure:
+            line += f"; SecureStore ({', '.join(f'`{k}`' for k in secure[:2])}) has no web version: a session kept there cannot be set in the browser"
+        before.append(line)
+    theme = rn_theme(root, src_files, aliases)
+    theme_files = {m["file"] for m in theme["maps"]} | {m.get("darkFile") for m in theme["maps"] if m.get("darkFile")}
+    usage = rn_style_usage(root, src_files, theme_files)
+    for b in theme["bases"]:
+        b["file"] = rel(root, b["file"])
+    for m in theme["maps"]:                      # paths as the report prints them (and --json can carry)
+        m["file"] = rel(root, m["file"])
+        if m.get("darkFile"):
+            m["darkFile"] = rel(root, m["darkFile"])
+    theme["palettes"] = [(n, rel(root, f), c) for n, f, c in theme["palettes"]]
+    for sc in theme["scales"]:
+        sc["file"] = rel(root, sc["file"])
+    kit_uses = []
+    for pkg, label in RN_KITS.items():
+        if pkg in deps or (label == "React Native Paper" and any("react-native-paper" in read(p, 60_000) for p in _code_files(src_files, RN_CODE)[:200])):
+            uses = _react_kit_uses(src_files, (pkg,) if label != "Tamagui" else ("tamagui", "@tamagui/core"))
+            if uses and label not in [k for k, _ in kit_uses]:
+                kit_uses.append((label, uses))
+    twins = []
+    web_branches = 0
+    for p in _code_files(src_files, RN_CODE):
+        if ".web" in p.stem and RN_PLATFORM.search(p.stem):
+            base = p.with_name(RN_PLATFORM.sub("", p.stem) + p.suffix)
+            if base.is_file() or any(base.with_suffix(s).is_file() for s in RN_CODE):
+                twins.append(rel(root, p))
+        t = read(p, 200_000)
+        web_branches += bool(re.search(r"Platform\.OS\s*===?\s*['\"]web['\"]|Platform\.select\(\s*\{[^}]*\bweb\s*:", t))
+    a11y = collections.Counter()
+    for p in _code_files(src_files, (".tsx", ".jsx")):
+        t = read(p, 200_000)
+        a11y["pressables"] += len(re.findall(r"<(?:Pressable|TouchableOpacity|TouchableHighlight|TouchableWithoutFeedback|TouchableRipple)\b", t))
+        a11y["roles"] += len(re.findall(r"\b(?:accessibilityRole|role)=", t))
+        a11y["labels"] += len(re.findall(r"\b(?:accessibilityLabel|aria-label)=", t))
+        a11y["noScale"] += len(re.findall(r"allowFontScaling=\{\s*false\s*\}", t))
+        a11y["hitSlop"] += len(re.findall(r"\bhitSlop=", t))
+    dark_line, dark_on = rn_dark(root, src_files, app, deps)
+    native_only = [f"`{k}` ({v})" for k, v in RN_NATIVE_ONLY.items() if k in deps]
+    tailwind_rn = next((label for key, label in (("nativewind", "NativeWind"), ("uniwind", "Uniwind"), ("twrnc", "twrnc")) if key in deps), None)
+    return {"pages": pages, "routes": routes, "layouts": layouts, "stackBefore": before, "router": router,
+            "theme": theme, "usage": usage, "kits": kit_uses, "twins": twins, "webBranches": web_branches, "a11y": dict(a11y),
+            "dark": dark_line, "darkOn": dark_on, "fonts": rn_fonts(root, src_files, deps, app), "nativeOnly": native_only, "tailwindRN": tailwind_rn}
+
+
+def md_rn_lines(rn: dict, app: dict) -> list[str]:
+    """Start-here lines for a React Native app: its kit, how it styles, the web twins, the accessibility props."""
+    out = []
+    for label, uses in rn["kits"]:
+        out.append(f"- {label} — its components by use (counted by the files that import them): " + " · ".join(f"{n} ×{c}" for n, c in uses)
+                   + ". A match task builds with these and the kit's theme, not hand-rolled views.")
+    u = rn["usage"]
+    if u["files"]:
+        how = []
+        if u["sheets"]:
+            how.append(f"`StyleSheet.create` in {u['sheets']} files")
+        if u.get("typed"):
+            how.append(f"style objects typed `ViewStyle` / `TextStyle` (or themed style functions) in {u['typed']} files")
+        if u["inline"]:
+            how.append(f"inline `style={{{{…}}}}` ×{u['inline']}")
+        if u["classNames"] and rn.get("tailwindRN"):
+            how.append(f"`className` ×{u['classNames']} ({rn['tailwindRN']}: Tailwind classes)")
+        cols = f"colours from the theme ×{u['themeColors']}" + (f" ({', '.join(f'`{k}` ×{n}' for k, n in u['themeTop'][:4])})" if u["themeTop"] else "") \
+            + f", literals ×{u['literalColors']}" + (f" ({', '.join(f'`{k}` ×{n}' for k, n in u['literalTop'][:3])})" if u["literalTop"] else "")
+        out.append("- Styling: " + " · ".join(how or ["no StyleSheet or className found"]) + f" · {cols}. A new component styles itself the same way and takes colours from the theme.")
+    if rn["twins"]:
+        out.append(f"- Web twins ({len(rn['twins'])}): " + ", ".join(f"`{x}`" for x in rn["twins"][:6])
+                   + " — the render shows these, the phone shows the file without `.web`: a fix to one is not a fix to the other")
+    if rn["webBranches"]:
+        out.append(f"- `Platform.OS === 'web'` or `Platform.select({{ web }})` in {rn['webBranches']} file{'s' if rn['webBranches'] > 1 else ''}: what the render shows there differs from the phone")
+    a = rn["a11y"]
+    if a.get("pressables"):
+        out.append(f"- Accessibility props: {a['pressables']} pressables, {a.get('roles', 0)} roles, {a.get('labels', 0)} labels"
+                   + (f" · `allowFontScaling={{false}}` ×{a['noScale']}: that text ignores the user's font size" if a.get("noScale") else "")
+                   + (f" · `hitSlop` ×{a['hitSlop']}: the phone's touch area is larger than the box the render measures" if a.get("hitSlop") else ""))
+    return out
+
+
+def md_rn_tokens(rn: dict, root: Path) -> list[str]:
+    out = []
+    for m in rn["theme"]["maps"]:
+        files = f"`{m['file']}`" + (f", `{m['darkFile']}`" if m.get("darkFile") and m["darkFile"] != m["file"] else "")
+        label = m["name"].replace("default.colors", "the default export's colors").replace("default", "the default export")
+        out.append(f"### React Native theme — `{label}` in {files}" if "default" not in m["name"] else f"### React Native theme — {label} of {files}")
+        light, dark = _rn_order(m["light"]), dict(m.get("dark") or [])
+        light += [(k, "—") for k in dark if k not in dict(light)]
+        semantic = [(k, v) for k, v in light if not re.search(r"\d{2,}$", k)]
+        numbered = len(light) - len(semantic)
+        if semantic:
+            out.append(("- light / dark: " if dark else "- colours: ") + " · ".join(f"{k} {v}" + (f" / {dark[k]}" if k in dark else "") for k, v in semantic[:12])
+                       + (" …" if len(semantic) > 12 else ""))
+        if numbered:
+            out.append(f"- {numbered} numbered palette colours (prefer the names above)" if semantic else f"- palette: {numbered} numbered colours")
+        if m["scales"]:
+            out.append("- scales (500 or middle step): " + " · ".join(m["scales"][:8]))
+        if m["spreads"]:
+            out.append("- on top of: " + ", ".join(f"`{s}`" for s in m["spreads"][:3]) + " (values it does not set are that theme's"
+                       + (", filled in above" if any(s in ("DefaultTheme", "DarkTheme", "MD3LightTheme", "MD3DarkTheme") for s in m["spreads"]) else "") + ")")
+        out += [f"- {x}" for x in rn_theme_contrast(m)]
+    for b in rn["theme"].get("bases") or []:
+        out.append(f"### `{b['name']}` in `{b['file']}` — no colours of its own: " + " + ".join(b["bases"]))
+    if rn["theme"].get("palettes"):
+        out.append("- palettes the names above are drawn from: " + ", ".join(f"`{n}` in `{f}` ({c} colours)" for n, f, c in rn["theme"]["palettes"]))
+    for s in rn["theme"]["scales"]:
+        out.append(f"### `{s['name']}` in `{s['file']}`")
+        out.append("- " + " · ".join(f"{k} {v}" for k, v in s["values"]))
+    return out
+
+
+def md_rn_usage(rn: dict) -> list[str]:
+    u = rn["usage"]
+    out = []
+    if u["fontSize"]:
+        out.append("- font sizes: " + ", ".join(f"{k} ×{n}" for k, n in u["fontSize"]))
+    if u["radius"]:
+        out.append("- border radius: " + ", ".join(f"{k} ×{n}" for k, n in u["radius"]))
+    if u["spacing"]:
+        out.append("- padding / margin / gap: " + ", ".join(f"{k} ×{n}" for k, n in u["spacing"]))
+    return out
+
+
 def page_signatures(root: Path, src_files: list[Path], vocab_names: list[str], framework: str | None = None, deps: dict | None = None) -> dict:
     pages, routes = [], []
     is_next, is_nuxt = framework == "Next.js", framework == "Nuxt"
@@ -4218,7 +5250,11 @@ def dev_setup(root: Path) -> dict:
     pj = root / "package.json"
     if pj.exists():
         try:
-            scripts = {k: v for k, v in json.loads(read(pj)).get("scripts", {}).items() if k in {"dev", "start", "preview"} or k.startswith("dev:")}
+            pkg = json.loads(read(pj))
+            native = any(k in {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})} for k in ("react-native", "expo"))
+            scripts = {k: v for k, v in pkg.get("scripts", {}).items() if k in {"dev", "start", "preview"} or k.startswith("dev:")}
+            if native and "web" in pkg.get("scripts", {}):        # a React Native app runs in a browser through its `web` script
+                scripts = {"web": pkg["scripts"]["web"], **scripts}
         except (json.JSONDecodeError, AttributeError):
             pass
     return {"proxies": proxies[:6], "helpers": sorted(helpers), "scripts": scripts, "next": next_cfg}
@@ -4250,12 +5286,12 @@ def storage_keys(root: Path, src_files: list[Path]) -> list[str]:
     return [f"`{f}` keeps state in " + ", ".join(ks[:5]) + " — seed it with `--init-script` to render a populated page" for f, ks in list(by_file.items())[:3]]
 
 
-def gates(root: Path, src_files: list[Path]) -> list[str]:
+def gates(root: Path, src_files: list[Path], native: bool = False) -> list[str]:
     out = []
     idx = root / "index.html"
     if idx.exists() and re.search(r"<script>(?:(?!</script>).)*?(matchMedia|localStorage|data-?theme|dataset\.theme)", read(idx), re.S):
         out.append("`index.html` decides the theme in an inline script at boot (`data-theme`); the dark pass reloads for it")
-    for p in src_files:
+    for p in [] if native else src_files:
         if SPLASH_STEM.match(p.stem) and p.suffix in {".tsx", ".jsx", ".vue", ".svelte"} \
                 and not {x.lower() for x in p.relative_to(root).parts[:-1]} & {"pages", "views", "screens"}:
             t = read(p, 100_000)
@@ -4283,6 +5319,8 @@ def start_here(root: Path, src_files: list[Path], css_files: list[Path], stack: 
     texts = [read(p, 200_000) for p in ui_files[:MAX_SRC_FILES]]
     ng = angular_start(root, src_files, css_files, deps) if stack.get("framework") == "Angular" else None
     lv = laravel_start(root, src_files, css_files, deps) if stack.get("framework") == "Laravel" else None
+    app = rn_app(root, deps) if stack.get("framework") in ("Expo", "React Native") else None
+    rn = rn_start(root, src_files, css_files, deps, app) if app else None
     site = None
     if lv:
         vocab = css_vocabulary(root, css_files, texts + [read(p, 200_000) for p in src_files if p.name.endswith(".blade.php")][:MAX_SRC_FILES])
@@ -4300,6 +5338,9 @@ def start_here(root: Path, src_files: list[Path], css_files: list[Path], stack: 
         texts += ng["inlineTemplates"]
         vocab = css_vocabulary(root, [c for c in css_files if c not in ng["scopedCss"]], texts, skip=r"(?:mat|mdc|cdk)-")
         sig = {"pages": ng["pages"], "routes": ng["routes"]}
+    elif rn:      # a web-only CSS Module (a `.web.tsx` twin's) is local to it, as elsewhere
+        vocab = css_vocabulary(root, [c for c in css_files if not re.search(r"\.module\.\w+$", c.name)], texts)
+        sig = {"pages": rn["pages"][:32], "routes": rn["routes"][:30]}
     else:                   # a CSS Module's classes are local to its component: not a shared vocabulary
         vocab = css_vocabulary(root, [c for c in css_files if not re.search(r"\.module\.\w+$", c.name)], texts)
         sig = page_signatures(root, src_files, [v["name"] for v in vocab], stack.get("framework"), deps)
@@ -4309,12 +5350,15 @@ def start_here(root: Path, src_files: list[Path], css_files: list[Path], stack: 
     notes = {"Nuxt": "references/stacks/nuxt.md", "Vue": "references/stacks/vue.md", "SvelteKit": "references/stacks/sveltekit.md",
              "Svelte": "references/stacks/sveltekit.md", "Astro": "references/stacks/astro.md",
              "Angular": "references/stacks/angular.md", "Laravel": "references/stacks/laravel.md",
-             "Eleventy": "references/stacks/static.md"}.get(stack.get("framework") or "") or ("references/stacks/static.md" if site else None)
+             "Eleventy": "references/stacks/static.md", "Expo": "references/stacks/react-native.md",
+             "React Native": "references/stacks/react-native.md"}.get(stack.get("framework") or "") or ("references/stacks/static.md" if site else None)
     dev = dev_setup(root)
     theme = theme_mechanism(root, css_files, stack, src_files)
-    kits = kit_start(root, src_files, css_files, deps) if not (ng or lv or site) else {"kits": [], "styled": None, "modules": None}
-    dyn = runtime_routes(root, src_files) if not (ng or lv or site) else None
-    hashed = hash_history(root, src_files) if not (ng or lv or site) else None
+    kits = kit_start(root, src_files, css_files, deps) if not (ng or lv or site or rn) else {"kits": [], "styled": None, "modules": None}
+    dyn = runtime_routes(root, src_files) if not (ng or lv or site or rn) else None
+    hashed = hash_history(root, src_files) if not (ng or lv or site or rn) else None
+    if rn:
+        theme = rn["dark"]
     kit_line, kit_dark_on = kit_dark(kits, root, src_files)
     if kit_line and not (theme and "--dark-storage" in theme):
         theme = kit_line
@@ -4326,9 +5370,12 @@ def start_here(root: Path, src_files: list[Path], css_files: list[Path], stack: 
         **sig,
         "layouts": (next_layouts(root) if is_next else nuxt_layouts(root, src_files) if is_nuxt else sveltekit_layouts(root) if is_kit
                     else astro_layouts(root, src_files) if is_astro else ng["layouts"] if ng else site["layouts"] if site
-                    else lv["layouts"] if lv else []),
+                    else lv["layouts"] if lv else rn["layouts"] if rn else []),
         "stackBefore": (sveltekit_before(root, deps) if is_kit else astro_before(root, deps) if is_astro else ng["stackBefore"] if ng
-                        else site["stackBefore"] if site else lv["stackBefore"] if lv else []) + ([dyn] if dyn else []) + ([hashed] if hashed else []),
+                        else site["stackBefore"] if site else lv["stackBefore"] if lv else rn["stackBefore"] if rn else [])
+                       + ([dyn] if dyn else []) + ([hashed] if hashed else []),
+        "rn": {**{k: rn[k] for k in ("router", "theme", "usage", "kits", "twins", "webBranches", "a11y", "darkOn", "fonts", "nativeOnly", "tailwindRN")},
+               "web": app["web"], "expo": app["expo"], "webOutput": app["webOutput"], "uiStyle": app["uiStyle"]} if rn else None,
         "bladeUsed": lv["used"] if lv else [],
         "bladeKit": lv["kit"] if lv else None,
         "laravel": {"router": lv["router"]} if lv else None,
@@ -4341,7 +5388,7 @@ def start_here(root: Path, src_files: list[Path], css_files: list[Path], stack: 
         "nuxtui": nuxt_ui(root, src_files, deps),
         "nuxtBefore": nuxt_before(root, deps, src_files) if is_nuxt else [],
         "nuxt": is_nuxt,
-        "vite": "vite" in deps and not is_next and not is_nuxt and not is_astro and not ng and not lv,
+        "vite": "vite" in deps and not is_next and not is_nuxt and not is_astro and not ng and not lv and not rn,
         "umi": stack.get("framework") == "Umi",
         "stackNotes": notes,
         "theme": theme,
@@ -4356,8 +5403,8 @@ def start_here(root: Path, src_files: list[Path], css_files: list[Path], stack: 
         "copy": copy_mechanism(root, src_files, deps),
         "boot": boot_requests(root, src_files),
         "dev": dev,
-        "gates": gates(root, src_files) + [s for s in storage_keys(root, src_files)      # a key a guard or the theme line already names
-                                           if not ng or not any(s.split("`")[1] in b for b in ng["stackBefore"] + [theme or ""])],
+        "gates": gates(root, src_files, native=bool(rn)) + [s for s in ([] if rn else storage_keys(root, src_files))   # a key a guard or the theme line already names
+                                                            if not ng or not any(s.split("`")[1] in b for b in ng["stackBefore"] + [theme or ""])],
     }
 
 
@@ -4413,6 +5460,8 @@ def md_start_here(sh: dict) -> list[str]:
         out.append("- Used most (Blade components, counted by the views that use them): " + " · ".join(
             f"`{rel_s(u['file'])}` `<{u['tag']}>` ({u['views']}" + (f"; props {', '.join(u['props'])}" if u["props"] else "") + ")" for u in sh["bladeUsed"]))
     out += md_kit_lines(sh.get("kits") or {})
+    if sh.get("rn"):
+        out += md_rn_lines(sh["rn"], {})
     if sh.get("ngUsed"):
         out.append("- Used most (by selector, counted by the templates that use them): " + " · ".join(
             f"`{u['file']}` `<{u['selector']}>` ({u['templates']}" + (f"; inputs {', '.join(u['inputs'])}" if u["inputs"] else "")
@@ -4446,6 +5495,8 @@ def md_start_here(sh: dict) -> list[str]:
                     wrappers_named.add(ins["file"])
             if pg.get("routeGuards"):
                 bits.append("behind " + ", ".join(pg["routeGuards"]))
+            if pg.get("when"):
+                bits.append(pg["when"])
             r = pg.get("renders")
             if r and r.get("wrapper"):
                 bits.append(f"inside {r['name']}" + ("" if r["file"] in wrappers_named else f" (`{r['file']}` · {r['lines']} lines: the chrome, its "
@@ -4524,6 +5575,16 @@ def md_start_here(sh: dict) -> list[str]:
         elif sh.get("ng"):
             port = sh["ng"].get("port")
             line += f" — `ng serve` listens on :{port} (`angular.json`)" if port else " — `ng serve` listens on :4200 unless `--port` says otherwise"
+        elif sh.get("rn"):
+            r = sh["rn"]
+            line += (" — `expo start --web` serves the app through react-native-web at :8081 (`--port` changes it); the first request bundles it, which takes a while: render once it answers"
+                     if r["web"] and r["expo"] else " — Metro serves the bundle at :8081" + ("; with `react-native-web` a web entry can render it" if r["web"] else ""))
+            if r["web"] is None:
+                line += "; no `react-native-web` in the dependencies: the app does not run in a browser (`npx expo install react-native-web react-dom` adds it), so the renderer cannot show it — check screens by the rules in the stack notes"
+            if r["nativeOnly"]:
+                many = len(r["nativeOnly"]) > 1
+                line += "; " + ", ".join(r["nativeOnly"]) + (" have no web version: screens that use them fail or render empty in the browser" if many
+                                                             else " has no web version: a screen that uses it fails or renders empty in the browser")
         elif sh.get("umi"):
             line += " — `max dev` listens on :8000 unless `PORT` says otherwise, and answers `/api` from `mock/` unless `MOCK=none`"
         elif sh.get("vite"):
@@ -4561,8 +5622,12 @@ def md(data: dict) -> str:
     site = (data.get("startHere") or {}).get("site")
     if site and (site["kits"] or site["libs"]):
         bits.append(" · ".join(x for x in (site["kits"], ", ".join(site["libs"])) if x))
-    if s["framework"] in ("Nuxt", "Vue", "SvelteKit", "Svelte", "Astro", "Angular", "Laravel", "Eleventy") and s.get("frameworkVersion"):
+    if s["framework"] in ("Nuxt", "Vue", "SvelteKit", "Svelte", "Astro", "Angular", "Laravel", "Eleventy", "Expo", "React Native") and s.get("frameworkVersion"):
         bits[-1] = bits[-1].replace(s["framework"], f"{s['framework']} {s['frameworkVersion']}", 1)
+    if s.get("reactNative") and s["framework"] == "Expo":
+        bits.append(f"React Native {s['reactNative']}")
+    if s["framework"] in ("Expo", "React Native"):
+        bits.append(f"react-native-web {s['rnWeb']}" if s.get("rnWeb") else "no react-native-web (no web build)")
     if s["react"]:
         bits.append(f"React {s['react']}")
     if s.get("vue") and s["framework"] != "Vue":
@@ -4615,6 +5680,8 @@ def md(data: dict) -> str:
     for key, snippet in t["configExtend"].items():
         out += [f"### tailwind.config `extend.{key}`", "```js", snippet, "```"]
     kit_md = md_kit_tokens((data.get("startHere") or {}).get("kits") or {})
+    rn = (data.get("startHere") or {}).get("rn")
+    kit_md += md_rn_tokens(rn, Path(data["root"])) if rn else []
     out += kit_md
     if not (t["theme"] or t["root"] or t.get("sass") or t["configExtend"] or kit_md):
         out.append("- none declared (no @theme, :root vars, Sass variables, or config extend)")
@@ -4635,6 +5702,8 @@ def md(data: dict) -> str:
     for kit in ((data.get("startHere") or {}).get("kits") or {}).get("kits") or []:
         if kit.get("fonts"):
             out.append(f"- {kit['kit']} theme: " + ", ".join(kit["fonts"]))
+    for line in (rn or {}).get("fonts") or []:
+        out.append(f"- {line}")
     fontsource = sorted(k for k in (s.get("deps") or {}) if k.startswith("@fontsource"))
     if fontsource:
         out.append("- loaded from npm (no network needed): " + ", ".join(f"`{k}`" for k in fontsource))
@@ -4661,6 +5730,11 @@ def md(data: dict) -> str:
         out.append("- not a Tailwind project: the look is the kit's theme and components above; class counts are left out")
         u = {**u, "radius": [], "shadow": [], "textSize": [], "spacing": [], "arbitraryTotal": 0}
         total = -1
+    elif rn:                  # React Native: StyleSheet numbers; Tailwind counts only where NativeWind / Uniwind classes are used
+        out += md_rn_usage(rn)
+        if not s.get("tailwind") or total < 10:
+            u = {**u, "radius": [], "shadow": [], "textSize": [], "spacing": [], "arbitraryTotal": 0}
+            total = -1
     if total > 0:
         out.append("- color families: " + ", ".join(f"{k} {n}" for k, n in u["colorFamilies"]) +
                    f"  → raw {u['rawTotal']} / semantic {u['semanticTotal']}")
@@ -4724,6 +5798,8 @@ def main() -> int:
         stack["router"] = sh["ng"]["router"]
     if sh and sh.get("laravel"):
         stack["router"] = sh["laravel"]["router"]
+    if sh and sh.get("rn"):
+        stack["router"] = sh["rn"]["router"]
     if sh and sh.get("site") and not stack.get("framework"):
         stack["framework"] = sh["site"]["kind"]
     data = {

@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "Harbour Orders",
+    "slug": "harbour-orders",
+    "scheme": "harbour",
+    "userInterfaceStyle": "automatic",
+    "web": {
+      "output": "static",
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0E7490"
+        }
+      ]
+    ]
+  }
+}

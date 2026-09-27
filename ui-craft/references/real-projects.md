@@ -57,3 +57,7 @@ Run them after the last render, not alongside it: `tsc --noEmit` still writes `t
 ## Next.js
 
 `next dev` is slower to answer; wait for the port, then render the route **as `http://localhost:PORT`**, not `127.0.0.1`: since 15.2 the dev server refuses its own `/_next/*` scripts from any other host (403), the page is then never hydrated, and the report says so. Pages are server components unless they say `'use client'`: the `requests` line reads *none*, the data came with the HTML, and `--mock` cannot answer it — start what the `dev` script starts (a database, a content compiler). Fonts loaded through `next/font` show as loaded in the report.
+
+## React Native or Expo
+
+Serve it with `npx expo start --web` (the `web` script) and render the URL once it answers; the first request bundles the app, and a load that times out is retried once. A screen behind sign-in or onboarding renders with the state the app keeps on the device put in place: `--storage 'mmkv.default\KEY=…'` for MMKV, `--storage KEY=…` for AsyncStorage (the inspector prints the keys). Without a linking config, React Navigation shows every screen at `/`: tap to the one you want with `--act`. An app without `react-native-web` cannot be rendered; `references/stacks/react-native.md` has what to check by reading.

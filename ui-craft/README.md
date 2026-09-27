@@ -3,8 +3,8 @@
 A Claude Code skill for UI work in web projects built with React, Vue, Svelte, Astro,
 Angular, Laravel Blade or plain HTML (Vite, Next.js, Nuxt, SvelteKit, Angular CLI, Livewire,
 Inertia, Eleventy, Jekyll; Tailwind, Bootstrap, MUI, Ant Design, Chakra, Element Plus, Vuetify,
-styled-components, CSS Modules or plain CSS) that
-**renders what it built and measures it** before calling it done.
+styled-components, CSS Modules or plain CSS), and in React Native / Expo apps through
+react-native-web, that **renders what it built and measures it** before calling it done.
 
 Most UI skills give the model a database of styles and palettes. ui-craft gives it
 the three things it actually lacks: eyes (screenshots at three viewports, light and
@@ -147,6 +147,7 @@ Verified (render.mjs · .ui-craft/pricing-2):
 | Hand-written HTML | `inspect.py` lists each page with its route and title, the kit and libraries the pages load (Bootstrap, Tailwind's CDN build, Bulma, Alpine, htmx … from a CDN or `vendor/`, with versions), and the header, nav, sidebar and footer copied into every page: how many pages hold each and how many copies are identical once the current item is set aside, so a nav change is made in every copy. Notes: `references/stacks/static.md` |
 | Eleventy, Jekyll | `inspect.py` reads the config (Eleventy's directories, Jekyll's `permalink` and `defaults`), each template's route, its layout chain (through directory data files and `defaults`), its includes, and the site data; Hugo is detected. Notes: `references/stacks/static.md` |
 | A component kit or CSS-in-JS | `inspect.py` reads the kit's theme where the project keeps it (MUI's `createTheme` palette, radius, fonts and overrides; Ant Design's tokens in `ConfigProvider` or umi's config and ProLayout settings; Chakra's `extendTheme` scales; Element Plus's variables and a runtime theme picker; Vuetify's themes and component defaults; a styled-components theme object and the keys components read), counts the kit's components by use, says how the code styles itself (`sx`, `styled()`, CSS Modules) and how dark mode switches, with the `--dark-storage` key (`mui-mode`, `chakra-ui-color-mode`, VueUse's `vueuse-color-scheme`, the app's own). On a React app it follows the route table (objects, `<Route>` elements, umi's `config/routes.ts`) to every page with its layout and guards. The render reads MUI's focus ripple and Vuetify's focus overlay, and says when a dark pass moved nothing instead of counting its findings twice. Notes: `references/stacks/kits.md` |
+| React Native / Expo | `npx expo start --web` serves the app through react-native-web, and the render works on it: a `Pressable` without a role (a focusable `<div>`) is counted as a control and reported as `no role`; a page that scrolls inside a ScrollView gets a full screenshot of all of it; the dark pass tries a dark device (react-native-web reads the scheme in JS) and is dropped when nothing moves; `--storage 'mmkv.default\KEY=…'` puts a session or an onboarding flag where MMKV or AsyncStorage keep it. `inspect.py` lists the screens (Expo Router's files and layouts with their redirects; React Navigation's navigators, the auth branch each screen sits in, the linking path), the theme's colour map with both schemes and the contrast of its text colours (React Navigation's and Paper's defaults filled in behind a spread), the spacing scale, `StyleSheet` numbers, fonts, the `.web.tsx` twins, and the storage keys with their names in a browser. Notes: `references/stacks/react-native.md` |
 | A theme service switches dark mode | `--dark-storage theme=dark` sets the app's stored choice for the dark pass and reloads, so the app's own switch runs (a body class, a stored setting) instead of a class the render guesses; the inspector prints the flag when it finds the service |
 
 ## Scripts
@@ -170,7 +171,7 @@ All standard tools; the skill calls them, and so can you.
 a screenshot), `constraints.md` (the rules with sources, marked measured or manual),
 `patterns.md` (what each page type owes the user), `real-projects.md` (a page that
 won't just render) and `stacks/` (what differs in a Nuxt, Vue, SvelteKit, Astro, Angular,
-Laravel or static-site project, and with a component kit).
+Laravel, React Native or static-site project, and with a component kit).
 
 ## Evals
 
@@ -186,15 +187,19 @@ git-ignored `ui-craft-workspace/`.
 
 ## Limits
 
-- Web only. `render.mjs` works on any URL; `inspect.py` understands Tailwind (v3 config
-  or v4 `@theme`), Bootstrap and plain CSS variables, Next.js, Nuxt, Vue + Vite, SvelteKit,
-  Astro, Angular, Laravel (Blade, Livewire, Inertia), Eleventy, Jekyll and hand-written
-  HTML, and the themes of MUI, Ant Design, Chakra, Element Plus, Vuetify, styled-components,
-  Emotion and CSS Modules. The benchmark tasks are React and Nuxt; the other stacks are
-  checked on fixtures and real projects, not yet on a full task. Not yet: Rails and Django
-  templates, Hugo's templates, and the themes of Mantine, Naive UI, PrimeVue, Quasar and
-  Ant Design Vue (detected, not read). The component harness is React only. No React
-  Native, Flutter or SwiftUI.
+- Web, and React Native through react-native-web. `render.mjs` works on any URL; `inspect.py`
+  understands Tailwind (v3 config or v4 `@theme`), Bootstrap and plain CSS variables, Next.js,
+  Nuxt, Vue + Vite, SvelteKit, Astro, Angular, Laravel (Blade, Livewire, Inertia), Eleventy,
+  Jekyll and hand-written HTML, the themes of MUI, Ant Design, Chakra, Element Plus, Vuetify,
+  styled-components, Emotion and CSS Modules, and React Native (Expo Router, React Navigation,
+  theme colour maps, React Native Paper, NativeWind / Uniwind). The benchmark tasks are React
+  and Nuxt; the other stacks are checked on fixtures and real projects, not yet on a full task.
+  A React Native app without react-native-web cannot be rendered: the inspector's contrast of
+  the theme's pairs and the stack notes' checklist are what is left, and what only a phone
+  shows (native tab bars, safe areas, `hitSlop`, the user's font size) is not measured. Not yet:
+  Rails and Django templates, Hugo's templates, and the themes of Mantine, Naive UI, PrimeVue,
+  Quasar, Ant Design Vue and Tamagui (detected, not read). The component harness is React
+  only. No Flutter or SwiftUI.
 - It measures what the DOM exposes. Text over images and gradients is reported as
   unverifiable; colour-only meaning, zoom to 200%, dragging alternatives and flashing
   are listed in `constraints.md` as manual checks.
