@@ -1,14 +1,14 @@
 ---
 name: ui-craft
 metadata:
-  version: 0.19.1
+  version: 0.19.2
 description: >-
   Build, change, and review UI in web projects (React, Vue, Svelte, Astro, Angular, Laravel Blade or plain HTML; Next.js, Nuxt, SvelteKit, Livewire, Eleventy, Jekyll; Tailwind, Bootstrap, MUI, Ant Design, Chakra, Element Plus, Vuetify, CSS-in-JS or plain CSS) and React Native / Expo or Flutter apps with a render → look → measure → fix loop, so what ships is checked against a screenshot and measurements (contrast, tap targets, overflow, focus, hover, motion, dark mode), not guessed from code. Use it whenever the user wants a page, screen, component, layout, landing page, dashboard, form, settings screen, modal, empty state, dark mode or theme, or any visual change — including "make it look better", "polish this", "it looks too generic / AI-made", "match our existing style", "add dark mode", "is this accessible", "check the mobile view", "does anything look off before I open the PR" — even if they never say "design" or "UI". Also use it to inspect a project's design conventions (SwiftUI too) before adding to it.
 ---
 
 # ui-craft
 
-Version 0.19.1. (An older copy of this file means the installed skill is behind the
+Version 0.19.2. (An older copy of this file means the installed skill is behind the
 repository: re-run `install.sh`; `doctor.mjs` says when that is the case.)
 
 UI work has a gap that code review can't close: the first draft always has two or
@@ -58,6 +58,9 @@ real leak in past runs:
 7. **The report is short.** Twenty lines unless the user asked for detail: what
    changed, the pasted `Verified` block, the decisions you made, what couldn't be
    verified.
+10. **Read a file with the Read tool before you edit it.** The Edit tool refuses a
+   file that was only `cat`-ed, and every refused edit is a wasted call (two in one
+   trial, four in another).
 8. **Behaviour goes into the project's own tests.** A value that must clamp, a
    setting that must persist: write the unit test the project already has a
    runner for (vitest, jest, pytest). A browser script of your own to check what

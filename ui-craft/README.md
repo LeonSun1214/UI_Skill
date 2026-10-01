@@ -69,6 +69,11 @@ ui-craft's agent asserted, without measuring, that they agree. On Flutter
 compass_app's search screen in 45 tool calls and two renders. The change touched nothing outside
 its own row and added no finding. The agent also found two gaps in the renderer: price text it
 did not measure, and an overflow that only a smaller phone shows. The renderer now covers both.
+On React Native (`evals/notes/trial-rn-10.md`, ui-craft only), an agent added a "Remember me"
+checkbox to an Ignite app's login screen with the project's own component, in 48 calls and three
+renders, and caught the component's dark-mode tick at 1.25:1 before writing code. Grading it found
+a render audited before a cold bundle had mounted, and a checkbox whose state react-native-web
+never exposes; the renderer now waits, and checks.
 
 The misses of the other two are what a renderer catches and a database cannot, and
 they repeat run after run: body text at 3.7:1, 20 px nav links, focus rings at

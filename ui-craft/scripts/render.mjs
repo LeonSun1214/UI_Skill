@@ -282,6 +282,11 @@ function domAudit(INTERACTIVE) {
     if (getComputedStyle(el).cursor === 'pointer') el.setAttribute('data-uic-clickable', '');
   }
   const noRole = [...document.querySelectorAll('[data-uic-clickable]')].filter((el) => !el.hasAttribute('role') && visible(el));
+  // A toggle that says what it is but not whether it is on: role checkbox / switch / radio with no
+  // aria-checked. A screen reader reads "checkbox" and no state. (react-native-web renders a
+  // Pressable's accessibilityRole and drops its accessibilityState; aria-checked={value} renders.)
+  const statelessToggles = [...document.querySelectorAll('[role="checkbox"], [role="switch"], [role="radio"], [role="menuitemcheckbox"], [role="menuitemradio"]')]
+    .filter((el) => el.tagName !== 'INPUT' && !el.hasAttribute('aria-checked') && visible(el));
 
   // --- page colors (what a theme switch must change). When neither <html> nor <body> paints a colour,
   // the page's is on the outermost element that covers the viewport (RNW puts a screen's on a view).
@@ -661,7 +666,7 @@ function domAudit(INTERACTIVE) {
   const alerts = [...document.querySelectorAll('[role="alert"], [role="status"], [aria-live="polite"], [aria-live="assertive"]')]
     .map((el) => (el.textContent || '').trim().replace(/\s+/g, ' ')).filter(Boolean).slice(0, 6).map((t) => t.slice(0, 80));
   const invalidFields = document.querySelectorAll('[aria-invalid="true"]').length;
-  return { pageColors, contrast, nonText, targets, unnamedControls, noRole: noRole.map(short).slice(0, 20), rnw, overflow, motion, darkSupport, fonts, imagesMissingAlt, structure, viewportMeta, bodyText, pageTitle, passwordField, devOverlay, alerts, invalidFields, ragged };
+  return { pageColors, contrast, nonText, targets, unnamedControls, noRole: noRole.map(short).slice(0, 20), statelessToggles: statelessToggles.map(short).slice(0, 20), rnw, overflow, motion, darkSupport, fonts, imagesMissingAlt, structure, viewportMeta, bodyText, pageTitle, passwordField, devOverlay, alerts, invalidFields, ragged };
 }
 
 // ------------------------------------------------- keyboard focus (real Tabs)
@@ -1374,7 +1379,7 @@ async function renderViewport(width) {
     }
   });
 
-  let loadError = null, loadRetried = false;
+  let loadError = null, loadRetried = false, mountMs = 0;
   lap('setup');
   try {
     try {
@@ -1387,6 +1392,15 @@ async function renderViewport(width) {
     lap('load');
     await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
     lap('networkidle');
+    // An app shell whose root mounts after `load` (a bundle a dev server is still building, loaded by
+    // a script `load` does not wait for): the audit must not run on an empty body. Wait for text or a
+    // control, up to 20 s; a page that has neither is measured as it is.
+    {
+      const t0 = Date.now();
+      await page.waitForFunction((sel) => !!document.body && (document.body.innerText.trim().length > 0 || !!document.querySelector(sel)), INTERACTIVE_SELECTOR, { timeout: 20000 }).catch(() => {});
+      mountMs = Date.now() - t0;
+    }
+    lap('mount');
     if (opt.waitFor) await page.waitForSelector(opt.waitFor, { timeout: 30000 });
   } catch (e) { loadError = String(e.message).split('\n')[0]; }
   if (!loadError) await dismiss(page, opt.dismiss);
@@ -1528,6 +1542,7 @@ async function renderViewport(width) {
       try {
         await page.reload({ waitUntil: 'load', timeout: 30000 });
         await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+        await page.waitForFunction((sel) => !!document.body && (document.body.innerText.trim().length > 0 || !!document.querySelector(sel)), INTERACTIVE_SELECTOR, { timeout: 20000 }).catch(() => {});
         if (opt.waitFor) await page.waitForSelector(opt.waitFor, { timeout: 30000 });
       } catch { /* keep the in-place measurement below */ }
       await dismiss(page, opt.dismiss);
@@ -1617,6 +1632,7 @@ async function renderViewport(width) {
     if (hard24) fails.push(`targets<24px ${hard24}`);
     if (audit.unnamedControls.length) fails.push(`unnamed controls ${audit.unnamedControls.length}`);
     if ((audit.noRole || []).length) fails.push(`no role ${audit.noRole.length}`);
+    if ((audit.statelessToggles || []).length) fails.push(`toggles without state ${audit.statelessToggles.length}`);
     if (audit.imagesMissingAlt.length) fails.push(`img without alt ${audit.imagesMissingAlt.length}`);
     if (audit.viewportMeta.blocksZoom) fails.push('zoom blocked');
     if (audit.nonText.weak.length) warns.push(`weak button surface <3:1 ${audit.nonText.weak.length}`);
@@ -1666,6 +1682,7 @@ async function renderViewport(width) {
   if (failedRequests.length) warns.push(`failed requests ${failedRequests.length}`);
   if (documentStatus && documentStatus.status >= 400) warns.push(`page answered ${documentStatus.status}`);
   if (loadRetried && !loadError) warns.push('loaded on a second try (the first timed out: a dev server still compiling)');
+  if (mountMs > 1500 && !loadError && audit && (audit.bodyText || '').trim()) warns.push(`the page was empty for ${(mountMs / 1000).toFixed(1)} s after load before its content appeared (a dev server bundling, or a slow mount); the audit waited for it`);
   if (httpErrors.length) warns.push(`http errors ${httpErrors.length}`);
   if (httpErrors.some((e) => /^403 .*\/_next\//.test(e))) warns.push('Next.js dev refused its own scripts (403 on /_next/*): the page was not hydrated — render it through http://localhost:PORT, or add this host to allowedDevOrigins in next.config');
 
@@ -1791,6 +1808,7 @@ const specs = [
   ['dark contrast', (v) => v.dark && !v.dark.echo && v.dark.contrast.failures, 6, (f) => `${f.ratio}:1 (need ${f.required}) ${f.selector} — ${f.color} on ${f.background}`],
   ['unnamed', (v) => v.audit.unnamedControls, 6, (s) => s],
   ['no role (a screen reader cannot say what it is: role="button", or accessibilityRole on a Pressable)', (v) => v.audit.noRole || [], 6, (s) => s],
+  ['toggle without state (a screen reader cannot say whether it is on: aria-checked={value}; react-native-web drops accessibilityState)', (v) => v.audit.statelessToggles || [], 6, (s) => s],
   ['img without alt', (v) => v.audit.imagesMissingAlt, 4, (s) => s],
   ['ragged grid (the last row is short: fill the sample data, or let the last item span)', (v) => v.audit.ragged || [], 4, (g) => `${g.items} items in ${g.columns} columns, ${g.lastRow} alone in the last row — ${g.selector}`],
   ['dialog', (v) => (v.dialog ? [
@@ -1812,6 +1830,7 @@ const FULL_LIST = {
   'no hover feedback': 'hover.noHoverFeedback', 'dark non-text contrast': 'dark.nonText.failures',
   'dark focus ring <3:1': 'dark.focus.lowContrastRing', 'dark contrast': 'dark.contrast.failures', unnamed: 'audit.unnamedControls',
   'no role (a screen reader cannot say what it is: role="button", or accessibilityRole on a Pressable)': 'audit.noRole',
+  'toggle without state (a screen reader cannot say whether it is on: aria-checked={value}; react-native-web drops accessibilityState)': 'audit.statelessToggles',
 };
 const TOTAL = { // counts kept apart from lists that report.json caps
   'focus invisible': (v) => v.focus && v.focus.counts && v.focus.counts.invisible,
@@ -1880,8 +1899,8 @@ const TOTAL = { // counts kept apart from lists that report.json caps
     const mo = widest.audit.motion, inScript = typeof mo.underReduce === 'number' && mo.underReduce < mo.animatedElements;
     L.push(`- Motion: reduced-motion rule ${mo.reducedMotionRule ? 'present' : inScript ? `missing, but honoured in script (${mo.animatedElements} → ${mo.underReduce} animated under reduced motion)` : 'missing'} · ${mo.animatedElements} animated elements`);
     const un = worst((v) => v.audit.unnamedControls.length), ia = worst((v) => v.audit.imagesMissingAlt.length);
-    const nr = worst((v) => (v.audit.noRole || []).length);
-    L.push(`- Names & alt: ${un.n} unnamed controls${nr.n ? ` · ${nr.n} clickable without a role` : ''} · ${ia.n} images without alt · ${widest.audit.structure.h1Count} h1 · ${widest.audit.structure.skippedLevels.length} skipped heading levels`);
+    const nr = worst((v) => (v.audit.noRole || []).length), st = worst((v) => (v.audit.statelessToggles || []).length);
+    L.push(`- Names & alt: ${un.n} unnamed controls${nr.n ? ` · ${nr.n} clickable without a role` : ''}${st.n ? ` · ${st.n} toggles without a state` : ''} · ${ia.n} images without alt · ${widest.audit.structure.h1Count} h1 · ${widest.audit.structure.skippedLevels.length} skipped heading levels`);
     const decl = widest.audit.fonts.declared, errs = decl.filter((x) => x.status === 'error').map((x) => x.family);
     const blockedFonts = fontHostsFailed(report);
     // A face that never loaded while its host was blocked failed too (AlibabaSans from a CDN that did not answer).

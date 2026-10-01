@@ -111,5 +111,7 @@ Found and fixed on the way:
 
 No agent has done a task on a React Native project. A match task on Ignite (a new demo screen in
 the showroom's style) or Obytes (a settings row in Uniwind classes) would show whether the theme
-lines are read before a colour is typed. Nothing here runs on a phone: native tab bars, safe
+lines are read before a colour is typed. (Done in 0.19.2: `trial-rn-10.md`, a checkbox on Ignite's
+login screen. The theme lines were read first: the agent ran `contrast.py` on the dark palette
+before it wrote code.) Nothing here runs on a phone: native tab bars, safe
 areas, `hitSlop` and Dynamic Type are described in the stack notes, not measured.

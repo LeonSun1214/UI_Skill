@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Late mount</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: #111; background: #fff; }
+  main { padding: 24px; }
+  h1 { font-size: 24px; }
+  a { color: #1d4ed8; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+  // The root stays empty for 2.5 s after the page's load event, the way an app arrives when a dev
+  // server is still building its first bundle: `load` does not wait for it.
+  setTimeout(() => {
+    document.getElementById('root').innerHTML =
+      '<main><h1>Mounted late</h1><p>The bundle arrived after load.</p><p><a href="#">A link</a></p></main>';
+  }, 2500);
+</script>
+</body>
+</html>

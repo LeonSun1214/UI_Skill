@@ -229,6 +229,16 @@ try {
     return `${g[0].items} items in ${g[0].columns} columns, ${g[0].lastRow} alone · the four-card grid not flagged`;
   });
 
+  // 3e½. a root that mounts after `load` (a bundle a dev server is still building): the audit waits for it
+  await check('late mount: the audit waits for the app', async () => {
+    const r = await render(join(pages, 'late-mount.html'), join(work, 'latemount'));
+    const a = v(r).audit;
+    expect(/Mounted late/.test(a.bodyText || ''), `audited before the app mounted: ${JSON.stringify(a.bodyText)}`);
+    expect(a.structure.h1Count === 1, `h1 count ${a.structure.h1Count}`);
+    expect(v(r).warns.some((w) => /empty for \d/.test(w)), `no line about the wait: ${v(r).warns.join(' | ')}`);
+    return v(r).warns.find((w) => /empty for/.test(w));
+  });
+
   // 3f. what is drawn in layers: text on a positioned indicator, rings on ::before, shadow rings
   // stacked the way Tailwind stacks them, fields outlined by an inset ring or recoloured on focus
   await check('layers: backdrops and rings read as drawn', async () => {
@@ -332,7 +342,8 @@ try {
     const a = v(r).audit, f = v(r).focus;
     expect(a.rnw, 'not read as react-native-web');
     expect(a.noRole.length === 1 && /#plain/.test(a.noRole[0]) && v(r).fails.includes('no role 1'), `role-less pressables: ${JSON.stringify(a.noRole)} · ${v(r).fails.join(' | ')}`);
-    expect(f.tabbed === 2, `the Tab walk reached ${f.tabbed} of the 2 pressables`);
+    expect(a.statelessToggles.length === 1 && /#stateless/.test(a.statelessToggles[0]) && v(r).fails.includes('toggles without state 1'), `toggles without a state: ${JSON.stringify(a.statelessToggles)} · ${v(r).fails.join(' | ')}`);
+    expect(f.tabbed === 4, `the Tab walk reached ${f.tabbed} of the 4 pressables`);
     expect(v(r).screenshots.scrollsInside > 0, 'the full screenshot did not grow for the inner scroller');
     expect(v(r).dark && v(r).dark.mode === 'device scheme' && v(r).dark.themeChanged, `no device-scheme dark pass: ${JSON.stringify(v(r).dark && { mode: v(r).dark.mode, changed: v(r).dark.themeChanged })}`);
     expect(!a.fonts.used.includes('Times New Roman'), `the body's default face read as used: ${a.fonts.used.join(', ')}`);

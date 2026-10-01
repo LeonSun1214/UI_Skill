@@ -115,6 +115,79 @@ def find_package(name: str, nm_dirs):
     return None
 
 
+def _jsonc(text: str):
+    """JSON with comments and trailing commas (a tsconfig), the strings kept whole: a `/*` inside
+    "@/*" is a path, not a comment."""
+    out, i, n, in_str = [], 0, len(text), False
+    while i < n:
+        c = text[i]
+        if in_str:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if c == '"':
+                in_str = False
+            i += 1
+            continue
+        if c == '"':
+            in_str = True
+            out.append(c)
+            i += 1
+            continue
+        if text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        if text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+            continue
+        out.append(c)
+        i += 1
+    return json.loads(re.sub(r",\s*([}\]])", r"\1", "".join(out)))
+
+
+def alias_prefixes(root: Path) -> list[str]:
+    """Import prefixes a tsconfig or jsconfig `paths` map, or a babel module-resolver `alias`,
+    points into the project ('@assets/*' → '@assets/'). They look like packages and are not."""
+    found: list[str] = []
+    configs = []
+    for name in ("tsconfig.json", "jsconfig.json", "tsconfig.base.json"):
+        configs += [root / name, *root.glob(f"*/{name}"), *root.glob(f"*/*/{name}")]
+    for p in configs:
+        if "node_modules" in p.parts or not p.is_file():
+            continue
+        try:
+            paths = (_jsonc(read(p)).get("compilerOptions") or {}).get("paths") or {}
+        except (ValueError, AttributeError):
+            continue
+        for k in paths:
+            k = k[:-1] if k.endswith("*") else k
+            if k and k != "/":
+                found.append(k)
+    for p in [*root.glob("babel.config.*"), *root.glob("*/babel.config.*")]:
+        if "node_modules" in p.parts:
+            continue
+        m = re.search(r"\balias\s*:\s*\{([^}]*)\}", read(p))
+        if m:
+            for k in re.findall(r"['\"]([^'\"]+)['\"]\s*:", m.group(1)):
+                if not re.search(r"[\^$()]", k):
+                    found.append(k if k.endswith("/") else k + "/")
+    return sorted(set(found))
+
+
+def is_alias(spec: str, prefixes) -> bool:
+    for a in prefixes:
+        if a.endswith("/"):
+            if spec.startswith(a):
+                return True
+        elif spec == a or spec.startswith(a + "/"):
+            return True
+    return False
+
+
 IMPORT_RE = re.compile(r"""import\s+(?P<clause>[^'";]+?)\s+from\s+['"](?P<spec>[^'"]+)['"]|import\s+['"](?P<bare>[^'"]+)['"]|require\(\s*['"](?P<req>[^'"]+)['"]\s*\)|from\s+['"](?P<from>[^'"]+)['"]""")
 
 
@@ -331,6 +404,7 @@ def main() -> int:
     fails: list[str] = []
     warns: list[str] = []
     stats = {"imports": 0, "packages": set(), "icons": 0, "fonts": 0}
+    aliases = alias_prefixes(root)
 
     # --- packages + icons
     for p in files:
@@ -339,6 +413,8 @@ def main() -> int:
         text = read(p)
         rel = os.path.relpath(p, root)
         for spec, names, clause in imports_in(text):
+            if is_alias(spec, aliases):
+                continue
             pkg = package_name(spec)
             if not pkg or pkg in NODE_BUILTINS:
                 continue

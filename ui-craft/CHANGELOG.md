@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.19.2 — the tenth trial: a React Native task
+
+The first agent task on React Native. A fresh agent with 0.19.1 added a "Remember me" checkbox to
+the login screen of an app made by Ignite's CLI (Expo 55, React Navigation 7, react-native-web),
+with the project's own `Checkbox`, in 48 tool calls and three renders. It read the dark palette's
+contrast before it wrote code and found the component's tick at 1.25:1 in dark mode. Compile,
+lint and the tests pass (one new). Notes: `evals/notes/trial-rn-10.md`.
+
+- `render.mjs` waits for the app to mount. A page's `load` event does not wait for a bundle that a
+  dev server is still building (Metro's first web bundle: 25 s here), so one viewport was audited
+  on an empty body and screenshotted later with the page in it. After `load` the render now waits
+  up to 20 s for text or a control, and says when it waited more than 1.5 s.
+- `render.mjs`, a new check: a toggle that says what it is but not whether it is on. A `checkbox`,
+  `switch` or `radio` role with no `aria-checked` is a FAIL ("toggles without state"), listed with
+  the fix. react-native-web renders a Pressable's `accessibilityRole` and drops its
+  `accessibilityState`, so Ignite's `Toggle` has this on the web; `aria-checked={value}` renders,
+  and React Native maps it to the state on the phone.
+- `verify.py` reads the `paths` of a tsconfig or jsconfig, and a babel module-resolver's `alias`:
+  an import under `@assets/*` is a path into the project, not a package. It had reported 34
+  missing packages on the app, all images under that alias, which the agent had to explain away.
+  The config is read with its strings kept whole: a `/*` inside `"@/*"` is a path, not a comment.
+- `references/stacks/react-native.md`: the mount wait, and the toggle-state finding.
+- SKILL.md: read a file with the Read tool before editing it. Two trials lost two and four calls
+  to edits the harness refused.
+
+Checked for regressions: the self-test (39 checks: one new for a root that mounts after `load`, and
+the react-native-web page gains a toggle without a state), the CI check steps run locally, `verify.py`
+on the 27 fixtures and three earlier projects (one change: the Angular fixture's `@app/*` alias is
+no longer a missing package), and the login page rendered warm and cold with the same numbers.
+
 ## 0.19.1 — the ninth trial: a Flutter task
 
 The first agent task on Flutter. A fresh agent with 0.19.0 added a budget filter ($ / $$ / $$$) to
